@@ -172,7 +172,6 @@ struct Type {
 
 #[derive(Default, Debug)]
 struct TsTypes {
-    types: Vec<Type>,
     types_by_name_by_file: HashMap<PathBuf, HashMap<String, Type>>,
     context_stack: Vec<Context>,
 }
@@ -299,10 +298,39 @@ impl TsTypes {
             });
     }
 
+    fn process_export_decl(&mut self, ts_path: &Path, export_decl: &ExportDecl) {
+        let ExportDecl { decl, .. } = export_decl;
+
+        let mut typ = match decl {
+            Decl::TsInterface(TsInterfaceDecl {
+                id, type_params, extends, body, ..
+            }) =>  {
+                Type {
+                    name: "hi".to_string(),
+                    is_exported: false
+                }
+            },
+            _ => 
+                Type {
+                    name: "hi".to_string(),
+                    is_exported: false
+                }
+        };
+
+        typ.is_exported = true;
+        let type_name = typ.name.to_string();
+
+        self.types_by_name_by_file
+            .entry(ts_path.to_path_buf())
+            .or_insert(HashMap::new())
+            .insert(type_name.to_string(), typ);
+        self.cur_ctx().local_names_to_type_names.insert(type_name.to_string(), TypeName::for_name(ts_path.to_path_buf(), &type_name));
+    }
+
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
-            ModuleDecl::ExportDecl(decl) => (),
+            ModuleDecl::ExportDecl(decl) => self.process_export_decl(&ts_path, &decl),
             ModuleDecl::ExportNamed(decl) => (),
             ModuleDecl::ExportDefaultDecl(decl) => (),
             ModuleDecl::ExportDefaultExpr(decl) => (),
