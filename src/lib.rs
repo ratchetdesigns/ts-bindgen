@@ -170,20 +170,31 @@ impl TypeName {
 #[derive(Default, Debug)]
 struct Context {
     local_names_to_type_names: HashMap<String, TypeName>,
+
+    // TODO: move the ts_path we keep threading around to context
+}
+
+#[derive(Debug)]
+struct EnumMember {
+    id: String,
+    value: Option<String>, // really a string | number
 }
 
 #[derive(Debug)]
 enum TsType {
     TypeRef {
         type_name: TypeName,
-    }
+    },
 }
 
 #[derive(Debug)]
 enum TypeInfo {
     Interface {
         fields: HashMap<String, TsType>,
-    }
+    },
+    Enum {
+        members: Vec<EnumMember>,
+    },
 }
 
 #[derive(Debug)]
@@ -225,7 +236,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.file_name() == Some(OsStr::new("aspect.d.ts")) {
+        if ts_path.file_name() == Some(OsStr::new("vpc.d.ts")) {
             println!("MOD!, {:?}", module);
         }
 
@@ -342,7 +353,6 @@ impl TsTypes {
         names
     }
 
-    // TODO: move ts_path to context
     fn qualified_name_to_type_name(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> TypeName {
         let name_path = self.qualified_name_to_str_vec(&ts_path, qn);
         TypeName::for_qualified_name(ts_path.to_path_buf(), name_path)
@@ -351,6 +361,9 @@ impl TsTypes {
     fn process_type_ref(&mut self, ts_path: &Path, TsTypeRef { type_name, type_params, .. }: &TsTypeRef) -> TsType {
         match type_name {
             TsEntityName::Ident(Ident { sym, .. }) => {
+                if self.cur_ctx().local_names_to_type_names.get(&sym.to_string()).is_none() {
+                    println!("can't find name!!!, {:?}, {}", ts_path, sym.to_string());
+                }
                 TsType::TypeRef {
                     type_name: self.cur_ctx().local_names_to_type_names.get(&sym.to_string()).unwrap().clone()
                 }
@@ -411,12 +424,41 @@ impl TsTypes {
         }
     }
 
+    fn process_ts_enum(&mut self, ts_path: &Path, TsEnumDecl { id, members, .. }: &TsEnumDecl) -> Type {
+        Type {
+            name: id.sym.to_string(),
+            is_exported: false,
+            info: TypeInfo::Enum {
+                members: members.iter().map(|TsEnumMember { id, init, .. }| {
+                    EnumMember {
+                        id: match id {
+                            TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
+                            TsEnumMemberId::Str(s) => s.value.to_string(),
+                        },
+                        value: init.as_ref().and_then(|v| {
+                            match &**v {
+                                Expr::Lit(l) => match l {
+                                    Lit::Str(s) => Some(s.value.to_string()),
+                                    // TODO: might need to capture numbers too
+                                    _ => None
+                                },
+                                _ => panic!("enums may only be initialized with lits"),
+                            }
+                        })
+                    }
+                }).collect()
+            }
+        }
+    }
+
     fn process_export_decl(&mut self, ts_path: &Path, export_decl: &ExportDecl) {
         let ExportDecl { decl, .. } = export_decl;
 
         let mut typ = match decl {
             Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
+            Decl::TsEnum(enm) => self.process_ts_enum(ts_path, enm),
             _ => 
+                // TODO: just to make the compiler happy, implement more cases
                 Type {
                     name: "hi".to_string(),
                     is_exported: false,
