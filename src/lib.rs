@@ -123,14 +123,15 @@ fn get_ts_path(module_base: Option<PathBuf>, import: &str, module_resolver: &dyn
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum TypeIdent {
     Name(String),
     DefaultExport(),
     AllExports(),
+    QualifiedName(Vec<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TypeName {
     file: PathBuf,
     name: TypeIdent,
@@ -155,6 +156,13 @@ impl TypeName {
         TypeName {
             file,
             name: TypeIdent::Name(name.to_string()),
+        }
+    }
+
+    fn for_qualified_name(file: PathBuf, names: Vec<String>) -> TypeName {
+        TypeName {
+            file,
+            name: TypeIdent::QualifiedName(names),
         }
     }
 }
@@ -313,14 +321,76 @@ impl TsTypes {
             });
     }
 
-    fn process_type(&self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TsType {
-        // TODO: for real
-        TsType::TypeRef {
-            type_name: TypeName::for_name(ts_path.to_path_buf(), "hi")
+    fn qualified_name_to_str_vec(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> Vec<String> {
+        let mut en = TsEntityName::TsQualifiedName(Box::new(qn.clone()));
+        let mut names = Vec::new();
+
+        loop {
+            match en {
+                TsEntityName::TsQualifiedName(qn) => {
+                    names.push(qn.right.sym.to_string());
+                    en = qn.left;
+                },
+                TsEntityName::Ident(Ident { sym, .. }) => {
+                    names.push(sym.to_string());
+                    break;
+                }
+            }
+        }
+
+        names.reverse();
+        names
+    }
+
+    // TODO: move ts_path to context
+    fn qualified_name_to_type_name(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> TypeName {
+        let name_path = self.qualified_name_to_str_vec(&ts_path, qn);
+        TypeName::for_qualified_name(ts_path.to_path_buf(), name_path)
+    }
+
+    fn process_type_ref(&mut self, ts_path: &Path, TsTypeRef { type_name, type_params, .. }: &TsTypeRef) -> TsType {
+        match type_name {
+            TsEntityName::Ident(Ident { sym, .. }) => {
+                TsType::TypeRef {
+                    type_name: self.cur_ctx().local_names_to_type_names.get(&sym.to_string()).unwrap().clone()
+                }
+            },
+            TsEntityName::TsQualifiedName(qn) => {
+                TsType::TypeRef {
+                    type_name: self.qualified_name_to_type_name(ts_path, qn)
+                }
+            }
         }
     }
 
-    fn process_ts_interface(&self, ts_path: &Path, TsInterfaceDecl { id, type_params, extends, body, .. }: &TsInterfaceDecl) -> Type {
+    fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TsType {
+        match ts_type {
+            swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
+            // TODO: more cases
+            _ => TsType::TypeRef {
+                type_name: TypeName::default_export_for(ts_path.to_path_buf())
+            }
+        }
+    }
+
+    fn prop_key_to_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Lit(lit) => match lit {
+                Lit::Str(s) => Some(s.value.to_string()),
+                _ => {
+                    println!("We only handle string properties. Received {:?}", lit);
+                    None
+                }
+            },
+            Expr::Ident(Ident { sym, .. }) => Some(sym.to_string()),
+            _ => {
+                println!("We only handle literal and identifier properties. Received {:?}", expr);
+                None
+            }
+        }
+    }
+
+    fn process_ts_interface(&mut self, ts_path: &Path, TsInterfaceDecl { id, type_params, extends, body, .. }: &TsInterfaceDecl) -> Type {
         Type {
             name: id.sym.to_string(),
             is_exported: false,
@@ -329,9 +399,9 @@ impl TsTypes {
                     TsTypeElement::TsPropertySignature(TsPropertySignature {
                         key, type_ann, ..
                     }) => {
-                        type_ann.as_ref().map(|t| {
-                            // TODO: use id instead of "key"
-                            ("key".to_string(), self.process_type(ts_path, &t.type_ann))
+                        type_ann.as_ref().and_then(|t| {
+                            self.prop_key_to_name(key)
+                                .map(|n| (n, self.process_type(ts_path, &t.type_ann)))
                         })
                     },
                     // TODO: add other variants
