@@ -164,10 +164,25 @@ struct Context {
     local_names_to_type_names: HashMap<String, TypeName>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
+enum TsType {
+    TypeRef {
+        type_name: TypeName,
+    }
+}
+
+#[derive(Debug)]
+enum TypeInfo {
+    Interface {
+        fields: HashMap<String, TsType>,
+    }
+}
+
+#[derive(Debug)]
 struct Type {
     name: String,
     is_exported: bool,
+    info: TypeInfo,
 }
 
 #[derive(Default, Debug)]
@@ -298,22 +313,46 @@ impl TsTypes {
             });
     }
 
+    fn process_type(&self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TsType {
+        // TODO: for real
+        TsType::TypeRef {
+            type_name: TypeName::for_name(ts_path.to_path_buf(), "hi")
+        }
+    }
+
+    fn process_ts_interface(&self, ts_path: &Path, TsInterfaceDecl { id, type_params, extends, body, .. }: &TsInterfaceDecl) -> Type {
+        Type {
+            name: id.sym.to_string(),
+            is_exported: false,
+            info: TypeInfo::Interface {
+                fields: body.body.iter().filter_map(|el| match el {
+                    TsTypeElement::TsPropertySignature(TsPropertySignature {
+                        key, type_ann, ..
+                    }) => {
+                        type_ann.as_ref().map(|t| {
+                            // TODO: use id instead of "key"
+                            ("key".to_string(), self.process_type(ts_path, &t.type_ann))
+                        })
+                    },
+                    // TODO: add other variants
+                    _ => Some(("a".to_string(), TsType::TypeRef { type_name: TypeName::for_name(ts_path.to_path_buf(), "hello") }))
+                }).collect()
+            }
+        }
+    }
+
     fn process_export_decl(&mut self, ts_path: &Path, export_decl: &ExportDecl) {
         let ExportDecl { decl, .. } = export_decl;
 
         let mut typ = match decl {
-            Decl::TsInterface(TsInterfaceDecl {
-                id, type_params, extends, body, ..
-            }) =>  {
-                Type {
-                    name: "hi".to_string(),
-                    is_exported: false
-                }
-            },
+            Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
             _ => 
                 Type {
                     name: "hi".to_string(),
-                    is_exported: false
+                    is_exported: false,
+                    info: TypeInfo::Interface {
+                        fields: HashMap::new()
+                    }
                 }
         };
 
