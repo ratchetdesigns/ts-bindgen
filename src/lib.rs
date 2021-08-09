@@ -8,6 +8,7 @@ use syn::{parse_macro_input, Token, LitStr, Result as ParseResult};
 use std::path::{PathBuf, Path};
 use std::fs::File;
 use std::ffi::OsStr;
+use std::collections::HashSet;
 use serde_json::Value;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use swc_ecma_ast::*;
@@ -108,33 +109,35 @@ fn get_ts_path(module_base: Option<PathBuf>, import: &str, module_resolver: &dyn
                     break Ok(import_path)
                 } else {
                     // check with different file extensions
-                    break get_file_with_any_ext(&import_path)
+                    match get_file_with_any_ext(&import_path) {
+                        Ok(import_path) => break Ok(import_path),
+                        Err(err) => (), // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
+                    };
+                }
+            }
 
-                    //break Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Could not find module, {}, in node_modules directory, {}", import, possible_node_modules.display())))
-                }
-            } else {
-                if !path.pop() {
-                    break Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Could not find node_modules directory starting at {}", cwd.display())))
-                }
+            if !path.pop() {
+                break Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Could not find node_modules directory starting at {}", cwd.display())))
             }
         }
     }
 }
 
+#[derive(Default, Debug)]
 struct Typ {
     defined_in: PathBuf,
     mod_path: Vec<String>,
 }
 
+#[derive(Default, Debug)]
 struct TsTypes {
     types: Vec<Typ>,
+    processed_files: HashSet<PathBuf>,
 }
 
 impl TsTypes {
     fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
-        let mut tt = TsTypes {
-            types: Default::default(),
-        };
+        let mut tt: TsTypes = Default::default();
         tt.process_module(None, module_name)?;
         Ok(tt)
     }
@@ -166,7 +169,12 @@ impl TsTypes {
     }
 
     fn process_module(&mut self, module_base: Option<PathBuf>, module_name: &str) -> Result<(), swc_ecma_parser::error::Error> {
-        let ts_path = get_ts_path(module_base, &module_name, &typings_module_resolver).expect("TODO: Need to convert this exception type");
+        let ts_path = get_ts_path(module_base, &module_name, &typings_module_resolver).expect("TODO: Need to convert this exception type").canonicalize().expect("TODO: Need to convert this exception type");
+
+        if !self.processed_files.insert(ts_path.clone()) {
+            return Ok(());
+        }
+
         let module = self.load_module(&ts_path)?;
 
         for item in &module.body {
@@ -178,14 +186,16 @@ impl TsTypes {
         Ok(())
     }
 
-    fn process_import_decl(&mut self, import_decl: &ImportDecl) {
+    fn process_import_decl(&mut self, ts_path: &Path, import_decl: &ImportDecl) {
         let ImportDecl { specifiers, src, .. } = import_decl;
-
+        let base = ts_path.parent().expect("All files must have a parent");
+        let import = src.value.to_string();
+        self.process_module(Some(base.to_path_buf()), &import);
     }
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
-            ModuleDecl::Import(decl) => self.process_import_decl(&decl),
+            ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
             ModuleDecl::ExportDecl(decl) => (),
             ModuleDecl::ExportNamed(decl) => (),
             ModuleDecl::ExportDefaultDecl(decl) => (),
