@@ -194,6 +194,9 @@ enum TypeInfo {
     PrimitiveVoid {},
     PrimitiveUndefined {},
     PrimitiveNull {},
+    Array {
+        item_type: Box<TypeInfo>,
+    }
 }
 
 impl TypeInfo {
@@ -206,7 +209,6 @@ impl TypeInfo {
                     }).collect()
                 }
             },
-            Self::Enum { .. } => self.clone(),
             Self::Alias { referent } => {
                 // TODO: need to recursively resolve. really, make resolve_names return a subset of
                 // TypeInfo enum variants as a new type ResolvedTypeInfo
@@ -222,6 +224,12 @@ impl TypeInfo {
                     .info
                     .clone()
             },
+            Self::Array { item_type } => {
+                Self::Array {
+                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file)),
+                }
+            },
+            Self::Enum { .. } => self.clone(),
             Self::PrimitiveAny {} => self.clone(),
             Self::PrimitiveNumber {} => self.clone(),
             Self::PrimitiveObject {} => self.clone(),
@@ -273,12 +281,13 @@ impl TsTypes {
 
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
         for (file, types_by_name) in &tt.types_by_name_by_file {
-            println!("Resolving file: {:?}", file);
             let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
             resolved_types_by_name_by_file.insert(file.clone(), resolved);
         };
 
         tt.types_by_name_by_file = resolved_types_by_name_by_file;
+
+        println!("FINITO {:?}", tt.types_by_name_by_file);
 
         Ok(tt)
     }
@@ -302,7 +311,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.file_name() == Some(OsStr::new("metadata-schema.d.ts")) {
+        if ts_path.file_name() == Some(OsStr::new("hello.d.ts")) {
             println!("MOD!, {:?}", module);
         }
 
@@ -479,10 +488,17 @@ impl TsTypes {
         }
     }
 
+    fn process_array_type(&mut self, ts_path: &Path, TsArrayType { elem_type, .. }: &TsArrayType) -> TypeInfo {
+        TypeInfo::Array {
+            item_type: Box::new(self.process_type(ts_path, elem_type))
+        }
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
             TsType::TsKeywordType(keyword_type) => self.process_keyword_type(ts_path, keyword_type),
+            TsType::TsArrayType(array_type) => self.process_array_type(ts_path, array_type),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
