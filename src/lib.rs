@@ -200,14 +200,15 @@ impl TypeInfo {
             Self::Alias { referent } => {
                 // TODO: need to recursively resolve. really, make resolve_names return a subset of
                 // TypeInfo enum variants as a new type ResolvedTypeInfo
+                println!("Resolve {:?}, {:?}, {:?}", &referent, types_by_name_by_file.keys(), types_by_name_by_file.get(&referent.file));
                 types_by_name_by_file.get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
-                        TypeIdent::QualifiedName(path) => unimplemented!(),
-                        n @ TypeIdent::AllExports() => unimplemented!(),
+                        TypeIdent::QualifiedName(path) => types_by_name.get(&TypeIdent::Name(path.first().expect("Can't resolve qualified name").to_string())), // TODO
+                        n @ TypeIdent::AllExports() => types_by_name.values().next(), // TODO
                         n @ TypeIdent::DefaultExport() => types_by_name.get(&n),
                         n @ TypeIdent::Name(..) => types_by_name.get(&n),
                     })
-                    .unwrap()
+                    .expect("can't resolve alias")
                     .info
                     .clone()
             }
@@ -252,6 +253,7 @@ impl TsTypes {
 
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
         for (file, types_by_name) in &tt.types_by_name_by_file {
+            println!("Resolving file: {:?}", file);
             let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
             resolved_types_by_name_by_file.insert(file.clone(), resolved);
         };
@@ -443,8 +445,10 @@ impl TsTypes {
         match ts_type {
             swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
             // TODO: more cases
-            _ => TypeInfo::Alias {
-                referent: TypeName::default_export_for(ts_path.to_path_buf())
+            _ => {
+                TypeInfo::Alias {
+                    referent: TypeName::default_export_for(ts_path.to_path_buf())
+                }
             }
         }
     }
@@ -552,37 +556,17 @@ impl TsTypes {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
             ModuleDecl::ExportDecl(decl) => self.process_export_decl(&ts_path, &decl),
-            ModuleDecl::ExportNamed(decl) => (),
-            ModuleDecl::ExportDefaultDecl(decl) => (),
-            ModuleDecl::ExportDefaultExpr(decl) => (),
+            ModuleDecl::ExportNamed(_decl) => (),
+            ModuleDecl::ExportDefaultDecl(_decl) => (),
+            ModuleDecl::ExportDefaultExpr(_decl) => (),
             ModuleDecl::ExportAll(decl) => self.process_export_all(&ts_path, &decl),
-            ModuleDecl::TsImportEquals(decl) => (),
-            ModuleDecl::TsExportAssignment(decl) => (),
-            ModuleDecl::TsNamespaceExport(decl) => (),
+            ModuleDecl::TsImportEquals(_decl) => (),
+            ModuleDecl::TsExportAssignment(_decl) => (),
+            ModuleDecl::TsNamespaceExport(_decl) => (),
         }
     }
 
-    fn process_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Block(BlockStmt) => (),
-            Stmt::Empty(EmptyStmt) => (),
-            Stmt::Debugger(DebuggerStmt) => (),
-            Stmt::With(WithStmt) => (),
-            Stmt::Return(ReturnStmt) => (),
-            Stmt::Labeled(LabeledStmt) => (),
-            Stmt::Break(BreakStmt) => (),
-            Stmt::Continue(ContinueStmt) => (),
-            Stmt::If(IfStmt) => (),
-            Stmt::Switch(SwitchStmt) => (),
-            Stmt::Throw(ThrowStmt) => (),
-            Stmt::Try(TryStmt) => (),
-            Stmt::While(WhileStmt) => (),
-            Stmt::DoWhile(DoWhileStmt) => (),
-            Stmt::For(ForStmt) => (),
-            Stmt::ForIn(ForInStmt) => (),
-            Stmt::ForOf(ForOfStmt) => (),
-            Stmt::Decl(Decl) => (),
-            Stmt::Expr(ExprStmt) => (),
-        }
+    fn process_stmt(&mut self, _stmt: &Stmt) {
+        // we don't deal with statements
     }
 }
