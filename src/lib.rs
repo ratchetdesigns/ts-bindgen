@@ -184,6 +184,16 @@ enum TypeInfo {
     Alias {
         referent: TypeName,
     },
+    PrimitiveAny {},
+    PrimitiveNumber {},
+    PrimitiveObject {},
+    PrimitiveBoolean {},
+    PrimitiveBigInt {},
+    PrimitiveString {},
+    PrimitiveSymbol {},
+    PrimitiveVoid {},
+    PrimitiveUndefined {},
+    PrimitiveNull {},
 }
 
 impl TypeInfo {
@@ -211,7 +221,17 @@ impl TypeInfo {
                     .expect("can't resolve alias")
                     .info
                     .clone()
-            }
+            },
+            Self::PrimitiveAny {} => self.clone(),
+            Self::PrimitiveNumber {} => self.clone(),
+            Self::PrimitiveObject {} => self.clone(),
+            Self::PrimitiveBoolean {} => self.clone(),
+            Self::PrimitiveBigInt {} => self.clone(),
+            Self::PrimitiveString {} => self.clone(),
+            Self::PrimitiveSymbol {} => self.clone(),
+            Self::PrimitiveVoid {} => self.clone(),
+            Self::PrimitiveUndefined {} => self.clone(),
+            Self::PrimitiveNull {} => self.clone(),
         }
     }
 }
@@ -441,11 +461,31 @@ impl TsTypes {
         }
     }
 
+    fn process_keyword_type(&mut self, ts_path: &Path, TsKeywordType { kind, .. }: &TsKeywordType) -> TypeInfo {
+        match kind {
+            TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny {},
+            TsKeywordTypeKind::TsUnknownKeyword => panic!("unknown keyword"),
+            TsKeywordTypeKind::TsNumberKeyword => TypeInfo::PrimitiveNumber {},
+            TsKeywordTypeKind::TsObjectKeyword => TypeInfo::PrimitiveObject {},
+            TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean {},
+            TsKeywordTypeKind::TsBigIntKeyword => TypeInfo::PrimitiveBigInt {},
+            TsKeywordTypeKind::TsStringKeyword => TypeInfo::PrimitiveString {},
+            TsKeywordTypeKind::TsSymbolKeyword => TypeInfo::PrimitiveSymbol {},
+            TsKeywordTypeKind::TsVoidKeyword => TypeInfo::PrimitiveVoid {},
+            TsKeywordTypeKind::TsUndefinedKeyword => TypeInfo::PrimitiveUndefined {},
+            TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull {},
+            TsKeywordTypeKind::TsNeverKeyword => panic!("never keyword"),
+            TsKeywordTypeKind::TsIntrinsicKeyword => panic!("intrinsic keyword"),
+        }
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TypeInfo {
         match ts_type {
-            swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
+            TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
+            TsType::TsKeywordType(keyword_type) => self.process_keyword_type(ts_path, keyword_type),
             // TODO: more cases
             _ => {
+                println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Alias {
                     referent: TypeName::default_export_for(ts_path.to_path_buf())
                 }
