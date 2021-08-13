@@ -123,7 +123,7 @@ fn get_ts_path(module_base: Option<PathBuf>, import: &str, module_resolver: &dyn
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TypeIdent {
     Name(String),
     DefaultExport(),
@@ -167,34 +167,52 @@ impl TypeName {
     }
 }
 
-#[derive(Default, Debug)]
-struct Context {
-    local_names_to_type_names: HashMap<String, TypeName>,
-
-    // TODO: move the ts_path we keep threading around to context
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EnumMember {
     id: String,
-    value: Option<String>, // really a string | number
+    value: Option<String>, // TODO: really a string | number
 }
 
-#[derive(Debug)]
-enum TsType {
-    TypeRef {
-        type_name: TypeName,
-    },
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum TypeInfo {
     Interface {
-        fields: HashMap<String, TsType>,
+        fields: HashMap<String, TypeInfo>,
     },
     Enum {
         members: Vec<EnumMember>,
     },
+    Alias {
+        referent: TypeName,
+    },
+}
+
+impl TypeInfo {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        match self {
+            Self::Interface { fields } => {
+                Self::Interface {
+                    fields: fields.iter().map(|(n, t)| {
+                        (n.to_string(), t.resolve_names(&types_by_name_by_file))
+                    }).collect()
+                }
+            },
+            Self::Enum { .. } => self.clone(),
+            Self::Alias { referent } => {
+                // TODO: need to recursively resolve. really, make resolve_names return a subset of
+                // TypeInfo enum variants as a new type ResolvedTypeInfo
+                types_by_name_by_file.get(&referent.file)
+                    .and_then(|types_by_name| match &referent.name {
+                        TypeIdent::QualifiedName(path) => unimplemented!(),
+                        n @ TypeIdent::AllExports() => unimplemented!(),
+                        n @ TypeIdent::DefaultExport() => types_by_name.get(&n),
+                        n @ TypeIdent::Name(..) => types_by_name.get(&n),
+                    })
+                    .unwrap()
+                    .info
+                    .clone()
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -204,16 +222,42 @@ struct Type {
     info: TypeInfo,
 }
 
+impl Type {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        Self {
+            name: self.name.clone(),
+            is_exported: self.is_exported,
+            info: self.info.resolve_names(&types_by_name_by_file),
+        }
+    }
+
+    fn clone_unexported(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            is_exported: false,
+            info: self.info.clone()
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 struct TsTypes {
-    types_by_name_by_file: HashMap<PathBuf, HashMap<String, Type>>,
-    context_stack: Vec<Context>,
+    types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
 }
 
 impl TsTypes {
     fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
         let mut tt: TsTypes = Default::default();
         tt.process_module(None, module_name)?;
+
+        let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
+        for (file, types_by_name) in &tt.types_by_name_by_file {
+            let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
+            resolved_types_by_name_by_file.insert(file.clone(), resolved);
+        };
+
+        tt.types_by_name_by_file = resolved_types_by_name_by_file;
+
         Ok(tt)
     }
 
@@ -236,7 +280,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.file_name() == Some(OsStr::new("vpc.d.ts")) {
+        if ts_path.file_name() == Some(OsStr::new("metadata-schema.d.ts")) {
             println!("MOD!, {:?}", module);
         }
 
@@ -253,9 +297,6 @@ impl TsTypes {
 
         let module = self.load_module(&ts_path)?;
 
-        // TODO: would be cool to have a guard to ensure we pop
-        self.context_stack.push(Default::default());
-
         for item in &module.body {
             match item {
                 ModuleItem::ModuleDecl(decl) => self.process_module_decl(&ts_path, &decl),
@@ -263,13 +304,16 @@ impl TsTypes {
             }
         }
 
-        self.context_stack.pop();
-
         Ok(ts_path)
     }
 
-    fn cur_ctx(&mut self) -> &mut Context {
-        self.context_stack.last_mut().unwrap()
+    fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
+        self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+            names_to_types.insert(
+                name,
+                typ
+            );
+        });
     }
 
     fn process_import_decl(&mut self, ts_path: &Path, import_decl: &ImportDecl) {
@@ -279,33 +323,54 @@ impl TsTypes {
 
         let file = self.process_module(Some(base.to_path_buf()), &import).expect("failed to process module");
 
+        // TODO: would be cool to enforce in the type system that we never look up a type at this
+        // phase. we refer to names of types.
+
         specifiers.into_iter().for_each(|specifier| {
             match specifier {
                 ImportSpecifier::Named(ImportNamedSpecifier {
                     local, imported, ..
                 }) => {
-                    self.cur_ctx().local_names_to_type_names.insert(
-                        local.sym.to_string(),
-                        TypeName::for_name(
-                            file.clone(),
-                            &imported.as_ref().unwrap_or(local).sym
-                        )
+                    self.set_type_for_name_for_file(
+                        ts_path,
+                        TypeIdent::Name(local.sym.to_string()),
+                        Type {
+                            name: local.sym.to_string(),
+                            is_exported: false,
+                            info: TypeInfo::Alias {
+                                referent: TypeName::for_name(file.to_path_buf(), &imported.as_ref().unwrap_or(local).sym.to_string())
+                            }
+                        }
                     );
                 },
                 ImportSpecifier::Default(ImportDefaultSpecifier {
                     local, ..
                 }) => {
-                    self.cur_ctx().local_names_to_type_names.insert(
-                        local.sym.to_string(),
-                        TypeName::default_export_for(file.clone())
+                    self.set_type_for_name_for_file(
+                        ts_path,
+                        TypeIdent::Name(local.sym.to_string()),
+                        Type {
+                            name: "*DEFAULT_EXPORT*".to_string(),
+                            is_exported: false,
+                            info: TypeInfo::Alias {
+                                referent: TypeName::default_export_for(file.to_path_buf())
+                            }
+                        }
                     );
                 },
                 ImportSpecifier::Namespace(ImportStarAsSpecifier {
                     local, ..
                 }) => {
-                    self.cur_ctx().local_names_to_type_names.insert(
-                        local.sym.to_string(),
-                        TypeName::all_exports_for(file.clone())
+                    self.set_type_for_name_for_file(
+                        ts_path,
+                        TypeIdent::Name(local.sym.to_string()),
+                        Type {
+                            name: "*ALL_EXPORTS*".to_string(),
+                            is_exported: false,
+                            info: TypeInfo::Alias {
+                                referent: TypeName::all_exports_for(file.to_path_buf())
+                            }
+                        }
                     );
                 }
             }
@@ -318,18 +383,19 @@ impl TsTypes {
 
         let file = self.process_module(Some(dir.to_path_buf()), &s).expect("failed to process mdoule");
 
-        let names_to_add: Vec<(String, TypeName)> = self.types_by_name_by_file.get(&file).unwrap_or(&HashMap::new())
-            .into_iter()
-            .filter(|(_, typ)| typ.is_exported)
-            .map(|(name, typ)| {
-                (name.to_string(), TypeName::for_name(file.clone(), &typ.name))
-            }).collect();
-        
-        let ctx = self.cur_ctx();
-        names_to_add.into_iter()
-            .for_each(|(name, typ)| {
-                ctx.local_names_to_type_names.insert(name, typ);
-            });
+        let type_name = format!("*EXPORT_ALL*{}*", file.to_string_lossy());
+
+        self.set_type_for_name_for_file(
+            ts_path,
+            TypeIdent::Name(type_name.to_string()),
+            Type {
+                name: type_name.to_string(),
+                is_exported: false,
+                info: TypeInfo::Alias {
+                    referent: TypeName::all_exports_for(file)
+                }
+            }
+        );
     }
 
     fn qualified_name_to_str_vec(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> Vec<String> {
@@ -358,30 +424,27 @@ impl TsTypes {
         TypeName::for_qualified_name(ts_path.to_path_buf(), name_path)
     }
 
-    fn process_type_ref(&mut self, ts_path: &Path, TsTypeRef { type_name, type_params, .. }: &TsTypeRef) -> TsType {
+    fn process_type_ref(&mut self, ts_path: &Path, TsTypeRef { type_name, type_params, .. }: &TsTypeRef) -> TypeInfo {
         match type_name {
             TsEntityName::Ident(Ident { sym, .. }) => {
-                if self.cur_ctx().local_names_to_type_names.get(&sym.to_string()).is_none() {
-                    println!("can't find name!!!, {:?}, {}", ts_path, sym.to_string());
-                }
-                TsType::TypeRef {
-                    type_name: self.cur_ctx().local_names_to_type_names.get(&sym.to_string()).unwrap().clone()
+                TypeInfo::Alias {
+                    referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
                 }
             },
             TsEntityName::TsQualifiedName(qn) => {
-                TsType::TypeRef {
-                    type_name: self.qualified_name_to_type_name(ts_path, qn)
+                TypeInfo::Alias {
+                    referent: self.qualified_name_to_type_name(ts_path, qn)
                 }
             }
         }
     }
 
-    fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TsType {
+    fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TypeInfo {
         match ts_type {
             swc_ecma_ast::TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
             // TODO: more cases
-            _ => TsType::TypeRef {
-                type_name: TypeName::default_export_for(ts_path.to_path_buf())
+            _ => TypeInfo::Alias {
+                referent: TypeName::default_export_for(ts_path.to_path_buf())
             }
         }
     }
@@ -418,7 +481,7 @@ impl TsTypes {
                         })
                     },
                     // TODO: add other variants
-                    _ => Some(("a".to_string(), TsType::TypeRef { type_name: TypeName::for_name(ts_path.to_path_buf(), "hello") }))
+                    _ => Some(("a".to_string(), TypeInfo::Alias { referent: TypeName::for_name(ts_path.to_path_buf(), "hello") }))
                 }).collect()
             }
         }
@@ -451,12 +514,20 @@ impl TsTypes {
         }
     }
 
-    fn process_export_decl(&mut self, ts_path: &Path, export_decl: &ExportDecl) {
-        let ExportDecl { decl, .. } = export_decl;
+    fn process_ts_alias(&mut self, ts_path: &Path, TsTypeAliasDecl { id, type_params, type_ann, .. }: &TsTypeAliasDecl) -> Type {
+        let type_info = self.process_type(ts_path, &*type_ann);
+        Type {
+            name: id.sym.to_string(),
+            is_exported: false,
+            info: type_info,
+        }
+    }
 
+    fn process_export_decl(&mut self, ts_path: &Path, ExportDecl { decl, .. }: &ExportDecl) {
         let mut typ = match decl {
             Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
             Decl::TsEnum(enm) => self.process_ts_enum(ts_path, enm),
+            Decl::TsTypeAlias(alias) => self.process_ts_alias(ts_path, alias),
             _ => 
                 // TODO: just to make the compiler happy, implement more cases
                 Type {
@@ -474,8 +545,7 @@ impl TsTypes {
         self.types_by_name_by_file
             .entry(ts_path.to_path_buf())
             .or_insert(HashMap::new())
-            .insert(type_name.to_string(), typ);
-        self.cur_ctx().local_names_to_type_names.insert(type_name.to_string(), TypeName::for_name(ts_path.to_path_buf(), &type_name));
+            .insert(TypeIdent::Name(type_name.to_string()), typ);
     }
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
