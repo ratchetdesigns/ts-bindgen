@@ -196,7 +196,16 @@ enum TypeInfo {
     PrimitiveNull {},
     Array {
         item_type: Box<TypeInfo>,
-    }
+    },
+    Optional {
+        item_type: Box<TypeInfo>,
+    },
+    Union {
+        types: Vec<TypeInfo>,
+    },
+    Intersection {
+        types: Vec<TypeInfo>,
+    },
 }
 
 impl TypeInfo {
@@ -227,6 +236,21 @@ impl TypeInfo {
             Self::Array { item_type } => {
                 Self::Array {
                     item_type: Box::new(item_type.resolve_names(&types_by_name_by_file)),
+                }
+            },
+            Self::Optional { item_type } => {
+                Self::Optional {
+                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file)),
+                }
+            },
+            Self::Union { types } => {
+                Self::Union {
+                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file)).collect(),
+                }
+            },
+            Self::Intersection { types } => {
+                Self::Intersection {
+                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file)).collect(),
                 }
             },
             Self::Enum { .. } => self.clone(),
@@ -494,11 +518,32 @@ impl TsTypes {
         }
     }
 
+    fn process_optional_type(&mut self, ts_path: &Path, TsOptionalType { type_ann, .. }: &TsOptionalType) -> TypeInfo {
+        TypeInfo::Optional {
+            item_type: Box::new(self.process_type(ts_path, type_ann))
+        }
+    }
+
+    fn process_union_type(&mut self, ts_path: &Path, TsUnionType { types, .. }: &TsUnionType) -> TypeInfo {
+        TypeInfo::Union {
+            types: types.iter().map(|t| self.process_type(ts_path, t)).collect(),
+        }
+    }
+
+    fn process_intersection_type(&mut self, ts_path: &Path, TsIntersectionType { types, .. }: &TsIntersectionType) -> TypeInfo {
+        TypeInfo::Intersection {
+            types: types.iter().map(|t| self.process_type(ts_path, t)).collect(),
+        }
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
             TsType::TsKeywordType(keyword_type) => self.process_keyword_type(ts_path, keyword_type),
             TsType::TsArrayType(array_type) => self.process_array_type(ts_path, array_type),
+            TsType::TsOptionalType(opt_type) => self.process_optional_type(ts_path, opt_type),
+            TsType::TsUnionOrIntersectionType(TsUnionOrIntersectionType::TsUnionType(union_type)) => self.process_union_type(ts_path, union_type),
+            TsType::TsUnionOrIntersectionType(TsUnionOrIntersectionType::TsIntersectionType(isect_type)) => self.process_intersection_type(ts_path, isect_type),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
@@ -533,11 +578,19 @@ impl TsTypes {
             info: TypeInfo::Interface {
                 fields: body.body.iter().filter_map(|el| match el {
                     TsTypeElement::TsPropertySignature(TsPropertySignature {
-                        key, type_ann, ..
+                        key, type_ann, optional, ..
                     }) => {
                         type_ann.as_ref().and_then(|t| {
                             self.prop_key_to_name(key)
-                                .map(|n| (n, self.process_type(ts_path, &t.type_ann)))
+                                .map(|n| {
+                                    let item_type = self.process_type(ts_path, &t.type_ann);
+                                    (n,
+                                     if *optional {
+                                         TypeInfo::Optional { item_type: Box::new(item_type) }
+                                     } else {
+                                         item_type
+                                     })
+                                })
                         })
                     },
                     // TODO: add other variants
