@@ -206,10 +206,25 @@ enum TypeInfo {
     Intersection {
         types: Vec<TypeInfo>,
     },
+    Mapped {
+        value_type: Box<TypeInfo>,
+    },
+    LitNumber {
+        n: f64,
+    },
+    LitString {
+        s: String,
+    },
+    LitBoolean {
+        b: bool,
+    },
 }
 
 impl TypeInfo {
     fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        // TODO: need to recursively resolve. really, make resolve_names return a subset of
+        // TypeInfo enum variants as a new type ResolvedTypeInfo
+
         match self {
             Self::Interface { fields } => {
                 Self::Interface {
@@ -219,9 +234,9 @@ impl TypeInfo {
                 }
             },
             Self::Alias { referent } => {
-                // TODO: need to recursively resolve. really, make resolve_names return a subset of
-                // TypeInfo enum variants as a new type ResolvedTypeInfo
-                println!("Resolve {:?}, {:?}, {:?}", &referent, types_by_name_by_file.keys(), types_by_name_by_file.get(&referent.file));
+                if referent.name == TypeIdent::Name("Array".to_string()) {
+                    // TODO: use generic param for Array to construct a TypeInfo::Array
+                }
                 types_by_name_by_file.get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
                         TypeIdent::QualifiedName(path) => types_by_name.get(&TypeIdent::Name(path.first().expect("Can't resolve qualified name").to_string())), // TODO
@@ -253,6 +268,11 @@ impl TypeInfo {
                     types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file)).collect(),
                 }
             },
+            Self::Mapped { value_type } => {
+                Self::Mapped {
+                    value_type: Box::new(value_type.resolve_names(&types_by_name_by_file))
+                }
+            },
             Self::Enum { .. } => self.clone(),
             Self::PrimitiveAny {} => self.clone(),
             Self::PrimitiveNumber {} => self.clone(),
@@ -264,6 +284,9 @@ impl TypeInfo {
             Self::PrimitiveVoid {} => self.clone(),
             Self::PrimitiveUndefined {} => self.clone(),
             Self::PrimitiveNull {} => self.clone(),
+            Self::LitNumber { .. } => self.clone(),
+            Self::LitString { .. } => self.clone(),
+            Self::LitBoolean { .. } => self.clone(),
         }
     }
 }
@@ -536,7 +559,32 @@ impl TsTypes {
         }
     }
 
-    fn process_type(&mut self, ts_path: &Path, ts_type: &swc_ecma_ast::TsType) -> TypeInfo {
+    fn process_type_lit(&mut self, ts_path: &Path, TsTypeLit { members, .. }: &TsTypeLit) -> TypeInfo {
+        if members.len() != 1 || !members.first().expect("no members").is_ts_index_signature() {
+            panic!("Bad type lit, {:?}, in {:?}", members, ts_path);
+        }
+
+        let mem = members.first().expect("no members for mapped type");
+        if let TsTypeElement::TsIndexSignature(index_sig) = mem {
+            TypeInfo::Mapped {
+                value_type: Box::new(self.process_type(ts_path, &index_sig.type_ann.as_ref().expect("Need a type for a mapped type").type_ann))
+            }
+        } else {
+            panic!("bad members for mapped type, {:?}", members);
+        }
+    }
+
+    fn process_literal_type(&mut self, ts_path: &Path, TsLitType { lit, .. }: &TsLitType) -> TypeInfo {
+        match lit {
+            TsLit::Number(n) => TypeInfo::LitNumber { n: n.value },
+            TsLit::Str(s) => TypeInfo::LitString { s: s.value.to_string() },
+            TsLit::Bool(b) => TypeInfo::LitBoolean { b: b.value },
+            TsLit::BigInt(n) => panic!("we don't support literal bigints yet"),
+            TsLit::Tpl(t) => panic!("we don't support template literals yet"),
+        }
+    }
+
+    fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
             TsType::TsKeywordType(keyword_type) => self.process_keyword_type(ts_path, keyword_type),
@@ -544,6 +592,9 @@ impl TsTypes {
             TsType::TsOptionalType(opt_type) => self.process_optional_type(ts_path, opt_type),
             TsType::TsUnionOrIntersectionType(TsUnionOrIntersectionType::TsUnionType(union_type)) => self.process_union_type(ts_path, union_type),
             TsType::TsUnionOrIntersectionType(TsUnionOrIntersectionType::TsIntersectionType(isect_type)) => self.process_intersection_type(ts_path, isect_type),
+            TsType::TsTypeLit(type_lit) => self.process_type_lit(ts_path, type_lit),
+            TsType::TsLitType(lit_type) => self.process_literal_type(ts_path, lit_type),
+            TsType::TsParenthesizedType(TsParenthesizedType { type_ann, .. }) => self.process_type(ts_path, &type_ann),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
@@ -641,7 +692,8 @@ impl TsTypes {
             Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
             Decl::TsEnum(enm) => self.process_ts_enum(ts_path, enm),
             Decl::TsTypeAlias(alias) => self.process_ts_alias(ts_path, alias),
-            _ => 
+            _ => {
+                // println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
                 Type {
                     name: "hi".to_string(),
@@ -650,6 +702,7 @@ impl TsTypes {
                         fields: HashMap::new()
                     }
                 }
+            }
         };
 
         typ.is_exported = true;
