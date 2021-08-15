@@ -293,6 +293,14 @@ impl TypeInfo {
                         item_type: Box::new(type_params.first().as_ref().unwrap().resolve_names(&types_by_name_by_file))
                     };
                 }
+
+                if referent.name == TypeIdent::Name("Record".to_string()) {
+                    // TODO: do we care about key type?
+                    return TypeInfo::Mapped {
+                        value_type: Box::new(type_params.get(2).as_ref().unwrap().resolve_names(&types_by_name_by_file))
+                    };
+                }
+
                 types_by_name_by_file.get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
                         TypeIdent::QualifiedName(path) => types_by_name.get(&TypeIdent::Name(path.first().expect("Can't resolve qualified name").to_string())), // TODO
@@ -411,8 +419,6 @@ impl TsTypes {
         let mut tt: TsTypes = Default::default();
         tt.process_module(None, module_name)?;
 
-        println!("HERE, {:?}", tt.types_by_name_by_file);
-
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
         for (file, types_by_name) in &tt.types_by_name_by_file {
             let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
@@ -421,7 +427,7 @@ impl TsTypes {
 
         tt.types_by_name_by_file = resolved_types_by_name_by_file;
 
-        println!("FINITO {:?}", tt.types_by_name_by_file);
+        //println!("FINITO {:?}", tt.types_by_name_by_file);
 
         Ok(tt)
     }
