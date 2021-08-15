@@ -199,8 +199,24 @@ impl Member {
 }
 
 #[derive(Debug, Clone)]
+struct Indexer {
+    readonly: bool,
+    type_info: Box<TypeInfo>,
+}
+
+impl Indexer {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        Indexer {
+            readonly: self.readonly,
+            type_info: Box::new(self.type_info.resolve_names(&types_by_name_by_file))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum TypeInfo {
     Interface {
+        indexer: Option<Indexer>,
         fields: HashMap<String, TypeInfo>,
     },
     Enum {
@@ -208,6 +224,7 @@ enum TypeInfo {
     },
     Alias {
         referent: TypeName,
+        type_params: Vec<TypeInfo>,
     },
     PrimitiveAny {},
     PrimitiveNumber {},
@@ -262,16 +279,19 @@ impl TypeInfo {
         // TypeInfo enum variants as a new type ResolvedTypeInfo
 
         match self {
-            Self::Interface { fields } => {
+            Self::Interface { indexer, fields } => {
                 Self::Interface {
+                    indexer: indexer.as_ref().map(|i| i.resolve_names(&types_by_name_by_file)),
                     fields: fields.iter().map(|(n, t)| {
                         (n.to_string(), t.resolve_names(&types_by_name_by_file))
                     }).collect()
                 }
             },
-            Self::Alias { referent } => {
+            Self::Alias { referent, type_params } => {
                 if referent.name == TypeIdent::Name("Array".to_string()) {
-                    // TODO: use generic param for Array to construct a TypeInfo::Array
+                    return TypeInfo::Array {
+                        item_type: Box::new(type_params.first().as_ref().unwrap().resolve_names(&types_by_name_by_file))
+                    };
                 }
                 types_by_name_by_file.get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
@@ -391,11 +411,10 @@ impl TsTypes {
         let mut tt: TsTypes = Default::default();
         tt.process_module(None, module_name)?;
 
-        println!("pre-resolved: {:?}", &tt.types_by_name_by_file);
+        println!("HERE, {:?}", tt.types_by_name_by_file);
 
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
         for (file, types_by_name) in &tt.types_by_name_by_file {
-            println!("RESOLVING FILE {:?}", file);
             let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
             resolved_types_by_name_by_file.insert(file.clone(), resolved);
         };
@@ -457,7 +476,6 @@ impl TsTypes {
     }
 
     fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
-        println!("set for file {:?} -> {:?} -> {:?}", file, &name, &typ);
         self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
             names_to_types.insert(
                 name.clone(),
@@ -487,7 +505,8 @@ impl TsTypes {
                             name: local.sym.to_string(),
                             is_exported: false,
                             info: TypeInfo::Alias {
-                                referent: TypeName::for_name(file.to_path_buf(), &imported.as_ref().unwrap_or(local).sym.to_string())
+                                referent: TypeName::for_name(file.to_path_buf(), &imported.as_ref().unwrap_or(local).sym.to_string()),
+                                type_params: Default::default()
                             }
                         }
                     );
@@ -502,7 +521,8 @@ impl TsTypes {
                             name: "*DEFAULT_EXPORT*".to_string(),
                             is_exported: false,
                             info: TypeInfo::Alias {
-                                referent: TypeName::default_export_for(file.to_path_buf())
+                                referent: TypeName::default_export_for(file.to_path_buf()),
+                                type_params: Default::default(),
                             }
                         }
                     );
@@ -517,7 +537,8 @@ impl TsTypes {
                             name: "*ALL_EXPORTS*".to_string(),
                             is_exported: false,
                             info: TypeInfo::Alias {
-                                referent: TypeName::all_exports_for(file.to_path_buf())
+                                referent: TypeName::all_exports_for(file.to_path_buf()),
+                                type_params: Default::default()
                             }
                         }
                     );
@@ -586,11 +607,17 @@ impl TsTypes {
             TsEntityName::Ident(Ident { sym, .. }) => {
                 TypeInfo::Alias {
                     referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
+                    type_params: type_params.as_ref().map(|tps| {
+                        tps.params.iter().map(|tp| self.process_type(ts_path, tp)).collect()
+                    }).unwrap_or(Default::default())
                 }
             },
             TsEntityName::TsQualifiedName(qn) => {
                 TypeInfo::Alias {
-                    referent: self.qualified_name_to_type_name(ts_path, qn)
+                    referent: self.qualified_name_to_type_name(ts_path, qn),
+                    type_params: type_params.as_ref().map(|tps| {
+                        tps.params.iter().map(|tp| self.process_type(ts_path, tp)).collect()
+                    }).unwrap_or(Default::default())
                 }
             }
         }
@@ -710,7 +737,8 @@ impl TsTypes {
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Alias {
-                    referent: TypeName::default_export_for(ts_path.to_path_buf())
+                    referent: TypeName::default_export_for(ts_path.to_path_buf()),
+                    type_params: Default::default()
                 }
             }
         }
@@ -738,25 +766,63 @@ impl TsTypes {
             name: id.sym.to_string(),
             is_exported: false,
             info: TypeInfo::Interface {
+                indexer: body.body.iter().find_map(|el| match el {
+                    TsTypeElement::TsIndexSignature(TsIndexSignature {
+                        readonly, type_ann, params, ..
+                    }) => {
+                        if params.len() != 1 {
+                            panic!("indexing signatures should only have 1 param");
+                        }
+
+                        Some(Indexer {
+                            readonly: readonly.clone(),
+                            type_info: Box::new(match params.first().unwrap() {
+                                TsFnParam::Ident(ident) => ident.type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {}),
+                                _ => panic!("we only support ident indexers"),
+                            })
+                        })
+                    },
+                    _ => None,
+                }),
                 fields: body.body.iter().filter_map(|el| match el {
                     TsTypeElement::TsPropertySignature(TsPropertySignature {
                         key, type_ann, optional, ..
                     }) => {
-                        type_ann.as_ref().and_then(|t| {
-                            self.prop_key_to_name(key)
-                                .map(|n| {
-                                    let item_type = self.process_type(ts_path, &t.type_ann);
-                                    (n,
-                                     if *optional {
-                                         TypeInfo::Optional { item_type: Box::new(item_type) }
-                                     } else {
-                                         item_type
-                                     })
-                                })
-                        })
+                        Some((self.prop_key_to_name(key).expect("bad prop key"),
+                         type_ann.as_ref().map(|t| {
+                            let item_type = self.process_type(ts_path, &t.type_ann);
+                            if *optional {
+                                TypeInfo::Optional { item_type: Box::new(item_type) }
+                            } else {
+                                item_type
+                            }
+                        }).unwrap_or(TypeInfo::PrimitiveAny {})))
+                    },
+                    TsTypeElement::TsMethodSignature(TsMethodSignature {
+                        key, params, type_ann, type_params, ..
+                    }) => {
+                        Some((self.prop_key_to_name(key).expect("bad method key"),
+                         TypeInfo::Func(Func {
+                            params: params.iter().map(|param|
+                                match param {
+                                    TsFnParam::Ident(ident) => Param {
+                                        name: ident.id.sym.to_string(),
+                                        type_info: ident.type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {}),
+                                    },
+                                    _ => panic!("we only support ident params for methods"),
+                                }
+                            ).collect(),
+                            return_type: Box::new(type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {})),
+                         })))
+                    },
+                    TsTypeElement::TsIndexSignature(TsIndexSignature { .. }) => {
+                        None
                     },
                     // TODO: add other variants
-                    _ => Some(("a".to_string(), TypeInfo::Alias { referent: TypeName::for_name(ts_path.to_path_buf(), "hello") }))
+                    _ => {
+                        println!("unknown_variant: {:?}", el);
+                        None
+                    }
                 }).collect()
             }
         }
@@ -856,13 +922,13 @@ impl TsTypes {
                     name: "hi".to_string(),
                     is_exported: false,
                     info: TypeInfo::Interface {
+                        indexer: None,
                         fields: HashMap::new()
                     }
                 }]
             }
         };
 
-        println!("exporting");
         types.into_iter().map(|mut typ| {
             typ.is_exported = true;
             typ
@@ -898,7 +964,7 @@ impl TsTypes {
                             }
                         }).collect::<HashMap<String, TypeInfo>>();
                     println!("Namespace {:?}, {:?} -> {:?}", ts_path, name, &fields);
-                    self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name.sym.to_string()), Type { name: name.sym.to_string(), is_exported: true, info: TypeInfo::Interface { fields } });
+                    self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name.sym.to_string()), Type { name: name.sym.to_string(), is_exported: true, info: TypeInfo::Interface { indexer: None, fields } });
                     None
                 }
             }
@@ -917,7 +983,8 @@ impl TsTypes {
                             TypeIdent::Name(n) => TypeName::for_name(file.to_path_buf(), &n),
                             TypeIdent::DefaultExport() => TypeName::default_export_for(file.to_path_buf()),
                             _ => panic!("bad export"),
-                        }
+                        },
+                        type_params: Default::default()
                     }
                 }
             );
