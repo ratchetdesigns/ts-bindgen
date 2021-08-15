@@ -468,7 +468,7 @@ impl TsTypes {
         for item in &module.body {
             match item {
                 ModuleItem::ModuleDecl(decl) => self.process_module_decl(&ts_path, &decl),
-                ModuleItem::Stmt(stmt) => self.process_stmt(&stmt),
+                ModuleItem::Stmt(stmt) => self.process_stmt(&ts_path, &stmt),
             }
         }
 
@@ -908,15 +908,15 @@ impl TsTypes {
         }
     }
 
-    fn process_export_decl(&mut self, ts_path: &Path, ExportDecl { decl, .. }: &ExportDecl) {
-        let types = match decl {
+    fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Type> {
+        match decl {
             Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
             Decl::TsEnum(enm) => vec![self.process_ts_enum(ts_path, enm)],
             Decl::TsTypeAlias(alias) => vec![self.process_ts_alias(ts_path, alias)],
             Decl::Class(class) => vec![self.process_class_type(ts_path, class)],
             Decl::Var(VarDecl { decls, .. }) => decls.iter().map(|var| self.process_var(ts_path, var)).collect(),
             _ => {
-                //println!("MISSING DECL {:?} {:?}", ts_path, decl);
+                println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
                 vec![Type {
                     name: "hi".to_string(),
@@ -927,7 +927,11 @@ impl TsTypes {
                     }
                 }]
             }
-        };
+        }
+    }
+
+    fn process_export_decl(&mut self, ts_path: &Path, ExportDecl { decl, .. }: &ExportDecl) {
+        let types = self.process_decl(ts_path, decl);
 
         types.into_iter().map(|mut typ| {
             typ.is_exported = true;
@@ -1020,7 +1024,15 @@ impl TsTypes {
         }
     }
 
-    fn process_stmt(&mut self, _stmt: &Stmt) {
-        // we don't deal with statements
+    fn process_stmt(&mut self, ts_path: &Path, stmt: &Stmt) {
+        match stmt {
+            Stmt::Decl(decl) => self.process_decl(ts_path, &decl)
+                .into_iter().for_each(|typ| {
+                    let type_name = typ.name.to_string();
+
+                    self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
+                }),
+            _ => () // we don't deal with most statements
+        }
     }
 }
