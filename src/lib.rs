@@ -412,6 +412,7 @@ impl Type {
 #[derive(Default, Debug)]
 struct TsTypes {
     types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    namespace_stack: Vec<Vec<String>>,
 }
 
 impl TsTypes {
@@ -458,6 +459,19 @@ impl TsTypes {
         Ok(module)
     }
 
+    fn process_module_item(&mut self, ts_path: &Path, item: &ModuleItem) {
+        match item {
+            ModuleItem::ModuleDecl(decl) => self.process_module_decl(&ts_path, &decl),
+            ModuleItem::Stmt(stmt) => self.process_stmt(&ts_path, &stmt),
+        }
+    }
+
+    fn process_module_items(&mut self, ts_path: &Path, items: &Vec<ModuleItem>) {
+        for item in items {
+            self.process_module_item(&ts_path, &item);
+        }
+    }
+
     fn process_module(&mut self, module_base: Option<PathBuf>, module_name: &str) -> Result<PathBuf, swc_ecma_parser::error::Error> {
         let ts_path = get_ts_path(module_base, &module_name, &typings_module_resolver).expect("TODO: Need to convert this exception type").canonicalize().expect("TODO: Need to convert this exception type");
 
@@ -470,24 +484,43 @@ impl TsTypes {
         }
 
         let module = self.load_module(&ts_path)?;
-
-        for item in &module.body {
-            match item {
-                ModuleItem::ModuleDecl(decl) => self.process_module_decl(&ts_path, &decl),
-                ModuleItem::Stmt(stmt) => self.process_stmt(&ts_path, &stmt),
-            }
-        }
+        self.process_module_items(&ts_path, &module.body);
 
         Ok(ts_path)
     }
 
     fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
-        self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-            names_to_types.insert(
-                name.clone(),
-                typ
-            );
-        });
+        match self.namespace_stack.last() {
+            Some(ns) => {
+                let mut ns = ns.clone();
+                match name {
+                    TypeIdent::Name(s) => {
+                        ns.push(s);
+                    },
+                    TypeIdent::DefaultExport() => panic!("default export within namespace"),
+                    TypeIdent::AllExports() => panic!("all exports within namespace"),
+                    TypeIdent::QualifiedName(name) => {
+                        let mut name = name.clone();
+                        ns.append(&mut name);
+                    },
+                }
+
+                self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                    names_to_types.insert(
+                        TypeIdent::QualifiedName(ns),
+                        typ
+                    );
+                });
+            },
+            None => {
+                self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                    names_to_types.insert(
+                        name.clone(),
+                        typ
+                    );
+                });
+            },
+        }
     }
 
     fn process_import_decl(&mut self, ts_path: &Path, ImportDecl { specifiers, src, .. }: &ImportDecl) {
@@ -921,6 +954,29 @@ impl TsTypes {
             Decl::TsTypeAlias(alias) => vec![self.process_ts_alias(ts_path, alias)],
             Decl::Class(class) => vec![self.process_class_type(ts_path, class)],
             Decl::Var(VarDecl { decls, .. }) => decls.iter().map(|var| self.process_var(ts_path, var)).collect(),
+            Decl::TsModule(TsModuleDecl { id, body, .. }) => {
+                let name = match id {
+                    TsModuleName::Ident(ident) => ident.sym.to_string(),
+                    TsModuleName::Str(s) => s.value.to_string(),
+                };
+
+                let mut full_ns = self.namespace_stack.last().unwrap_or(&Default::default()).clone();
+                full_ns.push(name);
+                self.namespace_stack.push(full_ns);
+
+                for b in body {
+                    match b {
+                        TsNamespaceBody::TsModuleBlock(block) => {
+                            self.process_module_items(ts_path, &block.body)
+                        },
+                        TsNamespaceBody::TsNamespaceDecl(_) => panic!("what is an inner namespace decl?"),
+                    }
+                }
+
+                self.namespace_stack.pop();
+
+                Default::default()
+            },
             _ => {
                 println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
