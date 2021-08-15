@@ -174,6 +174,31 @@ struct EnumMember {
 }
 
 #[derive(Debug, Clone)]
+struct Param {
+    name: String,
+    type_info: TypeInfo,
+}
+
+#[derive(Debug, Clone)]
+struct Func {
+    params: Vec<Param>,
+    return_type: Box<TypeInfo>,
+}
+
+#[derive(Debug, Clone)]
+enum Member {
+    Constructor(),
+    Method(),
+    Property(),
+}
+
+impl Member {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        self.clone() // TODO
+    }
+}
+
+#[derive(Debug, Clone)]
 enum TypeInfo {
     Interface {
         fields: HashMap<String, TypeInfo>,
@@ -218,6 +243,14 @@ enum TypeInfo {
     LitBoolean {
         b: bool,
     },
+    Func(Func),
+    Constructor {
+        params: Vec<Param>,
+        return_type: Box<TypeInfo>,
+    },
+    Class {
+        members: HashMap<String, Member>,
+    },
 }
 
 impl TypeInfo {
@@ -244,6 +277,7 @@ impl TypeInfo {
                         n @ TypeIdent::DefaultExport() => types_by_name.get(&n),
                         n @ TypeIdent::Name(..) => types_by_name.get(&n),
                     })
+                    .or_else(|| {println!("can't resolve, {:?}, {:?}", self, types_by_name_by_file.get(&referent.file)); None})
                     .expect("can't resolve alias")
                     .info
                     .clone()
@@ -273,6 +307,29 @@ impl TypeInfo {
                     value_type: Box::new(value_type.resolve_names(&types_by_name_by_file))
                 }
             },
+            Self::Func(Func { params, return_type }) => {
+                Self::Func(Func {
+                    params: params.iter().map(|p| Param {
+                        name: p.name.to_string(),
+                        type_info: p.type_info.resolve_names(&types_by_name_by_file)
+                    }).collect(),
+                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
+                })
+            },
+            Self::Constructor { params, return_type } => {
+                Self::Constructor {
+                    params: params.iter().map(|p| Param {
+                        name: p.name.to_string(),
+                        type_info: p.type_info.resolve_names(&types_by_name_by_file)
+                    }).collect(),
+                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
+                }
+            },
+            Self::Class { members } => {
+                Self::Class {
+                    members: members.iter().map(|(n, m)| (n.to_string(), m.resolve_names(&types_by_name_by_file))).collect()
+                }
+            },
             Self::Enum { .. } => self.clone(),
             Self::PrimitiveAny {} => self.clone(),
             Self::PrimitiveNumber {} => self.clone(),
@@ -291,7 +348,7 @@ impl TypeInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Type {
     name: String,
     is_exported: bool,
@@ -358,7 +415,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.file_name() == Some(OsStr::new("hello.d.ts")) {
+        if ts_path.file_name() == Some(OsStr::new("adam.d.ts")) {
             println!("MOD!, {:?}", module);
         }
 
@@ -388,7 +445,7 @@ impl TsTypes {
     fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
         self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
             names_to_types.insert(
-                name,
+                name.clone(),
                 typ
             );
         });
@@ -463,17 +520,25 @@ impl TsTypes {
 
         let type_name = format!("*EXPORT_ALL*{}*", file.to_string_lossy());
 
-        self.set_type_for_name_for_file(
-            ts_path,
-            TypeIdent::Name(type_name.to_string()),
-            Type {
-                name: type_name.to_string(),
-                is_exported: false,
-                info: TypeInfo::Alias {
-                    referent: TypeName::all_exports_for(file)
+        let to_export = self.types_by_name_by_file
+            .get(&file)
+            .expect("should have processed file already")
+            .iter()
+            .filter(|(n, t)| t.is_exported)
+            .filter_map(|(n, t)| {
+                match n {
+                    n @ TypeIdent::Name(_) => Some((n.clone(), t.clone())),
+                    _ => None,
                 }
-            }
-        );
+            }).collect::<HashMap<TypeIdent, Type>>();
+
+        to_export.into_iter().for_each(|(name, typ)| {
+            self.set_type_for_name_for_file(
+                ts_path,
+                name,
+                typ
+            );
+        });
     }
 
     fn qualified_name_to_str_vec(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> Vec<String> {
@@ -584,6 +649,36 @@ impl TsTypes {
         }
     }
 
+    fn process_params(&mut self, ts_path: &Path, params: &Vec<TsFnParam>) -> Vec<Param> {
+        params.iter().map(|p| {
+            match p {
+                TsFnParam::Ident(id_param) => {
+                    Param {
+                        name: id_param.id.sym.to_string(),
+                        type_info: id_param.type_ann.as_ref().map(|p_type| {
+                            self.process_type(ts_path, &p_type.type_ann)
+                        }).unwrap_or(TypeInfo::PrimitiveAny {})
+                    }
+                },
+                _ => panic!("we only handle ident params"),
+            }
+        }).collect()
+    }
+
+    fn process_fn_type(&mut self, ts_path: &Path, TsFnType { type_ann, params, type_params, span, .. }: &TsFnType) -> TypeInfo {
+        TypeInfo::Func(Func {
+            params: self.process_params(ts_path, params),
+            return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
+        })
+    }
+
+    fn process_ctor_type(&mut self, ts_path: &Path, TsConstructorType { type_ann, params, type_params, .. }: &TsConstructorType) -> TypeInfo {
+        TypeInfo::Constructor {
+            params: self.process_params(ts_path, params),
+            return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
+        }
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
@@ -595,6 +690,8 @@ impl TsTypes {
             TsType::TsTypeLit(type_lit) => self.process_type_lit(ts_path, type_lit),
             TsType::TsLitType(lit_type) => self.process_literal_type(ts_path, lit_type),
             TsType::TsParenthesizedType(TsParenthesizedType { type_ann, .. }) => self.process_type(ts_path, &type_ann),
+            TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsFnType(f)) => self.process_fn_type(ts_path, &f),
+            TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsConstructorType(ctor)) => self.process_ctor_type(ts_path, &ctor),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
@@ -687,13 +784,45 @@ impl TsTypes {
         }
     }
 
+    fn process_prop_name(&mut self, ts_path: &Path, prop_name: &PropName) -> String {
+        match prop_name {
+            PropName::Ident(ident) => ident.sym.to_string(),
+            PropName::Str(s) => s.value.to_string(),
+            PropName::Num(n) => n.value.to_string(),
+            _ => panic!("We only support ident, str, and num property names"),
+        }
+    }
+
+    fn process_class(&mut self, ts_path: &Path, Class { body, super_class, type_params, super_type_params, .. }: &Class) -> TypeInfo {
+        TypeInfo::Class {
+            members: body.iter().filter_map(|member| match member {
+                ClassMember::Constructor(ctor) => Some((self.process_prop_name(ts_path, &ctor.key), Member::Constructor())),
+                ClassMember::Method(method) => Some((self.process_prop_name(ts_path, &method.key), Member::Method())),
+                ClassMember::PrivateMethod(_) => None,
+                ClassMember::ClassProp(prop) => Some((self.prop_key_to_name(&prop.key).expect("we only handle some prop key types"), Member::Property())),
+                ClassMember::PrivateProp(_) => None,
+                ClassMember::TsIndexSignature(_) => None,
+                ClassMember::Empty(_) => None,
+            }).collect()
+        }
+    }
+
+    fn process_class_type(&mut self, ts_path: &Path, ClassDecl { ident, class, .. }: &ClassDecl) -> Type {
+        Type {
+            name: ident.sym.to_string(),
+            is_exported: false,
+            info: self.process_class(ts_path, class)
+        }
+    }
+
     fn process_export_decl(&mut self, ts_path: &Path, ExportDecl { decl, .. }: &ExportDecl) {
         let mut typ = match decl {
             Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
             Decl::TsEnum(enm) => self.process_ts_enum(ts_path, enm),
             Decl::TsTypeAlias(alias) => self.process_ts_alias(ts_path, alias),
+            Decl::Class(class) => self.process_class_type(ts_path, class),
             _ => {
-                // println!("MISSING DECL {:?} {:?}", ts_path, decl);
+                println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
                 Type {
                     name: "hi".to_string(),
@@ -708,17 +837,17 @@ impl TsTypes {
         typ.is_exported = true;
         let type_name = typ.name.to_string();
 
-        self.types_by_name_by_file
-            .entry(ts_path.to_path_buf())
-            .or_insert(HashMap::new())
-            .insert(TypeIdent::Name(type_name.to_string()), typ);
+        self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
     }
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
             ModuleDecl::ExportDecl(decl) => self.process_export_decl(&ts_path, &decl),
-            ModuleDecl::ExportNamed(_decl) => (),
+            ModuleDecl::ExportNamed(_decl) => {
+                println!("Named {:?}", _decl);
+                ()
+            },
             ModuleDecl::ExportDefaultDecl(_decl) => (),
             ModuleDecl::ExportDefaultExpr(_decl) => (),
             ModuleDecl::ExportAll(decl) => self.process_export_all(&ts_path, &decl),
