@@ -8,7 +8,7 @@ use syn::{parse_macro_input, Token, LitStr, Result as ParseResult};
 use std::path::{PathBuf, Path};
 use std::fs::File;
 use std::ffi::OsStr;
-use std::collections::{HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use serde_json::Value;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use swc_ecma_ast::*;
@@ -18,7 +18,7 @@ use swc_common::{sync::Lrc, SourceMap};
 pub fn import_ts(input: TokenStream) -> TokenStream {
     println!("HERE: {:?}", input);
     let import_args = parse_macro_input!(input as ImportArgs);
-    import_args.modules.into_iter().map(|module| {
+    import_args.modules.iter().map(|module| {
         let tt = TsTypes::try_new(&module).expect("tt error");
         Ok("hi".to_string())
     }).collect::<Vec<Result<String, std::io::Error>>>();
@@ -251,6 +251,9 @@ enum TypeInfo {
     Class {
         members: HashMap<String, Member>,
     },
+    Var {
+        type_info: Box<TypeInfo>,
+    },
 }
 
 impl TypeInfo {
@@ -330,6 +333,11 @@ impl TypeInfo {
                     members: members.iter().map(|(n, m)| (n.to_string(), m.resolve_names(&types_by_name_by_file))).collect()
                 }
             },
+            Self::Var { type_info } => {
+                Self::Var {
+                    type_info: Box::new(type_info.resolve_names(&types_by_name_by_file)),
+                }
+            },
             Self::Enum { .. } => self.clone(),
             Self::PrimitiveAny {} => self.clone(),
             Self::PrimitiveNumber {} => self.clone(),
@@ -383,8 +391,11 @@ impl TsTypes {
         let mut tt: TsTypes = Default::default();
         tt.process_module(None, module_name)?;
 
+        println!("pre-resolved: {:?}", &tt.types_by_name_by_file);
+
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
         for (file, types_by_name) in &tt.types_by_name_by_file {
+            println!("RESOLVING FILE {:?}", file);
             let resolved = types_by_name.iter().map(|(n, typ)| (n.clone(), typ.resolve_names(&tt.types_by_name_by_file))).collect();
             resolved_types_by_name_by_file.insert(file.clone(), resolved);
         };
@@ -415,7 +426,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.file_name() == Some(OsStr::new("adam.d.ts")) {
+        if ts_path.to_string_lossy().contains("adam.d.ts") {
             println!("MOD!, {:?}", module);
         }
 
@@ -425,9 +436,12 @@ impl TsTypes {
     fn process_module(&mut self, module_base: Option<PathBuf>, module_name: &str) -> Result<PathBuf, swc_ecma_parser::error::Error> {
         let ts_path = get_ts_path(module_base, &module_name, &typings_module_resolver).expect("TODO: Need to convert this exception type").canonicalize().expect("TODO: Need to convert this exception type");
 
-        if self.types_by_name_by_file.insert(ts_path.clone(), Default::default()).is_some() {
-            // already processed
-            return Ok(ts_path);
+        match self.types_by_name_by_file.entry(ts_path.clone()) {
+            Entry::Occupied(_) => return Ok(ts_path),
+            Entry::Vacant(v) => {
+                v.insert(Default::default());
+                ()
+            },
         }
 
         let module = self.load_module(&ts_path)?;
@@ -443,6 +457,7 @@ impl TsTypes {
     }
 
     fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
+        println!("set for file {:?} -> {:?} -> {:?}", file, &name, &typ);
         self.types_by_name_by_file.entry(file.to_path_buf()).and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
             names_to_types.insert(
                 name.clone(),
@@ -451,8 +466,7 @@ impl TsTypes {
         });
     }
 
-    fn process_import_decl(&mut self, ts_path: &Path, import_decl: &ImportDecl) {
-        let ImportDecl { specifiers, src, .. } = import_decl;
+    fn process_import_decl(&mut self, ts_path: &Path, ImportDecl { specifiers, src, .. }: &ImportDecl) {
         let base = ts_path.parent().expect("All files must have a parent");
         let import = src.value.to_string();
 
@@ -516,7 +530,7 @@ impl TsTypes {
         let s = export_all.src.value.to_string();
         let dir = ts_path.parent().expect("All files must have a parent");
 
-        let file = self.process_module(Some(dir.to_path_buf()), &s).expect("failed to process mdoule");
+        let file = self.process_module(Some(dir.to_path_buf()), &s).expect("failed to process module");
 
         let type_name = format!("*EXPORT_ALL*{}*", file.to_string_lossy());
 
@@ -815,45 +829,127 @@ impl TsTypes {
         }
     }
 
+    fn process_var(&mut self, ts_path: &Path, VarDeclarator { name, .. }: &VarDeclarator) -> Type {
+        match name {
+            Pat::Ident(BindingIdent { id, type_ann }) => Type {
+                name: id.sym.to_string(),
+                is_exported: false,
+                info: TypeInfo::Var {
+                    type_info: Box::new(type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {})),
+                },
+            },
+            _ => panic!("We only support regular identifier variables"),
+        }
+    }
+
     fn process_export_decl(&mut self, ts_path: &Path, ExportDecl { decl, .. }: &ExportDecl) {
-        let mut typ = match decl {
-            Decl::TsInterface(iface) =>  self.process_ts_interface(ts_path, iface),
-            Decl::TsEnum(enm) => self.process_ts_enum(ts_path, enm),
-            Decl::TsTypeAlias(alias) => self.process_ts_alias(ts_path, alias),
-            Decl::Class(class) => self.process_class_type(ts_path, class),
+        let types = match decl {
+            Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
+            Decl::TsEnum(enm) => vec![self.process_ts_enum(ts_path, enm)],
+            Decl::TsTypeAlias(alias) => vec![self.process_ts_alias(ts_path, alias)],
+            Decl::Class(class) => vec![self.process_class_type(ts_path, class)],
+            Decl::Var(VarDecl { decls, .. }) => decls.iter().map(|var| self.process_var(ts_path, var)).collect(),
             _ => {
-                println!("MISSING DECL {:?} {:?}", ts_path, decl);
+                //println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
-                Type {
+                vec![Type {
                     name: "hi".to_string(),
                     is_exported: false,
                     info: TypeInfo::Interface {
                         fields: HashMap::new()
                     }
-                }
+                }]
             }
         };
 
-        typ.is_exported = true;
-        let type_name = typ.name.to_string();
+        println!("exporting");
+        types.into_iter().map(|mut typ| {
+            typ.is_exported = true;
+            typ
+        }).for_each(|typ| {
+            let type_name = typ.name.to_string();
 
-        self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
+            self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
+        });
+    }
+
+    fn process_named_export(&mut self, ts_path: &Path, NamedExport { src, specifiers, .. }: &NamedExport) {
+        if src.is_none() && specifiers.is_empty() {
+            return;
+        }
+
+        let dir = ts_path.parent().expect("All files must have a parent");
+        let file = self.process_module(Some(dir.to_path_buf()), &src.as_ref().expect("need a src").value.to_string()).expect("failed to process module");
+
+        let to_export = specifiers.iter().filter_map(|spec| {
+            match spec {
+                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => Some((TypeIdent::Name(orig.sym.to_string()), exported.as_ref().unwrap_or(orig).sym.to_string())),
+                ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Some((TypeIdent::DefaultExport(), exported.sym.to_string())),
+                ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => {
+                    let fields = self.types_by_name_by_file
+                        .get(&file)
+                        .expect("should have processed file already")
+                        .iter()
+                        .filter(|(n, t)| t.is_exported)
+                        .filter_map(|(n, t)| {
+                            match n {
+                                TypeIdent::Name(name) => Some((name.to_string(), t.info.clone())),
+                                _ => None,
+                            }
+                        }).collect::<HashMap<String, TypeInfo>>();
+                    println!("Namespace {:?}, {:?} -> {:?}", ts_path, name, &fields);
+                    self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name.sym.to_string()), Type { name: name.sym.to_string(), is_exported: true, info: TypeInfo::Interface { fields } });
+                    None
+                }
+            }
+        }).collect::<HashMap<TypeIdent, String>>();
+
+        to_export.into_iter().for_each(|(from, to)| {
+            println!("MAP TYPES {:?}, {:?} -> {:?}", ts_path, &from, &to);
+            self.set_type_for_name_for_file(
+                ts_path,
+                TypeIdent::Name(to.to_string()),
+                Type {
+                    name: to.to_string(),
+                    is_exported: true,
+                    info: TypeInfo::Alias {
+                        referent: match from {
+                            TypeIdent::Name(n) => TypeName::for_name(file.to_path_buf(), &n),
+                            TypeIdent::DefaultExport() => TypeName::default_export_for(file.to_path_buf()),
+                            _ => panic!("bad export"),
+                        }
+                    }
+                }
+            );
+        });
     }
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
             ModuleDecl::ExportDecl(decl) => self.process_export_decl(&ts_path, &decl),
-            ModuleDecl::ExportNamed(_decl) => {
-                println!("Named {:?}", _decl);
+            ModuleDecl::ExportNamed(decl) => self.process_named_export(&ts_path, &decl),
+            ModuleDecl::ExportDefaultDecl(_decl) => {
+                println!("DEFAULT DECL, {:?}", _decl);
                 ()
             },
-            ModuleDecl::ExportDefaultDecl(_decl) => (),
-            ModuleDecl::ExportDefaultExpr(_decl) => (),
+            ModuleDecl::ExportDefaultExpr(_decl) => {
+                println!("export default expr, {:?}", _decl);
+                ()
+            },
             ModuleDecl::ExportAll(decl) => self.process_export_all(&ts_path, &decl),
-            ModuleDecl::TsImportEquals(_decl) => (),
-            ModuleDecl::TsExportAssignment(_decl) => (),
-            ModuleDecl::TsNamespaceExport(_decl) => (),
+            ModuleDecl::TsImportEquals(_decl) => {
+                println!("import equals, {:?}", _decl);
+                ()
+            },
+            ModuleDecl::TsExportAssignment(_decl) => {
+                println!("export assignment, {:?}", _decl);
+                ()
+            },
+            ModuleDecl::TsNamespaceExport(_decl) => {
+                println!("export namespace, {:?}", _decl);
+                ()
+            },
         }
     }
 
