@@ -177,6 +177,7 @@ struct EnumMember {
 struct Param {
     name: String,
     type_info: TypeInfo,
+    is_variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +343,7 @@ impl TypeInfo {
                 Self::Func(Func {
                     params: params.iter().map(|p| Param {
                         name: p.name.to_string(),
+                        is_variadic: p.is_variadic.clone(),
                         type_info: p.type_info.resolve_names(&types_by_name_by_file)
                     }).collect(),
                     return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
@@ -351,6 +353,7 @@ impl TypeInfo {
                 Self::Constructor {
                     params: params.iter().map(|p| Param {
                         name: p.name.to_string(),
+                        is_variadic: p.is_variadic.clone(),
                         type_info: p.type_info.resolve_names(&types_by_name_by_file)
                     }).collect(),
                     return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
@@ -735,6 +738,7 @@ impl TsTypes {
                 TsFnParam::Ident(id_param) => {
                     Param {
                         name: id_param.id.sym.to_string(),
+                        is_variadic: false,
                         type_info: id_param.type_ann.as_ref().map(|p_type| {
                             self.process_type(ts_path, &p_type.type_ann)
                         }).unwrap_or(TypeInfo::PrimitiveAny {})
@@ -846,6 +850,7 @@ impl TsTypes {
                                 match param {
                                     TsFnParam::Ident(ident) => Param {
                                         name: ident.id.sym.to_string(),
+                                        is_variadic: false,
                                         type_info: ident.type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {}),
                                     },
                                     _ => panic!("we only support ident params for methods"),
@@ -947,6 +952,59 @@ impl TsTypes {
         }
     }
 
+    fn process_raw_params(&mut self, ts_path: &Path, params: &Vec<swc_ecma_ast::Param>) -> Vec<Param> {
+        params.iter().map(|p| {
+            match &p.pat {
+                Pat::Ident(id_param) => {
+                    Param {
+                        name: id_param.id.sym.to_string(),
+                        is_variadic: false,
+                        type_info: id_param.type_ann.as_ref().map(|p_type| {
+                            self.process_type(ts_path, &p_type.type_ann)
+                        }).unwrap_or(TypeInfo::PrimitiveAny {})
+                    }
+                },
+                Pat::Rest(RestPat { arg, type_ann, .. }) => {
+                    match &**arg {
+                        Pat::Ident(id_param) => {
+                            Param {
+                                name: id_param.id.sym.to_string(),
+                                is_variadic: false,
+                                type_info: type_ann.as_ref().map(|t| {
+                                    self.process_type(ts_path, &t.type_ann)
+                                }).unwrap_or(TypeInfo::PrimitiveAny {})
+                            }
+                        },
+                        _ => {
+                            println!("found rest param arg {:?}", &arg);
+                            panic!("we only handle idents in rest patterns");
+                        },
+                    }
+                },
+                _ => {
+                    println!("found param, {:?}", &p);
+                    panic!("bad params")
+                },
+            }
+        }).collect()
+    }
+
+    fn process_fn_decl(&mut self, ts_path: &Path, FnDecl { ident, function: Function { params, return_type, .. }, .. }: &FnDecl) -> Type {
+        Type {
+            name: ident.sym.to_string(),
+            is_exported: false,
+            info: TypeInfo::Func(Func {
+                params: self.process_raw_params(ts_path, params),
+                return_type: Box::new(
+                    return_type
+                        .as_ref()
+                        .map(|t| self.process_type(ts_path, &t.type_ann))
+                        .unwrap_or(TypeInfo::PrimitiveAny {})
+                ),
+            })
+        }
+    }
+
     fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Type> {
         match decl {
             Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
@@ -977,6 +1035,7 @@ impl TsTypes {
 
                 Default::default()
             },
+            Decl::Fn(fn_decl) => vec![self.process_fn_decl(ts_path, fn_decl)],
             _ => {
                 println!("MISSING DECL {:?} {:?}", ts_path, decl);
                 // TODO: just to make the compiler happy, implement more cases
