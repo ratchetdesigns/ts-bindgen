@@ -291,12 +291,14 @@ impl TypeInfo {
             },
             Self::Alias { referent, type_params } => {
                 if referent.name == TypeIdent::Name("Array".to_string()) {
+                    assert_eq!(type_params.len(), 1, "expected 1 type param for Array");
                     return TypeInfo::Array {
                         item_type: Box::new(type_params.first().as_ref().unwrap().resolve_names(&types_by_name_by_file))
                     };
                 }
 
                 if referent.name == TypeIdent::Name("Record".to_string()) {
+                    assert_eq!(type_params.len(), 2, "expected 2 type params for Record");
                     // TODO: do we care about key type?
                     return TypeInfo::Mapped {
                         value_type: Box::new(type_params.get(2).as_ref().unwrap().resolve_names(&types_by_name_by_file))
@@ -305,6 +307,23 @@ impl TypeInfo {
 
                 if referent.name == TypeIdent::Name("Date".to_string()) {
                     return TypeInfo::BuiltinDate { };
+                }
+
+                if referent.name == TypeIdent::Name("Function".to_string()) {
+                    return TypeInfo::Func(Func {
+                        return_type: Box::new(TypeInfo::PrimitiveAny {}),
+                        params: vec![Param {
+                            name: "args".to_string(),
+                            type_info: TypeInfo::PrimitiveAny {},
+                            is_variadic: true,
+                        }],
+                    });
+                }
+
+                if referent.name == TypeIdent::Name("Object".to_string()) {
+                    return TypeInfo::Mapped {
+                        value_type: Box::new(TypeInfo::PrimitiveAny {}),
+                    };
                 }
 
                 types_by_name_by_file.get(&referent.file)
