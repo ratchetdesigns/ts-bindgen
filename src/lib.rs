@@ -237,6 +237,7 @@ enum TypeInfo {
     PrimitiveVoid {},
     PrimitiveUndefined {},
     PrimitiveNull {},
+    BuiltinDate {},
     Array {
         item_type: Box<TypeInfo>,
     },
@@ -300,6 +301,10 @@ impl TypeInfo {
                     return TypeInfo::Mapped {
                         value_type: Box::new(type_params.get(2).as_ref().unwrap().resolve_names(&types_by_name_by_file))
                     };
+                }
+
+                if referent.name == TypeIdent::Name("Date".to_string()) {
+                    return TypeInfo::BuiltinDate { };
                 }
 
                 types_by_name_by_file.get(&referent.file)
@@ -383,6 +388,7 @@ impl TypeInfo {
             Self::LitNumber { .. } => self.clone(),
             Self::LitString { .. } => self.clone(),
             Self::LitBoolean { .. } => self.clone(),
+            Self::BuiltinDate {} => self.clone(),
         }
     }
 }
@@ -763,6 +769,20 @@ impl TsTypes {
         }
     }
 
+    fn process_type_predicate(&mut self, ts_path: &Path, TsTypePredicate { param_name, type_ann, .. }: &TsTypePredicate) -> TypeInfo {
+        TypeInfo::Func(Func {
+            params: vec![Param {
+                name: match param_name {
+                    TsThisTypeOrIdent::Ident(ident) => ident.sym.to_string(),
+                    TsThisTypeOrIdent::TsThisType(this) => "this".to_string(),
+                },
+                is_variadic: false,
+                type_info: type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {})
+            }],
+            return_type: Box::new(TypeInfo::PrimitiveBoolean {}),
+        })
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
@@ -776,6 +796,7 @@ impl TsTypes {
             TsType::TsParenthesizedType(TsParenthesizedType { type_ann, .. }) => self.process_type(ts_path, &type_ann),
             TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsFnType(f)) => self.process_fn_type(ts_path, &f),
             TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsConstructorType(ctor)) => self.process_ctor_type(ts_path, &ctor),
+            TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, &pred),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
