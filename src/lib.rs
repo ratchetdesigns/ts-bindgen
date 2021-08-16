@@ -2,7 +2,6 @@ extern crate proc_macro;
 
 // TODO: make types_by_name_by_file a multi-level map (enum with an inner map and a type case) and
 // make qualified name lookups work via this
-// TODO: update namespace export to use a Namespace instead of an Interface
 // TODO: when generating code, use include_str! to make the compiler think we have a dependency on
 // any ts files we use so we recompile when they do:
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
@@ -641,21 +640,43 @@ impl TsTypes {
                 ImportSpecifier::Namespace(ImportStarAsSpecifier {
                     local, ..
                 }) => {
-                    self.set_type_for_name_for_file(
-                        ts_path,
-                        TypeIdent::Name(local.sym.to_string()),
-                        Type {
-                            name: "*ALL_EXPORTS*".to_string(),
-                            is_exported: false,
-                            info: TypeInfo::Alias {
-                                referent: TypeName::all_exports_for(file.to_path_buf()),
-                                type_params: Default::default()
-                            }
-                        }
-                    );
+                    self.import_namespace(ts_path, &file, local, false);
                 }
             }
         })
+    }
+
+    fn import_namespace(&mut self, ts_path: &Path, import_from: &Path, ns: &Ident, should_export: bool) {
+        let full_ns = {
+            let mut full_ns = self.namespace_stack.last().unwrap_or(&Default::default()).clone();
+            full_ns.push(ns.sym.to_string());
+            full_ns
+        };
+        self.namespace_stack.push(full_ns);
+
+        let t_by_n: HashMap<String, Type> = self.types_by_name_by_file
+            .get(import_from)
+            .expect("should have processed file already")
+            .iter()
+            .filter(|(n, t)| t.is_exported)
+            .filter_map(|(n, t)| {
+                match n {
+                    TypeIdent::Name(name) => Some((name.to_string(), t.clone())),
+                    _ => None,
+                }
+            }).collect();
+
+        t_by_n.into_iter().for_each(|(name, mut typ)| {
+            typ.is_exported = should_export;
+
+            self.set_type_for_name_for_file(
+                ts_path,
+                TypeIdent::Name(name),
+                typ
+            );
+        });
+
+        self.namespace_stack.pop();
     }
 
     fn process_export_all(&mut self, ts_path: &Path, export_all: &ExportAll) {
@@ -1115,8 +1136,11 @@ impl TsTypes {
                     TsModuleName::Str(s) => s.value.to_string(),
                 };
 
-                let mut full_ns = self.namespace_stack.last().unwrap_or(&Default::default()).clone();
-                full_ns.push(name);
+                let full_ns = {
+                    let mut full_ns = self.namespace_stack.last().unwrap_or(&Default::default()).clone();
+                    full_ns.push(name);
+                    full_ns
+                };
                 self.namespace_stack.push(full_ns);
 
                 for b in body {
@@ -1162,19 +1186,8 @@ impl TsTypes {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => Some((TypeIdent::Name(orig.sym.to_string()), exported.as_ref().unwrap_or(orig).sym.to_string())),
                 ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Some((TypeIdent::DefaultExport(), exported.sym.to_string())),
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => {
-                    let fields = self.types_by_name_by_file
-                        .get(&file)
-                        .expect("should have processed file already")
-                        .iter()
-                        .filter(|(n, t)| t.is_exported)
-                        .filter_map(|(n, t)| {
-                            match n {
-                                TypeIdent::Name(name) => Some((name.to_string(), t.info.clone())),
-                                _ => None,
-                            }
-                        }).collect::<HashMap<String, TypeInfo>>();
-                    println!("Namespace {:?}, {:?} -> {:?}", ts_path, name, &fields);
-                    self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name.sym.to_string()), Type { name: name.sym.to_string(), is_exported: true, info: TypeInfo::Interface { indexer: None, fields } });
+                    self.import_namespace(ts_path, &file, name, true);
+
                     None
                 }
             }
