@@ -1,7 +1,5 @@
 extern crate proc_macro;
 
-// TODO: make types_by_name_by_file a multi-level map (enum with an inner map and a type case) and
-// make qualified name lookups work via this
 // TODO: when generating code, use include_str! to make the compiler think we have a dependency on
 // any ts files we use so we recompile when they do:
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
@@ -22,7 +20,6 @@ use swc_common::{sync::Lrc, SourceMap};
 
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {
-    println!("HERE: {:?}", input);
     let import_args = parse_macro_input!(input as ImportArgs);
     import_args.modules.iter().map(|module| {
         let tt = TsTypes::try_new(&module).expect("tt error");
@@ -133,7 +130,6 @@ fn get_ts_path(module_base: Option<PathBuf>, import: &str, module_resolver: &dyn
 enum TypeIdent {
     Name(String),
     DefaultExport(),
-    AllExports(),
     QualifiedName(Vec<String>),
 }
 
@@ -148,13 +144,6 @@ impl TypeName {
         TypeName {
             file,
             name: TypeIdent::DefaultExport(),
-        }
-    }
-
-    fn all_exports_for(file: PathBuf) -> TypeName {
-        TypeName {
-            file,
-            name: TypeIdent::AllExports(),
         }
     }
 
@@ -358,8 +347,7 @@ impl TypeInfo {
 
                 types_by_name_by_file.get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
-                        TypeIdent::QualifiedName(path) => types_by_name.get(&TypeIdent::Name(path.first().expect("Can't resolve qualified name").to_string())), // TODO
-                        n @ TypeIdent::AllExports() => types_by_name.values().next(), // TODO
+                        TypeIdent::QualifiedName(path) => types_by_name.get(&TypeIdent::QualifiedName(path.clone())),
                         n @ TypeIdent::DefaultExport() => types_by_name.get(&n),
                         n @ TypeIdent::Name(..) => types_by_name.get(&n),
                     })
@@ -569,7 +557,6 @@ impl TsTypes {
                         ns.push(s);
                     },
                     TypeIdent::DefaultExport() => panic!("default export within namespace"),
-                    TypeIdent::AllExports() => panic!("all exports within namespace"),
                     TypeIdent::QualifiedName(name) => {
                         let mut name = name.clone();
                         ns.append(&mut name);
@@ -1194,7 +1181,6 @@ impl TsTypes {
         }).collect::<HashMap<TypeIdent, String>>();
 
         to_export.into_iter().for_each(|(from, to)| {
-            println!("MAP TYPES {:?}, {:?} -> {:?}", ts_path, &from, &to);
             self.set_type_for_name_for_file(
                 ts_path,
                 TypeIdent::Name(to.to_string()),
