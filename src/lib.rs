@@ -237,6 +237,9 @@ enum TypeInfo {
     PrimitiveVoid {},
     PrimitiveUndefined {},
     PrimitiveNull {},
+    BuiltinPromise {
+        value_type: Box<TypeInfo>,
+    },
     BuiltinDate {},
     Array {
         item_type: Box<TypeInfo>,
@@ -301,7 +304,7 @@ impl TypeInfo {
                     assert_eq!(type_params.len(), 2, "expected 2 type params for Record");
                     // TODO: do we care about key type?
                     return TypeInfo::Mapped {
-                        value_type: Box::new(type_params.get(2).as_ref().unwrap().resolve_names(&types_by_name_by_file))
+                        value_type: Box::new(type_params.get(1).as_ref().unwrap().resolve_names(&types_by_name_by_file))
                     };
                 }
 
@@ -323,6 +326,12 @@ impl TypeInfo {
                 if referent.name == TypeIdent::Name("Object".to_string()) {
                     return TypeInfo::Mapped {
                         value_type: Box::new(TypeInfo::PrimitiveAny {}),
+                    };
+                }
+
+                if referent.name == TypeIdent::Name("Promise".to_string()) {
+                    return TypeInfo::BuiltinPromise {
+                        value_type: Box::new(type_params.first().as_ref().map(|p| p.resolve_names(&types_by_name_by_file)).unwrap_or(TypeInfo::PrimitiveAny {}))
                     };
                 }
 
@@ -408,6 +417,7 @@ impl TypeInfo {
             Self::LitString { .. } => self.clone(),
             Self::LitBoolean { .. } => self.clone(),
             Self::BuiltinDate {} => self.clone(),
+            Self::BuiltinPromise { .. } => self.clone(),
         }
     }
 }
