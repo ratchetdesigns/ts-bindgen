@@ -1,5 +1,12 @@
 extern crate proc_macro;
 
+// TODO: make types_by_name_by_file a multi-level map (enum with an inner map and a type case) and
+// make qualified name lookups work via this
+// TODO: update namespace export to use a Namespace instead of an Interface
+// TODO: when generating code, use include_str! to make the compiler think we have a dependency on
+// any ts files we use so we recompile when they do:
+// https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::punctuated::Punctuated;
@@ -182,6 +189,7 @@ struct Param {
 
 #[derive(Debug, Clone)]
 struct Func {
+    type_params: HashMap<String, TypeInfo>,
     params: Vec<Param>,
     return_type: Box<TypeInfo>,
 }
@@ -194,7 +202,7 @@ enum Member {
 }
 
 impl Member {
-    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>, type_params: &HashMap<String, TypeInfo>) -> Self {
         self.clone() // TODO
     }
 }
@@ -206,10 +214,10 @@ struct Indexer {
 }
 
 impl Indexer {
-    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>, type_params: &HashMap<String, TypeInfo>) -> Self {
         Indexer {
             readonly: self.readonly,
-            type_info: Box::new(self.type_info.resolve_names(&types_by_name_by_file))
+            type_info: Box::new(self.type_info.resolve_names(&types_by_name_by_file, &type_params))
         }
     }
 }
@@ -276,35 +284,39 @@ enum TypeInfo {
     Var {
         type_info: Box<TypeInfo>,
     },
+    GenericType {
+        name: String,
+        constraint: Box<TypeInfo>,
+    },
 }
 
 impl TypeInfo {
-    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+    fn resolve_names(&self, types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>, type_params: &HashMap<String, TypeInfo>) -> Self {
         // TODO: need to recursively resolve. really, make resolve_names return a subset of
         // TypeInfo enum variants as a new type ResolvedTypeInfo
 
         match self {
             Self::Interface { indexer, fields } => {
                 Self::Interface {
-                    indexer: indexer.as_ref().map(|i| i.resolve_names(&types_by_name_by_file)),
+                    indexer: indexer.as_ref().map(|i| i.resolve_names(&types_by_name_by_file, &type_params)),
                     fields: fields.iter().map(|(n, t)| {
-                        (n.to_string(), t.resolve_names(&types_by_name_by_file))
+                        (n.to_string(), t.resolve_names(&types_by_name_by_file, &type_params))
                     }).collect()
                 }
             },
-            Self::Alias { referent, type_params } => {
+            Self::Alias { referent, type_params: alias_type_params } => {
                 if referent.name == TypeIdent::Name("Array".to_string()) {
-                    assert_eq!(type_params.len(), 1, "expected 1 type param for Array");
+                    assert_eq!(alias_type_params.len(), 1, "expected 1 type param for Array");
                     return TypeInfo::Array {
-                        item_type: Box::new(type_params.first().as_ref().unwrap().resolve_names(&types_by_name_by_file))
+                        item_type: Box::new(alias_type_params.first().as_ref().unwrap().resolve_names(&types_by_name_by_file, &type_params))
                     };
                 }
 
                 if referent.name == TypeIdent::Name("Record".to_string()) {
-                    assert_eq!(type_params.len(), 2, "expected 2 type params for Record");
+                    assert_eq!(alias_type_params.len(), 2, "expected 2 type params for Record");
                     // TODO: do we care about key type?
                     return TypeInfo::Mapped {
-                        value_type: Box::new(type_params.get(1).as_ref().unwrap().resolve_names(&types_by_name_by_file))
+                        value_type: Box::new(alias_type_params.get(1).as_ref().unwrap().resolve_names(&types_by_name_by_file, &type_params))
                     };
                 }
 
@@ -314,6 +326,7 @@ impl TypeInfo {
 
                 if referent.name == TypeIdent::Name("Function".to_string()) {
                     return TypeInfo::Func(Func {
+                        type_params: Default::default(),
                         return_type: Box::new(TypeInfo::PrimitiveAny {}),
                         params: vec![Param {
                             name: "args".to_string(),
@@ -331,8 +344,17 @@ impl TypeInfo {
 
                 if referent.name == TypeIdent::Name("Promise".to_string()) {
                     return TypeInfo::BuiltinPromise {
-                        value_type: Box::new(type_params.first().as_ref().map(|p| p.resolve_names(&types_by_name_by_file)).unwrap_or(TypeInfo::PrimitiveAny {}))
+                        value_type: Box::new(alias_type_params.first().as_ref().map(|p| p.resolve_names(&types_by_name_by_file, &type_params)).unwrap_or(TypeInfo::PrimitiveAny {}))
                     };
+                }
+
+                if let TypeIdent::Name(ref name) = &referent.name {
+                    if let Some(constraint) = type_params.get(name) {
+                        return Self::GenericType {
+                            name: name.to_string(),
+                            constraint: Box::new(constraint.clone()),
+                        };
+                    }
                 }
 
                 types_by_name_by_file.get(&referent.file)
@@ -349,37 +371,43 @@ impl TypeInfo {
             },
             Self::Array { item_type } => {
                 Self::Array {
-                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file)),
+                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
                 }
             },
             Self::Optional { item_type } => {
                 Self::Optional {
-                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file)),
+                    item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
                 }
             },
             Self::Union { types } => {
                 Self::Union {
-                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file)).collect(),
+                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file, &type_params)).collect(),
                 }
             },
             Self::Intersection { types } => {
                 Self::Intersection {
-                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file)).collect(),
+                    types: types.iter().map(|t| t.resolve_names(&types_by_name_by_file, &type_params)).collect(),
                 }
             },
             Self::Mapped { value_type } => {
                 Self::Mapped {
-                    value_type: Box::new(value_type.resolve_names(&types_by_name_by_file))
+                    value_type: Box::new(value_type.resolve_names(&types_by_name_by_file, &type_params))
                 }
             },
-            Self::Func(Func { params, return_type }) => {
+            Self::Func(Func { params, type_params: fn_type_params, return_type }) => {
+                let tps = {
+                    let mut tps = type_params.clone();
+                    tps.extend(fn_type_params.clone().into_iter());
+                    tps
+                };
                 Self::Func(Func {
+                    type_params: fn_type_params.clone(),
                     params: params.iter().map(|p| Param {
                         name: p.name.to_string(),
                         is_variadic: p.is_variadic.clone(),
-                        type_info: p.type_info.resolve_names(&types_by_name_by_file)
+                        type_info: p.type_info.resolve_names(&types_by_name_by_file, &tps)
                     }).collect(),
-                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
+                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file, &type_params)),
                 })
             },
             Self::Constructor { params, return_type } => {
@@ -387,19 +415,25 @@ impl TypeInfo {
                     params: params.iter().map(|p| Param {
                         name: p.name.to_string(),
                         is_variadic: p.is_variadic.clone(),
-                        type_info: p.type_info.resolve_names(&types_by_name_by_file)
+                        type_info: p.type_info.resolve_names(&types_by_name_by_file, &type_params)
                     }).collect(),
-                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file)),
+                    return_type: Box::new(return_type.resolve_names(&types_by_name_by_file, &type_params)),
                 }
             },
             Self::Class { members } => {
                 Self::Class {
-                    members: members.iter().map(|(n, m)| (n.to_string(), m.resolve_names(&types_by_name_by_file))).collect()
+                    members: members.iter().map(|(n, m)| (n.to_string(), m.resolve_names(&types_by_name_by_file, &type_params))).collect()
                 }
             },
             Self::Var { type_info } => {
                 Self::Var {
-                    type_info: Box::new(type_info.resolve_names(&types_by_name_by_file)),
+                    type_info: Box::new(type_info.resolve_names(&types_by_name_by_file, &type_params)),
+                }
+            },
+            Self::GenericType { name, constraint } => {
+                Self::GenericType {
+                    name: name.to_string(),
+                    constraint: Box::new(constraint.resolve_names(&types_by_name_by_file, &type_params)),
                 }
             },
             Self::Enum { .. } => self.clone(),
@@ -434,7 +468,7 @@ impl Type {
         Self {
             name: self.name.clone(),
             is_exported: self.is_exported,
-            info: self.info.resolve_names(&types_by_name_by_file),
+            info: self.info.resolve_names(&types_by_name_by_file, &Default::default()),
         }
     }
 
@@ -784,8 +818,18 @@ impl TsTypes {
         }).collect()
     }
 
+    fn process_fn_type_params(&mut self, ts_path: &Path, type_params: &Option<TsTypeParamDecl>) -> HashMap<String, TypeInfo> {
+        type_params.as_ref().map(|params| {
+            params.params.iter().map(|p| {
+                (p.name.sym.to_string(),
+                 p.constraint.as_ref().map(|c| self.process_type(ts_path, &c)).unwrap_or(TypeInfo::PrimitiveAny {}))
+            }).collect()
+        }).unwrap_or(Default::default())
+    }
+
     fn process_fn_type(&mut self, ts_path: &Path, TsFnType { type_ann, params, type_params, span, .. }: &TsFnType) -> TypeInfo {
         TypeInfo::Func(Func {
+            type_params: self.process_fn_type_params(ts_path, type_params),
             params: self.process_params(ts_path, params),
             return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
         })
@@ -800,6 +844,7 @@ impl TsTypes {
 
     fn process_type_predicate(&mut self, ts_path: &Path, TsTypePredicate { param_name, type_ann, .. }: &TsTypePredicate) -> TypeInfo {
         TypeInfo::Func(Func {
+            type_params: Default::default(),
             params: vec![Param {
                 name: match param_name {
                     TsThisTypeOrIdent::Ident(ident) => ident.sym.to_string(),
@@ -906,6 +951,7 @@ impl TsTypes {
                                     _ => panic!("we only support ident params for methods"),
                                 }
                             ).collect(),
+                            type_params: self.process_fn_type_params(ts_path, &type_params),
                             return_type: Box::new(type_ann.as_ref().map(|t| self.process_type(ts_path, &t.type_ann)).unwrap_or(TypeInfo::PrimitiveAny {})),
                          })))
                     },
@@ -1039,12 +1085,13 @@ impl TsTypes {
         }).collect()
     }
 
-    fn process_fn_decl(&mut self, ts_path: &Path, FnDecl { ident, function: Function { params, return_type, .. }, .. }: &FnDecl) -> Type {
+    fn process_fn_decl(&mut self, ts_path: &Path, FnDecl { ident, function: Function { params, return_type, type_params, .. }, .. }: &FnDecl) -> Type {
         Type {
             name: ident.sym.to_string(),
             is_exported: false,
             info: TypeInfo::Func(Func {
                 params: self.process_raw_params(ts_path, params),
+                type_params: self.process_fn_type_params(ts_path, type_params),
                 return_type: Box::new(
                     return_type
                         .as_ref()
@@ -1086,18 +1133,6 @@ impl TsTypes {
                 Default::default()
             },
             Decl::Fn(fn_decl) => vec![self.process_fn_decl(ts_path, fn_decl)],
-            _ => {
-                println!("MISSING DECL {:?} {:?}", ts_path, decl);
-                // TODO: just to make the compiler happy, implement more cases
-                vec![Type {
-                    name: "hi".to_string(),
-                    is_exported: false,
-                    info: TypeInfo::Interface {
-                        indexer: None,
-                        fields: HashMap::new()
-                    }
-                }]
-            }
         }
     }
 
