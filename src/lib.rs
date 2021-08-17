@@ -6,7 +6,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2};
-use quote::quote;
+use quote::{quote, format_ident, ToTokens, TokenStreamExt};
 use serde_json::Value;
 use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::OsStr;
@@ -21,6 +21,7 @@ use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, LitStr, Result as ParseResult, Token};
+use unicode_xid::UnicodeXID;
 
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {
@@ -32,7 +33,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
             let tt = TsTypes::try_new(&module).expect("tt error");
             use std::borrow::Borrow;
             let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
-            println!("MOD DEF {:?}", mod_def.to_tokens());
+            println!("MOD DEF {:?}", (quote! { #mod_def }).to_string());
             Ok("hi".to_string())
         })
         .collect::<Vec<Result<String, std::io::Error>>>();
@@ -617,15 +618,32 @@ impl Type {
 }
 
 #[derive(Debug, Clone)]
+struct MutModDef {
+    name: String,
+    types: Vec<Type>,
+    children: Vec<Rc<RefCell<MutModDef>>>,
+}
+
+impl MutModDef {
+    fn to_mod_def(self) -> ModDef {
+        ModDef {
+            name: self.name,
+            types: self.types,
+            children: self.children.into_iter().map(move |c| Rc::try_unwrap(c).expect("Rc still borrowed").into_inner().to_mod_def()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ModDef {
     name: String,
     types: Vec<Type>,
-    children: Vec<Rc<RefCell<ModDef>>>,
+    children: Vec<ModDef>,
 }
 
 impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
-        let root = Rc::new(RefCell::new(ModDef {
+        let root = Rc::new(RefCell::new(MutModDef {
             name: "root".to_string(),
             types: Default::default(),
             children: Default::default()
@@ -662,7 +680,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                             child.borrow_mut().types.extend(types_by_name.values().cloned());
                             child
                         } else {
-                            let child = Rc::new(RefCell::new(ModDef {
+                            let child = Rc::new(RefCell::new(MutModDef {
                                 name: mod_name.to_string(),
                                 types: types_by_name.values().cloned().collect(),
                                 children: Default::default()
@@ -674,15 +692,58 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 );
         });
 
-        Rc::try_unwrap(root).unwrap().into_inner()
+        Rc::try_unwrap(root).unwrap().into_inner().to_mod_def()
     }
 }
 
-impl ModDef {
-    fn to_tokens(&self) -> TokenStream2 {
-        quote! {
-            struct HelloWorld {}
+fn to_ns_name(ns: &str) -> proc_macro2::Ident {
+    let ns = ns.to_lowercase();
+    let mut chars = ns.trim_end_matches(".d.ts").trim_end_matches(".ts").chars();
+
+    let first: String = chars.by_ref().take(1).map(|first| {
+        if UnicodeXID::is_xid_start(first) && first != '_' {
+            first.to_string()
+        } else {
+            "".to_string()
         }
+    }).collect();
+
+    let rest: String = chars.map(|c| {
+        if UnicodeXID::is_xid_continue(c) {
+            c
+        } else {
+            '_'
+        }
+    }).collect();
+
+    format_ident!("{}{}", &first, &rest)
+}
+
+impl ToTokens for ModDef {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let mod_name = to_ns_name(&self.name);
+        let types = &self.types;
+        let children = &self.children;
+
+        let our_toks = quote! {
+            pub mod #mod_name {
+                #(#types)*
+
+                #(#children)*
+            }
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+impl ToTokens for Type {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let our_toks = quote! {
+            
+        };
+
+        toks.append_all(our_toks);
     }
 }
 
