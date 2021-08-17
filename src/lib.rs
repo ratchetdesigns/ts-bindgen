@@ -632,16 +632,17 @@ struct ModDef {
 
 impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
-        let mut files: Vec<&PathBuf> = types_by_name_by_file.keys().collect();
-        files.sort_unstable();
-
         let root = Rc::new(RefCell::new(ModDef {
             name: "root".to_string(),
             types: Default::default(),
             children: Default::default()
         }));
 
-        files.iter().for_each(|path| {
+        types_by_name_by_file.iter().for_each(|(path, types_by_name)| {
+            // given a path like /.../node_modules/a/b/c, we fold over
+            // [a, b, c].
+            // given a path like /a/b/c (without a node_modules), we fold
+            // over [a, b, c].
             path
                 .canonicalize()
                 .expect("canonicalize failed")
@@ -664,11 +665,13 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                             .children
                             .iter()
                             .find(|c| c.borrow().name == *mod_name) {
-                            child.clone()
+                            let mut child = child.clone();
+                            child.borrow_mut().types.extend(types_by_name.values().cloned());
+                            child
                         } else {
                             let child = Rc::new(RefCell::new(ModDef {
                                 name: mod_name.to_string(),
-                                types: Default::default(),
+                                types: types_by_name.values().cloned().collect(),
                                 children: Default::default()
                             }));
                             parent.children.push(child.clone());
