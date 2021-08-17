@@ -614,14 +614,6 @@ impl Type {
                 .resolve_names(&types_by_name_by_file, &Default::default()),
         }
     }
-
-    fn clone_unexported(&self) -> Self {
-        Self {
-            name: self.name.clone(),
-            is_exported: false,
-            info: self.info.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -666,7 +658,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                             .children
                             .iter()
                             .find(|c| c.borrow().name == *mod_name) {
-                            let mut child = child.clone();
+                            let child = child.clone();
                             child.borrow_mut().types.extend(types_by_name.values().cloned());
                             child
                         } else {
