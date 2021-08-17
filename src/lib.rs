@@ -10,7 +10,10 @@ use serde_json::Value;
 use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::OsStr;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, Component};
+use std::convert::From;
+use std::rc::Rc;
+use std::cell::RefCell;
 use swc_common::{sync::Lrc, SourceMap};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
@@ -26,6 +29,9 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         .iter()
         .map(|module| {
             let tt = TsTypes::try_new(&module).expect("tt error");
+            use std::borrow::Borrow;
+            let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
+            println!("MOD DEF {:?}", mod_def);
             Ok("hi".to_string())
         })
         .collect::<Vec<Result<String, std::io::Error>>>();
@@ -617,6 +623,65 @@ impl Type {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ModDef {
+    name: String,
+    types: Vec<Type>,
+    children: Vec<Rc<RefCell<ModDef>>>,
+}
+
+impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
+    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        let mut files: Vec<&PathBuf> = types_by_name_by_file.keys().collect();
+        files.sort_unstable();
+
+        let root = Rc::new(RefCell::new(ModDef {
+            name: "root".to_string(),
+            types: Default::default(),
+            children: Default::default()
+        }));
+
+        files.iter().for_each(|path| {
+            path
+                .canonicalize()
+                .expect("canonicalize failed")
+                .components()
+                .filter_map(|c| match c {
+                    Component::Normal(s) => Some(s.to_string_lossy()),
+                    _ => None,
+                })
+                .rev()
+                .take_while(|p| p != "node_modules")
+                .map(|p| p.as_ref().to_string())
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(
+                    root.clone(),
+                    move |parent, mod_name| {
+                        let mut parent = parent.borrow_mut();
+                        if let Some(child) = parent
+                            .children
+                            .iter()
+                            .find(|c| c.borrow().name == *mod_name) {
+                            child.clone()
+                        } else {
+                            let child = Rc::new(RefCell::new(ModDef {
+                                name: mod_name.to_string(),
+                                types: Default::default(),
+                                children: Default::default()
+                            }));
+                            parent.children.push(child.clone());
+                            child
+                        }
+                    }
+                );
+        });
+
+        Rc::try_unwrap(root).unwrap().into_inner()
+    }
+}
+
 #[derive(Default, Debug)]
 struct TsTypes {
     types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -640,7 +705,7 @@ impl TsTypes {
 
         tt.types_by_name_by_file = resolved_types_by_name_by_file;
 
-        //println!("FINITO {:?}", tt.types_by_name_by_file);
+        println!("FINITO {:?}", tt.types_by_name_by_file.keys());
 
         Ok(tt)
     }
