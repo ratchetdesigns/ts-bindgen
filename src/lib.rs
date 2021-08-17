@@ -5,6 +5,7 @@ extern crate proc_macro;
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
 
 use proc_macro::TokenStream;
+use proc_macro2::{TokenStream as TokenStream2};
 use quote::quote;
 use serde_json::Value;
 use std::collections::{hash_map::Entry, HashMap};
@@ -31,7 +32,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
             let tt = TsTypes::try_new(&module).expect("tt error");
             use std::borrow::Borrow;
             let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
-            println!("MOD DEF {:?}", mod_def);
+            println!("MOD DEF {:?}", mod_def.to_tokens());
             Ok("hi".to_string())
         })
         .collect::<Vec<Result<String, std::io::Error>>>();
@@ -685,6 +686,14 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     }
 }
 
+impl ModDef {
+    fn to_tokens(&self) -> TokenStream2 {
+        quote! {
+            struct HelloWorld {}
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 struct TsTypes {
     types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -707,8 +716,6 @@ impl TsTypes {
         }
 
         tt.types_by_name_by_file = resolved_types_by_name_by_file;
-
-        println!("FINITO {:?}", tt.types_by_name_by_file.keys());
 
         Ok(tt)
     }
