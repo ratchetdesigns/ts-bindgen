@@ -641,6 +641,7 @@ struct ModDef {
     children: Vec<ModDef>,
 }
 
+// TODO: maybe don't make "index" namespaces and put their types in the parent
 impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
         let root = Rc::new(RefCell::new(MutModDef {
@@ -654,7 +655,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
             // [a, b, c].
             // given a path like /a/b/c (without a node_modules), we fold
             // over [a, b, c].
-            path
+            let mod_path = path
                 .canonicalize()
                 .expect("canonicalize failed")
                 .components()
@@ -665,7 +666,9 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 .rev()
                 .take_while(|p| p != "node_modules")
                 .map(|p| p.as_ref().to_string())
-                .collect::<Vec<String>>()
+                .collect::<Vec<String>>();
+
+            mod_path
                 .iter()
                 .rev()
                 .fold(
@@ -690,6 +693,39 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                         }
                     }
                 );
+
+            types_by_name
+                .iter()
+                .filter_map(|(name, typ)| {
+                    if let TypeIdent::QualifiedName(names) = name {
+                        Some((&names[..names.len() - 1], typ))
+                    } else {
+                        None
+                    }
+                }).for_each(|(names, typ)| {
+                    mod_path.iter().chain(names.iter()).fold(
+                        root.clone(),
+                        move |parent, mod_name| {
+                            let mut parent = parent.borrow_mut();
+                            if let Some(child) = parent
+                                .children
+                                .iter()
+                                .find(|c| c.borrow().name == *mod_name) {
+                                let child = child.clone();
+                                child.borrow_mut().types.push(typ.clone());
+                                child
+                            } else {
+                                let child = Rc::new(RefCell::new(MutModDef {
+                                    name: mod_name.to_string(),
+                                    types: vec![typ.clone()],
+                                    children: Default::default()
+                                }));
+                                parent.children.push(child.clone());
+                                child
+                            }
+                        }
+                    );
+                });
         });
 
         Rc::try_unwrap(root).unwrap().into_inner().to_mod_def()
