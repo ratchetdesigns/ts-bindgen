@@ -26,19 +26,20 @@ use unicode_xid::UnicodeXID;
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {
     let import_args = parse_macro_input!(input as ImportArgs);
-    import_args
+    let mods = import_args
         .modules
         .iter()
         .map(|module| {
             let tt = TsTypes::try_new(&module).expect("tt error");
             use std::borrow::Borrow;
             let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
-            println!("MOD DEF {:?}", (quote! { #mod_def }).to_string());
-            Ok("hi".to_string())
+            let mod_toks = quote! { #mod_def };
+            println!("MOD DEF {:?}", &mod_toks.to_string());
+            mod_toks
         })
-        .collect::<Vec<Result<String, std::io::Error>>>();
+        .collect::<Vec<TokenStream2>>();
     (quote! {
-        struct Hello {}
+        #(#mods)*
     })
     .into()
 }
@@ -666,11 +667,13 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 .rev()
                 .take_while(|p| p != "node_modules")
                 .map(|p| p.as_ref().to_string())
+                .collect::<Vec<String>>()
+                .into_iter()
+                .rev()
                 .collect::<Vec<String>>();
 
             mod_path
                 .iter()
-                .rev()
                 .fold(
                     root.clone(),
                     move |parent, mod_name| {
@@ -732,10 +735,8 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     }
 }
 
-fn to_ns_name(ns: &str) -> proc_macro2::Ident {
-    let ns = ns.to_lowercase();
-    let mut chars = ns.trim_end_matches(".d.ts").trim_end_matches(".ts").chars();
-
+fn to_ident(s: &str) -> proc_macro2::Ident {
+    let mut chars = s.chars();
     let first: String = chars.by_ref().take(1).map(|first| {
         if UnicodeXID::is_xid_start(first) && first != '_' {
             first.to_string()
@@ -753,6 +754,16 @@ fn to_ns_name(ns: &str) -> proc_macro2::Ident {
     }).collect();
 
     format_ident!("{}{}", &first, &rest)
+}
+
+fn camel_case_ident(s: &str) -> proc_macro2::Ident {
+    let s = s.to_uppercase();
+    to_ident(&s)
+}
+
+fn to_ns_name(ns: &str) -> proc_macro2::Ident {
+    let ns = ns.to_lowercase();
+    to_ident(ns.trim_end_matches(".d.ts").trim_end_matches(".ts"))
 }
 
 impl ToTokens for ModDef {
@@ -773,10 +784,126 @@ impl ToTokens for ModDef {
     }
 }
 
+impl ToTokens for EnumMember {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let id = camel_case_ident(&self.id);
+        let our_toks = {
+            if let Some(value) = &self.value {
+                quote! {
+                    #id = #value
+                }
+            } else {
+                quote! {
+                    #id
+                }
+            }
+        };
+        toks.append_all(our_toks);
+    }
+}
+
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let our_toks = quote! {
-            
+        let name = camel_case_ident(&self.name);
+
+        let our_toks = match &self.info {
+            /*Interface {
+                indexer: Option<Indexer>,
+                fields: HashMap<String, TypeInfo>,
+            },*/
+            TypeInfo::Enum { members, } => {
+                quote! {
+                    #[wasm_bindgen::prelude::wasm_bindgen]
+                    #[derive(Copy, Clone, Debug)]
+                    pub enum #name {
+                        #(#members),*
+                    }
+                }
+            },
+            TypeInfo::Alias { .. } => panic!("should not have any aliases at token generation time"),
+            TypeInfo::PrimitiveAny {} => {
+                quote! { wasm_bindgen::prelude::JsValue }
+            },
+            TypeInfo::PrimitiveNumber {} => {
+                quote! { f64 }
+            },
+            TypeInfo::PrimitiveObject {} => {
+                quote! {
+                    std::collections::HashMap<String, wasm_bindgen::prelude::JsValue>
+                }
+            },
+            TypeInfo::PrimitiveBoolean {} => {
+                quote! {
+                    bool
+                }
+            },
+            TypeInfo::PrimitiveBigInt {} => {
+                // TODO
+                quote! {
+                    u64
+                }
+            },
+            TypeInfo::PrimitiveString {} => {
+                println!("STR {:?}", &self);
+                quote! {
+                    String
+                }
+            },
+            TypeInfo::PrimitiveSymbol {} => panic!("how do we handle symbols"),
+            TypeInfo::PrimitiveVoid {} => {
+                quote! {}
+            },
+            TypeInfo::PrimitiveUndefined {} => {
+                quote! {
+                    !
+                }
+            },
+            /*
+            TypeInfo::PrimitiveNull {},
+            TypeInfo::BuiltinPromise {
+                value_type: Box<TypeInfo>,
+            },
+            TypeInfo::BuiltinDate {},
+            TypeInfo::Array {
+                item_type: Box<TypeInfo>,
+            },
+            TypeInfo::Optional {
+                item_type: Box<TypeInfo>,
+            },
+            TypeInfo::Union {
+                types: Vec<TypeInfo>,
+            },
+            TypeInfo::Intersection {
+                types: Vec<TypeInfo>,
+            },
+            TypeInfo::Mapped {
+                value_type: Box<TypeInfo>,
+            },
+            TypeInfo::LitNumber {
+                n: f64,
+            },
+            TypeInfo::LitString {
+                s: String,
+            },
+            TypeInfo::LitBoolean {
+                b: bool,
+            },
+            TypeInfo::Func(Func),
+            TypeInfo::Constructor {
+                params: Vec<Param>,
+                return_type: Box<TypeInfo>,
+            },
+            TypeInfo::Class {
+                members: HashMap<String, Member>,
+            },
+            TypeInfo::Var {
+                type_info: Box<TypeInfo>,
+            },
+            TypeInfo::GenericType {
+                name: String,
+                constraint: Box<TypeInfo>,
+            },*/
+            _ => { quote! { }},
         };
 
         toks.append_all(our_toks);
