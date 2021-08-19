@@ -1,5 +1,6 @@
 extern crate proc_macro;
 
+// TODO: aliases should point to modules
 // TODO: when generating code, use include_str! to make the compiler think we have a dependency on
 // any ts files we use so we recompile when they do:
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
@@ -297,7 +298,7 @@ enum TypeInfo {
         type_params: Vec<TypeInfo>,
     },
     Alias {
-        target: Box<TypeInfo>,
+        target: TypeName,
     },
     PrimitiveAny {},
     PrimitiveNumber {},
@@ -499,7 +500,7 @@ impl TypeInfo {
                     .expect("can't resolve alias")
             },
             Self::Alias { target } => Self::Alias {
-                target: Box::new(target.resolve_names(&types_by_name_by_file, &type_params)),
+                target: target.clone(),
             },
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
@@ -1093,12 +1094,11 @@ impl TsTypes {
                         Type {
                             name: local.sym.to_string(),
                             is_exported: false,
-                            info: TypeInfo::Ref {
-                                referent: TypeName::for_name(
+                            info: TypeInfo::Alias {
+                                target: TypeName::for_name(
                                     file.to_path_buf(),
                                     &imported.as_ref().unwrap_or(local).sym.to_string(),
                                 ),
-                                type_params: Default::default(),
                             },
                         },
                     );
@@ -1110,10 +1110,9 @@ impl TsTypes {
                         Type {
                             name: "*DEFAULT_EXPORT*".to_string(),
                             is_exported: false,
-                            info: TypeInfo::Ref {
-                                referent: TypeName::default_export_for(file.to_path_buf()),
-                                type_params: Default::default(),
-                            },
+                            info: TypeInfo::Alias {
+                                target: TypeName::default_export_for(file.to_path_buf()),
+                            }
                         },
                     );
                 }
@@ -1155,6 +1154,12 @@ impl TsTypes {
 
         t_by_n.into_iter().for_each(|(name, mut typ)| {
             typ.is_exported = should_export;
+            typ.info = TypeInfo::Alias {
+                target: TypeName {
+                    file: import_from.to_path_buf(),
+                    name: TypeIdent::Name(typ.name.clone()),
+                },
+            };
 
             self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name), typ);
         });
@@ -1680,9 +1685,7 @@ impl TsTypes {
         Type {
             name: id.sym.to_string(),
             is_exported: false,
-            info: TypeInfo::Alias {
-                target: Box::new(type_info),
-            },
+            info: type_info,
         }
     }
 
