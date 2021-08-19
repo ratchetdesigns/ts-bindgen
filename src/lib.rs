@@ -34,7 +34,12 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
             use std::borrow::Borrow;
             let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
             let mod_toks = quote! { #mod_def };
-            println!("MOD DEF {:?}", &mod_toks.to_string());
+            // let mod_toks = quote! { };
+
+            let mut file = std::fs::File::create("output.rs").expect("failed to create file");
+            std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes()).expect("failed to write");
+
+            //println!("MOD DEF {:?}", &mod_toks.to_string());
             mod_toks
         })
         .collect::<Vec<TokenStream2>>();
@@ -287,9 +292,12 @@ enum TypeInfo {
     Enum {
         members: Vec<EnumMember>,
     },
-    Alias {
+    Ref {
         referent: TypeName,
         type_params: Vec<TypeInfo>,
+    },
+    Alias {
+        target: Box<TypeInfo>,
     },
     PrimitiveAny {},
     PrimitiveNumber {},
@@ -449,7 +457,7 @@ impl TypeInfo {
                     })
                     .collect(),
             },
-            Self::Alias {
+            Self::Ref {
                 referent,
                 type_params: alias_type_params,
             } => {
@@ -489,7 +497,10 @@ impl TypeInfo {
                         None
                     })
                     .expect("can't resolve alias")
-            }
+            },
+            Self::Alias { target } => Self::Alias {
+                target: Box::new(target.resolve_names(&types_by_name_by_file, &type_params)),
+            },
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
             },
@@ -671,24 +682,34 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 .into_iter()
                 .rev()
                 .collect::<Vec<String>>();
+            let last_idx = mod_path.len() - 1;
 
             mod_path
                 .iter()
+                .enumerate()
                 .fold(
                     root.clone(),
-                    move |parent, mod_name| {
+                    move |parent, (i, mod_name)| {
                         let mut parent = parent.borrow_mut();
                         if let Some(child) = parent
                             .children
                             .iter()
                             .find(|c| c.borrow().name == *mod_name) {
-                            let child = child.clone();
-                            child.borrow_mut().types.extend(types_by_name.values().cloned());
-                            child
+                            if i == last_idx {
+                                let child = child.clone();
+                                child.borrow_mut().types.extend(types_by_name.values().cloned());
+                                child
+                            } else {
+                                child.clone()
+                            }
                         } else {
                             let child = Rc::new(RefCell::new(MutModDef {
                                 name: mod_name.to_string(),
-                                types: types_by_name.values().cloned().collect(),
+                                types: if i == last_idx {
+                                    types_by_name.values().cloned().collect()
+                                } else {
+                                    Default::default()
+                                },
                                 children: Default::default()
                             }));
                             parent.children.push(child.clone());
@@ -706,28 +727,41 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                         None
                     }
                 }).for_each(|(names, typ)| {
-                    mod_path.iter().chain(names.iter()).fold(
-                        root.clone(),
-                        move |parent, mod_name| {
-                            let mut parent = parent.borrow_mut();
-                            if let Some(child) = parent
-                                .children
-                                .iter()
-                                .find(|c| c.borrow().name == *mod_name) {
-                                let child = child.clone();
-                                child.borrow_mut().types.push(typ.clone());
-                                child
-                            } else {
-                                let child = Rc::new(RefCell::new(MutModDef {
-                                    name: mod_name.to_string(),
-                                    types: vec![typ.clone()],
-                                    children: Default::default()
-                                }));
-                                parent.children.push(child.clone());
-                                child
+                    let last_idx = mod_path.len() + names.len() - 1;
+                    mod_path
+                        .iter()
+                        .chain(names.iter())
+                        .enumerate()
+                        .fold(
+                            root.clone(),
+                            move |parent, (i, mod_name)| {
+                                let mut parent = parent.borrow_mut();
+                                if let Some(child) = parent
+                                    .children
+                                    .iter()
+                                    .find(|c| c.borrow().name == *mod_name) {
+                                    if i == last_idx {
+                                        let child = child.clone();
+                                        child.borrow_mut().types.push(typ.clone());
+                                        child
+                                    } else {
+                                        child.clone()
+                                    }
+                                } else {
+                                    let child = Rc::new(RefCell::new(MutModDef {
+                                        name: mod_name.to_string(),
+                                        types: if i == last_idx {
+                                            vec![typ.clone()]
+                                        } else {
+                                            Default::default()
+                                        },
+                                        children: Default::default()
+                                    }));
+                                    parent.children.push(child.clone());
+                                    child
+                                }
                             }
-                        }
-                    );
+                        );
                 });
         });
 
@@ -820,7 +854,7 @@ impl ToTokens for Type {
                     }
                 }
             },
-            TypeInfo::Alias { .. } => panic!("should not have any aliases at token generation time"),
+            TypeInfo::Ref { .. } => panic!("should not have any aliases at token generation time"),
             TypeInfo::PrimitiveAny {} => {
                 quote! { wasm_bindgen::prelude::JsValue }
             },
@@ -1059,7 +1093,7 @@ impl TsTypes {
                         Type {
                             name: local.sym.to_string(),
                             is_exported: false,
-                            info: TypeInfo::Alias {
+                            info: TypeInfo::Ref {
                                 referent: TypeName::for_name(
                                     file.to_path_buf(),
                                     &imported.as_ref().unwrap_or(local).sym.to_string(),
@@ -1076,7 +1110,7 @@ impl TsTypes {
                         Type {
                             name: "*DEFAULT_EXPORT*".to_string(),
                             is_exported: false,
-                            info: TypeInfo::Alias {
+                            info: TypeInfo::Ref {
                                 referent: TypeName::default_export_for(file.to_path_buf()),
                                 type_params: Default::default(),
                             },
@@ -1191,7 +1225,7 @@ impl TsTypes {
         }: &TsTypeRef,
     ) -> TypeInfo {
         match type_name {
-            TsEntityName::Ident(Ident { sym, .. }) => TypeInfo::Alias {
+            TsEntityName::Ident(Ident { sym, .. }) => TypeInfo::Ref {
                 referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
                 type_params: type_params
                     .as_ref()
@@ -1203,7 +1237,7 @@ impl TsTypes {
                     })
                     .unwrap_or(Default::default()),
             },
-            TsEntityName::TsQualifiedName(qn) => TypeInfo::Alias {
+            TsEntityName::TsQualifiedName(qn) => TypeInfo::Ref {
                 referent: self.qualified_name_to_type_name(ts_path, qn),
                 type_params: type_params
                     .as_ref()
@@ -1460,7 +1494,7 @@ impl TsTypes {
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
-                TypeInfo::Alias {
+                TypeInfo::Ref {
                     referent: TypeName::default_export_for(ts_path.to_path_buf()),
                     type_params: Default::default(),
                 }
@@ -1646,7 +1680,9 @@ impl TsTypes {
         Type {
             name: id.sym.to_string(),
             is_exported: false,
-            info: type_info,
+            info: TypeInfo::Alias {
+                target: Box::new(type_info),
+            },
         }
     }
 
@@ -1902,7 +1938,7 @@ impl TsTypes {
                 Type {
                     name: to.to_string(),
                     is_exported: true,
-                    info: TypeInfo::Alias {
+                    info: TypeInfo::Ref {
                         referent: match from {
                             TypeIdent::Name(n) => TypeName::for_name(file.to_path_buf(), &n),
                             TypeIdent::DefaultExport() => {
