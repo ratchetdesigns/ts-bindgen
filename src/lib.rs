@@ -21,7 +21,7 @@ use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, LitStr, Result as ParseResult, Token};
+use syn::{parse_macro_input, LitStr, Result as ParseResult, Token, parse_str as parse_syn_str};
 use unicode_xid::UnicodeXID;
 
 #[proc_macro]
@@ -807,6 +807,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
 }
 
 fn to_ident(s: &str) -> proc_macro2::Ident {
+    // make sure we have valid characters
     let mut chars = s.chars();
     let first: String = chars.by_ref().take(1).map(|first| {
         if UnicodeXID::is_xid_start(first) && first != '_' {
@@ -824,7 +825,13 @@ fn to_ident(s: &str) -> proc_macro2::Ident {
         }
     }).collect();
 
-    format_ident!("{}{}", &first, &rest)
+    // now, make sure we have a valid rust identifier (no keyword collissions)
+    let mut full_ident = first + &rest;
+    while parse_syn_str::<syn::Ident>(&full_ident).is_err() {
+        full_ident += "_";
+    }
+
+    format_ident!("{}", &full_ident)
 }
 
 fn camel_case_ident(s: &str) -> proc_macro2::Ident {
@@ -846,7 +853,10 @@ impl ToTokens for ModDef {
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
         // able to refer to it in future use clauses. just need to get the nesting level here
         let our_toks = quote! {
+            #[cfg(target_arch = "wasm32")]
             pub mod #mod_name {
+                use wasm_bindgen::prelude::*;
+
                 #(#types)*
 
                 #(#children)*
@@ -885,7 +895,7 @@ impl<T, U> ToNsPath<T> for U where T: ToModPathIter, U: ToModPathIter + ?Sized {
         let ns_len = current_mod.to_mod_path_iter().count();
         let mut use_path = vec![format_ident!("super"); ns_len];
         use_path.extend(
-            self.to_mod_path_iter().map(|p| format_ident!("{}", p))
+            self.to_mod_path_iter()
         );
         quote! {
             #(#use_path)::*
@@ -895,17 +905,37 @@ impl<T, U> ToNsPath<T> for U where T: ToModPathIter, U: ToModPathIter + ?Sized {
 
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let name = camel_case_ident(self.name.to_name());
+        let js_name = self.name.to_name();
+        let name = camel_case_ident(&js_name);
 
         let our_toks = match &self.info {
-            /*Interface {
-                indexer: Option<Indexer>,
-                fields: HashMap<String, TypeInfo>,
-            },*/
+            TypeInfo::Interface {
+                indexer,
+                fields,
+            } => {
+                let fields = fields.iter().map(|(js_field_name, typ)| {
+                    let field_name = to_ident(js_field_name);
+                    if field_name == "type" {
+                        println!("HUH????");
+                    }
+                    quote! {
+                        #[wasm_bindgen(js_name = #js_field_name)]
+                        pub #field_name: String
+                    }
+                }).collect::<Vec<TokenStream2>>();
+
+                quote! {
+                    #[wasm_bindgen(js_name = #js_name)]
+                    #[derive(Clone, Debug)]
+                    struct #name {
+                        #(#fields),*
+                    }
+                }
+            },
             TypeInfo::Enum { members, } => {
                 quote! {
-                    #[wasm_bindgen::prelude::wasm_bindgen]
-                    #[derive(Copy, Clone, Debug)]
+                    #[wasm_bindgen]
+                    #[derive(Clone, Debug)]
                     pub enum #name {
                         #(#members),*
                     }
@@ -922,7 +952,7 @@ impl ToTokens for Type {
             },
             TypeInfo::PrimitiveAny {} => {
                 quote! {
-                    pub type #name = wasm_bindgen::prelude::JsValue;
+                    pub type #name = JsValue;
                 }
             },
             TypeInfo::PrimitiveNumber {} => {
@@ -932,7 +962,7 @@ impl ToTokens for Type {
             },
             TypeInfo::PrimitiveObject {} => {
                 quote! {
-                    std::collections::HashMap<String, wasm_bindgen::prelude::JsValue>
+                    std::collections::HashMap<String, JsValue>
                 }
             },
             TypeInfo::PrimitiveBoolean {} => {
@@ -1024,7 +1054,7 @@ impl ToTokens for Type {
                 } else {
                     quote! {}
                 };
-                let default_export = format_ident!("default");
+                let default_export = to_ident("default");
 
                 quote! {
                     #vis use #ns::#default_export as #name;
@@ -1038,7 +1068,7 @@ impl ToTokens for Type {
                 } else {
                     quote! {}
                 };
-                let item_name = format_ident!("{}", item_name);
+                let item_name = to_ident(item_name);
 
                 quote! {
                     #vis use #ns::#item_name as #name;
