@@ -13,7 +13,7 @@ use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::{Path, PathBuf, Component};
-use std::convert::From;
+use std::convert::{From, Into};
 use std::rc::Rc;
 use std::cell::RefCell;
 use swc_common::{sync::Lrc, SourceMap};
@@ -210,9 +210,9 @@ impl TypeName {
         }
     }
 
-    fn for_name(file: PathBuf, name: &str) -> TypeName {
+    fn for_name<T: Into<PathBuf>>(file: T, name: &str) -> TypeName {
         TypeName {
-            file,
+            file: file.into(),
             name: TypeIdent::Name(name.to_string()),
         }
     }
@@ -221,6 +221,14 @@ impl TypeName {
         TypeName {
             file,
             name: TypeIdent::QualifiedName(names),
+        }
+    }
+
+    fn to_name(&self) -> &str {
+        match &self.name {
+            TypeIdent::Name(n) => n,
+            TypeIdent::QualifiedName(n) => n.last().expect("bad qualified name"),
+            TypeIdent::DefaultExport() => "default",
         }
     }
 }
@@ -610,7 +618,7 @@ impl TypeInfo {
 
 #[derive(Debug, Clone)]
 struct Type {
-    name: String,
+    name: TypeName,
     is_exported: bool,
     info: TypeInfo,
 }
@@ -632,7 +640,7 @@ impl Type {
 
 #[derive(Debug, Clone)]
 struct MutModDef {
-    name: String,
+    name: proc_macro2::Ident,
     types: Vec<Type>,
     children: Vec<Rc<RefCell<MutModDef>>>,
 }
@@ -645,30 +653,42 @@ impl MutModDef {
             children: self.children.into_iter().map(move |c| Rc::try_unwrap(c).expect("Rc still borrowed").into_inner().to_mod_def()).collect(),
         }
     }
+
+    fn add_child_mod(&mut self, mod_name: proc_macro2::Ident, types: Vec<Type>) -> Rc<RefCell<MutModDef>> {
+        if let Some(child) = self
+            .children
+            .iter()
+            .find(|c| c.borrow().name == mod_name) {
+            let child = child.clone();
+            child.borrow_mut().types.extend(types);
+            child
+        } else {
+            let child = Rc::new(RefCell::new(MutModDef {
+                name: mod_name,
+                types ,
+                children: Default::default()
+            }));
+            self.children.push(child.clone());
+            child
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 struct ModDef {
-    name: String,
+    name: proc_macro2::Ident,
     types: Vec<Type>,
     children: Vec<ModDef>,
 }
 
-// TODO: maybe don't make "index" namespaces and put their types in the parent
-impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
-    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
-        let root = Rc::new(RefCell::new(MutModDef {
-            name: "root".to_string(),
-            types: Default::default(),
-            children: Default::default()
-        }));
+trait ToModPathIter {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>>;
+}
 
-        types_by_name_by_file.iter().for_each(|(path, types_by_name)| {
-            // given a path like /.../node_modules/a/b/c, we fold over
-            // [a, b, c].
-            // given a path like /a/b/c (without a node_modules), we fold
-            // over [a, b, c].
-            let mod_path = path
+impl ToModPathIter for Path {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+        Box::new(
+            self
                 .canonicalize()
                 .expect("canonicalize failed")
                 .components()
@@ -682,7 +702,46 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 .collect::<Vec<String>>()
                 .into_iter()
                 .rev()
-                .collect::<Vec<String>>();
+                .map(|n| to_ns_name(&n))
+        )
+    }
+}
+
+impl ToModPathIter for TypeIdent {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+        if let TypeIdent::QualifiedName(names) = &self {
+            Box::new(
+                (&names[..names.len() - 1]).to_vec().into_iter().map(|n| to_ident(&n))
+            )
+        } else {
+            Box::new(vec![].into_iter())
+        }
+    }
+}
+
+impl ToModPathIter for TypeName {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+        Box::new(
+            self.file.to_mod_path_iter().chain(self.name.to_mod_path_iter())
+        )
+    }
+}
+
+// TODO: maybe don't make "index" namespaces and put their types in the parent
+impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
+    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+        let root = Rc::new(RefCell::new(MutModDef {
+            name: to_ns_name("root"),
+            types: Default::default(),
+            children: Default::default()
+        }));
+
+        types_by_name_by_file.iter().for_each(|(path, types_by_name)| {
+            // given a path like /.../node_modules/a/b/c, we fold over
+            // [a, b, c].
+            // given a path like /a/b/c (without a node_modules), we fold
+            // over [a, b, c].
+            let mod_path = path.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>();
             let last_idx = mod_path.len() - 1;
 
             mod_path
@@ -692,30 +751,12 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                     root.clone(),
                     move |parent, (i, mod_name)| {
                         let mut parent = parent.borrow_mut();
-                        if let Some(child) = parent
-                            .children
-                            .iter()
-                            .find(|c| c.borrow().name == *mod_name) {
-                            if i == last_idx {
-                                let child = child.clone();
-                                child.borrow_mut().types.extend(types_by_name.values().cloned());
-                                child
-                            } else {
-                                child.clone()
-                            }
+                        let types = if i == last_idx {
+                            types_by_name.values().cloned().collect::<Vec<Type>>()
                         } else {
-                            let child = Rc::new(RefCell::new(MutModDef {
-                                name: mod_name.to_string(),
-                                types: if i == last_idx {
-                                    types_by_name.values().cloned().collect()
-                                } else {
-                                    Default::default()
-                                },
-                                children: Default::default()
-                            }));
-                            parent.children.push(child.clone());
-                            child
-                        }
+                            Default::default()
+                        };
+                        parent.add_child_mod(mod_name.clone(), types)
                     }
                 );
 
@@ -723,7 +764,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 .iter()
                 .filter_map(|(name, typ)| {
                     if let TypeIdent::QualifiedName(names) = name {
-                        Some((&names[..names.len() - 1], typ))
+                        Some((name.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>(), typ))
                     } else {
                         None
                     }
@@ -737,30 +778,12 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                             root.clone(),
                             move |parent, (i, mod_name)| {
                                 let mut parent = parent.borrow_mut();
-                                if let Some(child) = parent
-                                    .children
-                                    .iter()
-                                    .find(|c| c.borrow().name == *mod_name) {
-                                    if i == last_idx {
-                                        let child = child.clone();
-                                        child.borrow_mut().types.push(typ.clone());
-                                        child
-                                    } else {
-                                        child.clone()
-                                    }
+                                let types = if i == last_idx {
+                                    vec![typ.clone()]
                                 } else {
-                                    let child = Rc::new(RefCell::new(MutModDef {
-                                        name: mod_name.to_string(),
-                                        types: if i == last_idx {
-                                            vec![typ.clone()]
-                                        } else {
-                                            Default::default()
-                                        },
-                                        children: Default::default()
-                                    }));
-                                    parent.children.push(child.clone());
-                                    child
-                                }
+                                    Default::default()
+                                };
+                                parent.add_child_mod(mod_name.clone(), types)
                             }
                         );
                 });
@@ -803,7 +826,7 @@ fn to_ns_name(ns: &str) -> proc_macro2::Ident {
 
 impl ToTokens for ModDef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let mod_name = to_ns_name(&self.name);
+        let mod_name = &self.name;
         let types = &self.types;
         let children = &self.children;
 
@@ -839,7 +862,7 @@ impl ToTokens for EnumMember {
 
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let name = camel_case_ident(&self.name);
+        let name = camel_case_ident(self.name.to_name());
 
         let our_toks = match &self.info {
             /*Interface {
@@ -856,6 +879,22 @@ impl ToTokens for Type {
                 }
             },
             TypeInfo::Ref { .. } => panic!("should not have any aliases at token generation time"),
+            TypeInfo::Alias { target } => {
+                // we super::super our way up to root and then append the target namespace
+                let ns_len = self.name.to_mod_path_iter().count();
+                let use_path = {
+                    let mut use_path = vec![format_ident!("super"); ns_len];
+                    use_path.extend(
+                        target.to_mod_path_iter().map(|p| format_ident!("{}", p))
+                    );
+                    // TODO: what do we alias as
+                    use_path
+                };
+
+                quote! {
+                    use #(#use_path)::*;
+                }
+            },
             TypeInfo::PrimitiveAny {} => {
                 quote! { wasm_bindgen::prelude::JsValue }
             },
@@ -1092,7 +1131,7 @@ impl TsTypes {
                         ts_path,
                         TypeIdent::Name(local.sym.to_string()),
                         Type {
-                            name: local.sym.to_string(),
+                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
                             is_exported: false,
                             info: TypeInfo::Alias {
                                 target: TypeName::for_name(
@@ -1108,7 +1147,7 @@ impl TsTypes {
                         ts_path,
                         TypeIdent::Name(local.sym.to_string()),
                         Type {
-                            name: "*DEFAULT_EXPORT*".to_string(),
+                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
                             is_exported: false,
                             info: TypeInfo::Alias {
                                 target: TypeName::default_export_for(file.to_path_buf()),
@@ -1155,10 +1194,7 @@ impl TsTypes {
         t_by_n.into_iter().for_each(|(name, mut typ)| {
             typ.is_exported = should_export;
             typ.info = TypeInfo::Alias {
-                target: TypeName {
-                    file: import_from.to_path_buf(),
-                    name: TypeIdent::Name(typ.name.clone()),
-                },
+                target: typ.name.clone(),
             };
 
             self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name), typ);
@@ -1539,7 +1575,7 @@ impl TsTypes {
         }: &TsInterfaceDecl,
     ) -> Type {
         Type {
-            name: id.sym.to_string(),
+            name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
             info: TypeInfo::Interface {
                 indexer: body.body.iter().find_map(|el| match el {
@@ -1643,7 +1679,7 @@ impl TsTypes {
         TsEnumDecl { id, members, .. }: &TsEnumDecl,
     ) -> Type {
         Type {
-            name: id.sym.to_string(),
+            name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
             info: TypeInfo::Enum {
                 members: members
@@ -1683,7 +1719,7 @@ impl TsTypes {
     ) -> Type {
         let type_info = self.process_type(ts_path, &*type_ann);
         Type {
-            name: id.sym.to_string(),
+            name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
             info: type_info,
         }
@@ -1741,7 +1777,7 @@ impl TsTypes {
         ClassDecl { ident, class, .. }: &ClassDecl,
     ) -> Type {
         Type {
-            name: ident.sym.to_string(),
+            name: TypeName::for_name(ts_path, &ident.sym.to_string()),
             is_exported: false,
             info: self.process_class(ts_path, class),
         }
@@ -1750,7 +1786,7 @@ impl TsTypes {
     fn process_var(&mut self, ts_path: &Path, VarDeclarator { name, .. }: &VarDeclarator) -> Type {
         match name {
             Pat::Ident(BindingIdent { id, type_ann }) => Type {
-                name: id.sym.to_string(),
+                name: TypeName::for_name(ts_path, &id.sym.to_string()),
                 is_exported: false,
                 info: TypeInfo::Var {
                     type_info: Box::new(
@@ -1820,7 +1856,7 @@ impl TsTypes {
         }: &FnDecl,
     ) -> Type {
         Type {
-            name: ident.sym.to_string(),
+            name: TypeName::for_name(ts_path, &ident.sym.to_string()),
             is_exported: false,
             info: TypeInfo::Func(Func {
                 params: self.process_raw_params(ts_path, params),
@@ -1891,7 +1927,7 @@ impl TsTypes {
                 typ
             })
             .for_each(|typ| {
-                let type_name = typ.name.to_string();
+                let type_name = typ.name.to_name().to_string();
 
                 self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
             });
@@ -1939,7 +1975,7 @@ impl TsTypes {
                 ts_path,
                 TypeIdent::Name(to.to_string()),
                 Type {
-                    name: to.to_string(),
+                    name: TypeName::for_name(ts_path, &to.to_string()),
                     is_exported: true,
                     info: TypeInfo::Ref {
                         referent: match from {
@@ -1991,7 +2027,7 @@ impl TsTypes {
                 .process_decl(ts_path, &decl)
                 .into_iter()
                 .for_each(|typ| {
-                    let type_name = typ.name.to_string();
+                    let type_name = typ.name.to_name().to_string();
 
                     self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
                 }),
