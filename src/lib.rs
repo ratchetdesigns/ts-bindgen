@@ -23,6 +23,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, LitStr, Result as ParseResult, Token, parse_str as parse_syn_str};
 use unicode_xid::UnicodeXID;
+use heck::{SnakeCase, CamelCase};
 
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {
@@ -724,7 +725,7 @@ impl ToModPathIter for TypeIdent {
     fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
         if let TypeIdent::QualifiedName(names) = &self {
             Box::new(
-                (&names[..names.len() - 1]).to_vec().into_iter().map(|n| to_ident(&n))
+                (&names[..names.len() - 1]).to_vec().into_iter().map(|n| to_snake_case_ident(&n))
             )
         } else {
             Box::new(vec![].into_iter())
@@ -834,14 +835,19 @@ fn to_ident(s: &str) -> proc_macro2::Ident {
     format_ident!("{}", &full_ident)
 }
 
-fn camel_case_ident(s: &str) -> proc_macro2::Ident {
-    let s = s.to_uppercase();
+fn to_camel_case_ident(s: &str) -> proc_macro2::Ident {
+    let s = s.to_camel_case();
     to_ident(&s)
 }
 
 fn to_ns_name(ns: &str) -> proc_macro2::Ident {
-    let ns = ns.to_lowercase();
+    let ns = ns.to_snake_case();
     to_ident(ns.trim_end_matches(".d.ts").trim_end_matches(".ts"))
+}
+
+fn to_snake_case_ident(s: &str) -> proc_macro2::Ident {
+    let s = s.to_snake_case();
+    to_ident(&s)
 }
 
 impl ToTokens for ModDef {
@@ -869,7 +875,7 @@ impl ToTokens for ModDef {
 
 impl ToTokens for EnumMember {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let id = camel_case_ident(&self.id);
+        let id = to_camel_case_ident(&self.id);
         let our_toks = {
             if let Some(value) = &self.value {
                 quote! {
@@ -914,7 +920,7 @@ fn to_unique_ident(mut desired: String, taken: &Fn(&str) -> bool) -> proc_macro2
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
-        let name = camel_case_ident(&js_name);
+        let name = to_camel_case_ident(&js_name);
 
         let our_toks = match &self.info {
             TypeInfo::Interface {
@@ -922,7 +928,7 @@ impl ToTokens for Type {
                 fields,
             } => {
                 let mut field_toks = fields.iter().map(|(js_field_name, typ)| {
-                    let field_name = to_ident(js_field_name);
+                    let field_name = to_snake_case_ident(js_field_name);
                     quote! {
                         #[serde(rename = #js_field_name)]
                         pub #field_name: String
@@ -942,7 +948,7 @@ impl ToTokens for Type {
 
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-                    struct #name {
+                    pub struct #name {
                         #(#field_toks),*
                     }
                 }
@@ -1083,7 +1089,7 @@ impl ToTokens for Type {
                 } else {
                     quote! {}
                 };
-                let item_name = to_ident(item_name);
+                let item_name = to_camel_case_ident(item_name);
 
                 quote! {
                     #vis use #ns::#item_name as #name;
