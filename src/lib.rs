@@ -903,6 +903,14 @@ impl<T, U> ToNsPath<T> for U where T: ToModPathIter, U: ToModPathIter + ?Sized {
     }
 }
 
+fn to_unique_ident(mut desired: String, taken: &Fn(&str) -> bool) -> proc_macro2::Ident {
+    while taken(&desired) {
+        desired += "_";
+    }
+
+    to_ident(&desired)
+}
+
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
@@ -913,22 +921,29 @@ impl ToTokens for Type {
                 indexer,
                 fields,
             } => {
-                let fields = fields.iter().map(|(js_field_name, typ)| {
+                let mut field_toks = fields.iter().map(|(js_field_name, typ)| {
                     let field_name = to_ident(js_field_name);
-                    if field_name == "type" {
-                        println!("HUH????");
-                    }
                     quote! {
-                        #[wasm_bindgen(js_name = #js_field_name)]
+                        #[serde(rename = #js_field_name)]
                         pub #field_name: String
                     }
                 }).collect::<Vec<TokenStream2>>();
 
+                if let Some(Indexer { readonly, type_info }) = &indexer {
+                    let extra_fields_name = to_unique_ident("extra_fields".to_string(), &|x| fields.contains_key(x));
+
+                    field_toks.push(
+                        quote! {
+                            #[serde(flatten)]
+                            pub #extra_fields_name: std::collections::HashMap<String, String>
+                        }
+                    );
+                }
+
                 quote! {
-                    #[wasm_bindgen(js_name = #js_name)]
-                    #[derive(Clone, Debug)]
+                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     struct #name {
-                        #(#fields),*
+                        #(#field_toks),*
                     }
                 }
             },
