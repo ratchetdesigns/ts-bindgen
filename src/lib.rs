@@ -830,6 +830,8 @@ impl ToTokens for ModDef {
         let types = &self.types;
         let children = &self.children;
 
+        // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
+        // able to refer to it in future use clauses. just need to get the nesting level here
         let our_toks = quote! {
             pub mod #mod_name {
                 #(#types)*
@@ -887,19 +889,22 @@ impl ToTokens for Type {
                     use_path.extend(
                         target.to_mod_path_iter().map(|p| format_ident!("{}", p))
                     );
-                    // TODO: what do we alias as
                     use_path
                 };
 
                 quote! {
-                    use #(#use_path)::*;
+                    use #(#use_path)::* as #name;
                 }
             },
             TypeInfo::PrimitiveAny {} => {
-                quote! { wasm_bindgen::prelude::JsValue }
+                quote! {
+                    pub type #name = wasm_bindgen::prelude::JsValue;
+                }
             },
             TypeInfo::PrimitiveNumber {} => {
-                quote! { f64 }
+                quote! {
+                    pub type #name = f64;
+                }
             },
             TypeInfo::PrimitiveObject {} => {
                 quote! {
@@ -908,19 +913,18 @@ impl ToTokens for Type {
             },
             TypeInfo::PrimitiveBoolean {} => {
                 quote! {
-                    bool
+                    pub type #name = bool;
                 }
             },
             TypeInfo::PrimitiveBigInt {} => {
                 // TODO
                 quote! {
-                    u64
+                    pub type #name = u64;
                 }
             },
             TypeInfo::PrimitiveString {} => {
-                println!("STR {:?}", &self);
                 quote! {
-                    String
+                    pub type #name = String;
                 }
             },
             TypeInfo::PrimitiveSymbol {} => panic!("how do we handle symbols"),
@@ -928,9 +932,7 @@ impl ToTokens for Type {
                 quote! {}
             },
             TypeInfo::PrimitiveUndefined {} => {
-                quote! {
-                    !
-                }
+                quote! {}
             },
             /*
             TypeInfo::PrimitiveNull {},
