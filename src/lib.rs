@@ -40,7 +40,6 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
             let mut file = std::fs::File::create("output.rs").expect("failed to create file");
             std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes()).expect("failed to write");
 
-            //println!("MOD DEF {:?}", &mod_toks.to_string());
             mod_toks
         })
         .collect::<Vec<TokenStream2>>();
@@ -361,6 +360,21 @@ enum TypeInfo {
         name: String,
         constraint: Box<TypeInfo>,
     },
+    NamespaceImport(NamespaceImport),
+}
+
+#[derive(Debug, Clone)]
+enum NamespaceImport {
+    Default {
+        src: PathBuf,
+    },
+    All {
+        src: PathBuf,
+    },
+    Named {
+        src: PathBuf,
+        name: String
+    },
 }
 
 impl TypeInfo {
@@ -448,9 +462,6 @@ impl TypeInfo {
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
         type_params: &HashMap<String, TypeInfo>,
     ) -> Self {
-        // TODO: need to recursively resolve. really, make resolve_names return a subset of
-        // TypeInfo enum variants as a new type ResolvedTypeInfo
-
         match self {
             Self::Interface { indexer, fields } => Self::Interface {
                 indexer: indexer
@@ -483,12 +494,13 @@ impl TypeInfo {
                     .get(&referent.file)
                     .and_then(|types_by_name| match &referent.name {
                         TypeIdent::QualifiedName(path) => {
-                            types_by_name.get(&TypeIdent::QualifiedName(path.clone()))
-                        }
-                        n @ TypeIdent::DefaultExport() => types_by_name.get(&n),
-                        n @ TypeIdent::Name(..) => types_by_name.get(&n),
+                            Some(TypeInfo::Alias {
+                                target: referent.clone(),
+                            })
+                        },
+                        n @ TypeIdent::DefaultExport() => types_by_name.get(&n).map(|t| t.info.clone()),
+                        n @ TypeIdent::Name(..) => types_by_name.get(&n).map(|t| t.info.clone()),
                     })
-                    .map(|t| t.info.clone())
                     .or_else(|| {
                         self.resolve_builtin(
                             &referent,
@@ -612,6 +624,7 @@ impl TypeInfo {
             Self::LitBoolean { .. } => self.clone(),
             Self::BuiltinDate {} => self.clone(),
             Self::BuiltinPromise { .. } => self.clone(),
+            Self::NamespaceImport { .. } => self.clone(),
         }
     }
 }
@@ -862,6 +875,24 @@ impl ToTokens for EnumMember {
     }
 }
 
+trait ToNsPath<T: ?Sized> {
+    // TODO: would love to return a generic ToTokens...
+    fn to_ns_path(&self, current_mod: &T) -> TokenStream2;
+}
+
+impl<T, U> ToNsPath<T> for U where T: ToModPathIter, U: ToModPathIter + ?Sized {
+    fn to_ns_path(&self, current_mod: &T) -> TokenStream2 {
+        let ns_len = current_mod.to_mod_path_iter().count();
+        let mut use_path = vec![format_ident!("super"); ns_len];
+        use_path.extend(
+            self.to_mod_path_iter().map(|p| format_ident!("{}", p))
+        );
+        quote! {
+            #(#use_path)::*
+        }
+    }
+}
+
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let name = camel_case_ident(self.name.to_name());
@@ -883,17 +914,10 @@ impl ToTokens for Type {
             TypeInfo::Ref { .. } => panic!("should not have any aliases at token generation time"),
             TypeInfo::Alias { target } => {
                 // we super::super our way up to root and then append the target namespace
-                let ns_len = self.name.to_mod_path_iter().count();
-                let use_path = {
-                    let mut use_path = vec![format_ident!("super"); ns_len];
-                    use_path.extend(
-                        target.to_mod_path_iter().map(|p| format_ident!("{}", p))
-                    );
-                    use_path
-                };
+                let use_path = target.to_ns_path(&self.name);
 
                 quote! {
-                    use #(#use_path)::* as #name;
+                    use #use_path as #name;
                 }
             },
             TypeInfo::PrimitiveAny {} => {
@@ -979,6 +1003,47 @@ impl ToTokens for Type {
                 name: String,
                 constraint: Box<TypeInfo>,
             },*/
+            TypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
+                let ns = src.as_path().to_ns_path(&self.name);
+                let vis = if self.is_exported {
+                    let vis = format_ident!("pub");
+                    quote! { #vis }
+                } else {
+                    quote! {}
+                };
+
+                quote! {
+                    #vis use #ns as #name;
+                }
+            },
+            TypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
+                let ns = src.as_path().to_ns_path(&self.name);
+                let vis = if self.is_exported {
+                    let vis = format_ident!("pub");
+                    quote! { #vis }
+                } else {
+                    quote! {}
+                };
+                let default_export = format_ident!("default");
+
+                quote! {
+                    #vis use #ns::#default_export as #name;
+                }
+            },
+            TypeInfo::NamespaceImport(NamespaceImport::Named { src, name: item_name }) => {
+                let ns = src.as_path().to_ns_path(&self.name);
+                let vis = if self.is_exported {
+                    let vis = format_ident!("pub");
+                    quote! { #vis }
+                } else {
+                    quote! {}
+                };
+                let item_name = format_ident!("{}", item_name);
+
+                quote! {
+                    #vis use #ns::#item_name as #name;
+                }
+            },
             _ => { quote! { }},
         };
 
@@ -1031,7 +1096,7 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.to_string_lossy().contains("adam.d.ts") {
+        if ts_path.to_string_lossy().contains("hello.d.ts") {
             println!("MOD!, {:?}", module);
         }
 
@@ -1120,9 +1185,6 @@ impl TsTypes {
             .process_module(Some(base.to_path_buf()), &import)
             .expect("failed to process module");
 
-        // TODO: would be cool to enforce in the type system that we never look up a type at this
-        // phase. we refer to names of types.
-
         specifiers
             .into_iter()
             .for_each(|specifier| match specifier {
@@ -1135,12 +1197,10 @@ impl TsTypes {
                         Type {
                             name: TypeName::for_name(ts_path, &local.sym.to_string()),
                             is_exported: false,
-                            info: TypeInfo::Alias {
-                                target: TypeName::for_name(
-                                    file.to_path_buf(),
-                                    &imported.as_ref().unwrap_or(local).sym.to_string(),
-                                ),
-                            },
+                            info: TypeInfo::NamespaceImport(NamespaceImport::Named {
+                                src: file.to_path_buf(),
+                                name: imported.as_ref().unwrap_or(local).sym.to_string(),
+                            }),
                         },
                     );
                 }
@@ -1151,14 +1211,24 @@ impl TsTypes {
                         Type {
                             name: TypeName::for_name(ts_path, &local.sym.to_string()),
                             is_exported: false,
-                            info: TypeInfo::Alias {
-                                target: TypeName::default_export_for(file.to_path_buf()),
-                            }
+                            info: TypeInfo::NamespaceImport(NamespaceImport::Default {
+                                src: file.to_path_buf(),
+                            })
                         },
                     );
                 }
                 ImportSpecifier::Namespace(ImportStarAsSpecifier { local, .. }) => {
-                    self.import_namespace(ts_path, &file, local, false);
+                    self.set_type_for_name_for_file(
+                        ts_path,
+                        TypeIdent::Name(local.sym.to_string()),
+                        Type {
+                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                            is_exported: false,
+                            info: TypeInfo::NamespaceImport(NamespaceImport::All {
+                                src: file.to_path_buf(),
+                            })
+                        },
+                    );
                 }
             })
     }
@@ -1946,52 +2016,53 @@ impl TsTypes {
             return;
         }
 
+        let src = src.as_ref().expect("need a src").value.to_string();
         let dir = ts_path.parent().expect("All files must have a parent");
         let file = self
             .process_module(
                 Some(dir.to_path_buf()),
-                &src.as_ref().expect("need a src").value.to_string(),
+                &src
             )
             .expect("failed to process module");
 
         let to_export = specifiers
             .iter()
-            .filter_map(|spec| match spec {
-                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => Some((
-                    TypeIdent::Name(orig.sym.to_string()),
-                    exported.as_ref().unwrap_or(orig).sym.to_string(),
-                )),
-                ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => {
-                    Some((TypeIdent::DefaultExport(), exported.sym.to_string()))
-                }
-                ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => {
-                    self.import_namespace(ts_path, &file, name, true);
-
-                    None
-                }
-            })
-            .collect::<HashMap<TypeIdent, String>>();
-
-        to_export.into_iter().for_each(|(from, to)| {
-            self.set_type_for_name_for_file(
-                ts_path,
-                TypeIdent::Name(to.to_string()),
-                Type {
-                    name: TypeName::for_name(ts_path, &to.to_string()),
-                    is_exported: true,
-                    info: TypeInfo::Ref {
-                        referent: match from {
-                            TypeIdent::Name(n) => TypeName::for_name(file.to_path_buf(), &n),
-                            TypeIdent::DefaultExport() => {
-                                TypeName::default_export_for(file.to_path_buf())
-                            }
-                            _ => panic!("bad export"),
-                        },
-                        type_params: Default::default(),
-                    },
+            .map(|spec| match spec {
+                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
+                    Type {
+                        name: TypeName::for_name(ts_path, &exported.as_ref().unwrap_or(orig).sym.to_string()),
+                        is_exported: true,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::Named {
+                            src: file.to_path_buf(),
+                            name: orig.sym.to_string(),
+                        })
+                    }
                 },
-            );
-        });
+                ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => {
+                    Type {
+                        name: TypeName::for_name(ts_path, &exported.sym.to_string()),
+                        is_exported: true,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::Default {
+                            src: file.to_path_buf(),
+                        })
+                    }
+                },
+                ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => {
+                    Type {
+                        name: TypeName::for_name(ts_path, &name.sym.to_string()),
+                        is_exported: true,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::All {
+                            src: file.to_path_buf(),
+                        })
+                    }
+                }
+            }).for_each(|typ| {
+                self.set_type_for_name_for_file(
+                    ts_path,
+                    typ.name.name.clone(),
+                    typ,
+                );
+            });
     }
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
