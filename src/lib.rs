@@ -493,14 +493,14 @@ impl TypeInfo {
 
                 types_by_name_by_file
                     .get(&referent.file)
-                    .and_then(|types_by_name| match &referent.name {
-                        TypeIdent::QualifiedName(path) => {
-                            Some(TypeInfo::Alias {
-                                target: referent.clone(),
-                            })
-                        },
-                        n @ TypeIdent::DefaultExport() => types_by_name.get(&n).map(|t| t.info.clone()),
-                        n @ TypeIdent::Name(..) => types_by_name.get(&n).map(|t| t.info.clone()),
+                    .and_then(|types_by_name| {
+                        if types_by_name.get(&referent.name).is_none() {
+                            println!("Could not find type {:?}", referent);
+                        }
+
+                        Some(TypeInfo::Alias {
+                            target: referent.clone(),
+                        })
                     })
                     .or_else(|| {
                         self.resolve_builtin(
@@ -931,7 +931,7 @@ impl ToTokens for Type {
                     let field_name = to_snake_case_ident(js_field_name);
                     quote! {
                         #[serde(rename = #js_field_name)]
-                        pub #field_name: String
+                        pub #field_name: #typ
                     }
                 }).collect::<Vec<TokenStream2>>();
 
@@ -941,7 +941,7 @@ impl ToTokens for Type {
                     field_toks.push(
                         quote! {
                             #[serde(flatten)]
-                            pub #extra_fields_name: std::collections::HashMap<String, String>
+                            pub #extra_fields_name: std::collections::HashMap<String, #type_info>
                         }
                     );
                 }
@@ -956,13 +956,13 @@ impl ToTokens for Type {
             TypeInfo::Enum { members, } => {
                 quote! {
                     #[wasm_bindgen]
-                    #[derive(Clone, Debug)]
+                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     pub enum #name {
                         #(#members),*
                     }
                 }
             },
-            TypeInfo::Ref { .. } => panic!("should not have any aliases at token generation time"),
+            TypeInfo::Ref { .. } => panic!("ref isn't a top-level type"),
             TypeInfo::Alias { target } => {
                 // we super::super our way up to root and then append the target namespace
                 let use_path = target.to_ns_path(&self.name);
@@ -983,7 +983,7 @@ impl ToTokens for Type {
             },
             TypeInfo::PrimitiveObject {} => {
                 quote! {
-                    std::collections::HashMap<String, JsValue>
+                    pub type #name = std::collections::HashMap<String, JsValue>;
                 }
             },
             TypeInfo::PrimitiveBoolean {} => {
@@ -1044,7 +1044,7 @@ impl ToTokens for Type {
                 let mut is_variadic = false;
                 let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
                     let param_name = to_snake_case_ident(&p.name);
-                    let typ = to_ident("String"); //p.type_info
+                    let typ = &p.type_info;
                     let full_type = if p.is_variadic {
                         is_variadic = true;
                         quote! {
@@ -1061,7 +1061,6 @@ impl ToTokens for Type {
                     }
                 }).collect();
 
-                let return_type_toks = to_ident("String");
                 let attrs = {
                     let mut attrs = vec![quote! { js_name = #js_name }];
                     if is_variadic {
@@ -1074,7 +1073,7 @@ impl ToTokens for Type {
                     #[wasm_bindgen]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
-                        fn #fn_name(#(#param_toks),*) -> #return_type_toks;
+                        fn #fn_name(#(#param_toks),*) -> #return_type;
                     }
                 }
             },
@@ -1134,6 +1133,174 @@ impl ToTokens for Type {
                     #vis use #ns::#item_name as #name;
                 }
             },
+            _ => { quote! { }},
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+impl ToTokens for TypeInfo {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let our_toks = match &self {
+            TypeInfo::Interface { .. } => {
+                panic!("interface in type info");
+            },
+            TypeInfo::Enum { .. } => {
+                panic!("enum in type info");
+            },
+            TypeInfo::Ref { referent, type_params } =>  {
+                let local_name = to_camel_case_ident(&referent.to_name());
+
+                quote! {
+                    #local_name
+                }
+            },
+            TypeInfo::Alias { target } => {
+                // TODO: need to get the local name for the alias (stored on the Type right now)
+                let local_name = to_camel_case_ident(&target.to_name());
+
+                quote! {
+                    #local_name
+                }
+            },
+            TypeInfo::PrimitiveAny {} => {
+                quote! {
+                    JsValue
+                }
+            },
+            TypeInfo::PrimitiveNumber {} => {
+                quote! {
+                    f64
+                }
+            },
+            TypeInfo::PrimitiveObject {} => {
+                quote! {
+                    std::collections::HashMap<String, JsValue>
+                }
+            },
+            TypeInfo::PrimitiveBoolean {} => {
+                quote! {
+                    bool
+                }
+            },
+            TypeInfo::PrimitiveBigInt {} => {
+                // TODO
+                quote! {
+                    u64
+                }
+            },
+            TypeInfo::PrimitiveString {} => {
+                quote! {
+                    String
+                }
+            },
+            TypeInfo::PrimitiveSymbol {} => panic!("how do we handle symbols"),
+            TypeInfo::PrimitiveVoid {} => {
+                quote! {
+                    ()
+                }
+            },
+            TypeInfo::PrimitiveUndefined {} => {
+                // TODO
+                quote! {}
+            },
+            TypeInfo::PrimitiveNull {} => {
+                // TODO
+                quote! {}
+            },
+            TypeInfo::BuiltinPromise { value_type } => {
+                // TODO: should be an async function with Result return type
+                quote! {
+                    js_sys::Promise
+                }
+            },
+            TypeInfo::BuiltinDate {} => {
+                // TODO
+                quote! {
+                    js_sys::Date
+                }
+            },
+            TypeInfo::Array { item_type } => {
+                quote! {
+                    Vec<#item_type>
+                }
+            },
+            TypeInfo::Optional { item_type } => {
+                quote! {
+                    Option<#item_type>
+                }
+            },
+            TypeInfo::Union { types } => {
+                // TODO
+                quote! {}
+            },
+            TypeInfo::Intersection { types } => {
+                // TODO
+                quote! {}
+            },
+            TypeInfo::Mapped { value_type } => {
+                quote! {
+                    std::collections::HashMap<String, #value_type>
+                }
+            },
+            TypeInfo::LitNumber { n } => {
+                // TODO
+                quote! {
+                    f64
+                }
+            },
+            TypeInfo::LitString { s } => {
+                // TODO
+                quote! {
+                    String
+                }
+            },
+            TypeInfo::LitBoolean { b } => {
+                // TODO
+                quote! {
+                    bool
+                }
+            },
+            TypeInfo::Func(Func { params, type_params, return_type }) => {
+                let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
+                    let param_name = to_snake_case_ident(&p.name);
+                    let typ = &p.type_info;
+                    let full_type = if p.is_variadic {
+                        quote! {
+                            &[#typ]
+                        }
+                    } else {
+                        quote! {
+                            #typ
+                        }
+                    };
+
+                    quote! {
+                        #param_name: #full_type
+                    }
+                }).collect();
+
+                quote! {
+                    &Closure<dyn Fn(#(#param_toks),*) -> #return_type
+                }
+            },
+            /*
+            TypeInfo::Constructor {
+                params: Vec<Param>,
+                return_type: Box<TypeInfo>,
+            },
+            TypeInfo::Class {
+                members: HashMap<String, Member>,
+            },
+            TypeInfo::Var {
+                type_info: Box<TypeInfo>,
+            },
+            TypeInfo::GenericType {
+                name: String,
+                constraint: Box<TypeInfo>,
+            },*/
+            TypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
             _ => { quote! { }},
         };
 
@@ -1321,48 +1488,6 @@ impl TsTypes {
                     );
                 }
             })
-    }
-
-    fn import_namespace(
-        &mut self,
-        ts_path: &Path,
-        import_from: &Path,
-        ns: &Ident,
-        should_export: bool,
-    ) {
-        let full_ns = {
-            let mut full_ns = self
-                .namespace_stack
-                .last()
-                .unwrap_or(&Default::default())
-                .clone();
-            full_ns.push(ns.sym.to_string());
-            full_ns
-        };
-        self.namespace_stack.push(full_ns);
-
-        let t_by_n: HashMap<String, Type> = self
-            .types_by_name_by_file
-            .get(import_from)
-            .expect("should have processed file already")
-            .iter()
-            .filter(|(n, t)| t.is_exported)
-            .filter_map(|(n, t)| match n {
-                TypeIdent::Name(name) => Some((name.to_string(), t.clone())),
-                _ => None,
-            })
-            .collect();
-
-        t_by_n.into_iter().for_each(|(name, mut typ)| {
-            typ.is_exported = should_export;
-            typ.info = TypeInfo::Alias {
-                target: typ.name.clone(),
-            };
-
-            self.set_type_for_name_for_file(ts_path, TypeIdent::Name(name), typ);
-        });
-
-        self.namespace_stack.pop();
     }
 
     fn process_export_all(&mut self, ts_path: &Path, export_all: &ExportAll) {
