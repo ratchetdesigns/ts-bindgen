@@ -1038,8 +1038,47 @@ impl ToTokens for Type {
             },
             TypeInfo::LitBoolean {
                 b: bool,
+            },*/
+            TypeInfo::Func(Func { params, type_params, return_type }) => {
+                let fn_name = to_snake_case_ident(&js_name);
+                let mut is_variadic = false;
+                let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
+                    let param_name = to_snake_case_ident(&p.name);
+                    let typ = to_ident("String"); //p.type_info
+                    let full_type = if p.is_variadic {
+                        is_variadic = true;
+                        quote! {
+                            &[#typ]
+                        }
+                    } else {
+                        quote! {
+                            #typ
+                        }
+                    };
+
+                    quote! {
+                        #param_name: #full_type
+                    }
+                }).collect();
+
+                let return_type_toks = to_ident("String");
+                let attrs = {
+                    let mut attrs = vec![quote! { js_name = #js_name }];
+                    if is_variadic {
+                        attrs.push(quote! { variadic });
+                    }
+                    attrs
+                };
+
+                quote! {
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(#(#attrs),*)]
+                        fn #fn_name(#(#param_toks),*) -> #return_type_toks;
+                    }
+                }
             },
-            TypeInfo::Func(Func),
+            /*
             TypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
