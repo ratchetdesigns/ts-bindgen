@@ -15,6 +15,65 @@ pub struct TsTypes {
     pub namespace_stack: Vec<Vec<String>>,
 }
 
+struct Source<'a, T> {
+    ts_types: &'a mut TsTypes,
+    ts_path: &'a Path,
+    node: &'a T,
+}
+
+impl<'a, T> Source<'a, T> {
+    fn from(ts_types: &'a mut TsTypes, ts_path: &'a Path, node: &'a T) -> Source<'a, T> {
+        Source {
+            ts_types,
+            ts_path,
+            node,
+        }
+    }
+}
+
+impl<'a> From<Source<'a, TsTypeRef>> for TypeRef {
+    fn from(
+        source: Source<'a, TsTypeRef>,
+    ) -> TypeRef {
+        let Source {
+            ts_types,
+            ts_path,
+            node: TsTypeRef {
+                type_name,
+                type_params,
+                ..
+            }
+        } = source;
+
+        match type_name {
+            TsEntityName::Ident(Ident { sym, .. }) => TypeRef {
+                referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
+                type_params: type_params
+                    .as_ref()
+                    .map(|tps| {
+                        tps.params
+                            .iter()
+                            .map(|tp| ts_types.process_type(ts_path, tp))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            },
+            TsEntityName::TsQualifiedName(qn) => TypeRef {
+                referent: ts_types.qualified_name_to_type_name(ts_path, qn),
+                type_params: type_params
+                    .as_ref()
+                    .map(|tps| {
+                        tps.params
+                            .iter()
+                            .map(|tp| ts_types.process_type(ts_path, tp))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            },
+        }
+    }
+}
+
 impl TsTypes {
     pub fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
         let mut tt: TsTypes = Default::default();
@@ -241,38 +300,9 @@ impl TsTypes {
     fn process_type_ref(
         &mut self,
         ts_path: &Path,
-        TsTypeRef {
-            type_name,
-            type_params,
-            ..
-        }: &TsTypeRef,
+        ts_type_ref: &TsTypeRef,
     ) -> TypeInfo {
-        match type_name {
-            TsEntityName::Ident(Ident { sym, .. }) => TypeInfo::Ref(TypeRef {
-                referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
-                type_params: type_params
-                    .as_ref()
-                    .map(|tps| {
-                        tps.params
-                            .iter()
-                            .map(|tp| self.process_type(ts_path, tp))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }),
-            TsEntityName::TsQualifiedName(qn) => TypeInfo::Ref(TypeRef {
-                referent: self.qualified_name_to_type_name(ts_path, qn),
-                type_params: type_params
-                    .as_ref()
-                    .map(|tps| {
-                        tps.params
-                            .iter()
-                            .map(|tp| self.process_type(ts_path, tp))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }),
-        }
+        TypeInfo::Ref(Source::from(self, ts_path, ts_type_ref).into())
     }
 
     fn process_keyword_type(
