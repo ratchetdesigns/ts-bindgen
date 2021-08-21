@@ -1,4 +1,6 @@
-use crate::ir::{EnumMember, Func, Indexer, NamespaceImport, Type, TypeIdent, TypeInfo, TypeName};
+use crate::ir::{
+    EnumMember, Func, Indexer, NamespaceImport, Type, TypeIdent, TypeInfo, TypeName, TypeRef,
+};
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -344,7 +346,7 @@ impl ToTokens for Type {
                     }
                 }
             }
-            TypeInfo::Ref { .. } => panic!("ref isn't a top-level type"),
+            TypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
             TypeInfo::Alias { target } => {
                 // we super::super our way up to root and then append the target namespace
                 let use_path = target.to_ns_path(&self.name);
@@ -544,10 +546,10 @@ impl ToTokens for TypeInfo {
             TypeInfo::Enum { .. } => {
                 panic!("enum in type info");
             }
-            TypeInfo::Ref {
+            TypeInfo::Ref(TypeRef {
                 referent,
                 type_params: _,
-            } => {
+            }) => {
                 let local_name = to_camel_case_ident(referent.to_name());
 
                 quote! {

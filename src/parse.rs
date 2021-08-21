@@ -1,5 +1,6 @@
 use crate::ir::{
     EnumMember, Func, Indexer, Member, NamespaceImport, Param, Type, TypeIdent, TypeInfo, TypeName,
+    TypeRef,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -247,7 +248,7 @@ impl TsTypes {
         }: &TsTypeRef,
     ) -> TypeInfo {
         match type_name {
-            TsEntityName::Ident(Ident { sym, .. }) => TypeInfo::Ref {
+            TsEntityName::Ident(Ident { sym, .. }) => TypeInfo::Ref(TypeRef {
                 referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
                 type_params: type_params
                     .as_ref()
@@ -258,8 +259,8 @@ impl TsTypes {
                             .collect()
                     })
                     .unwrap_or_default(),
-            },
-            TsEntityName::TsQualifiedName(qn) => TypeInfo::Ref {
+            }),
+            TsEntityName::TsQualifiedName(qn) => TypeInfo::Ref(TypeRef {
                 referent: self.qualified_name_to_type_name(ts_path, qn),
                 type_params: type_params
                     .as_ref()
@@ -270,7 +271,7 @@ impl TsTypes {
                             .collect()
                     })
                     .unwrap_or_default(),
-            },
+            }),
         }
     }
 
@@ -515,10 +516,10 @@ impl TsTypes {
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
-                TypeInfo::Ref {
+                TypeInfo::Ref(TypeRef {
                     referent: TypeName::default_export_for(ts_path.to_path_buf()),
                     type_params: Default::default(),
-                }
+                })
             }
         }
     }
@@ -990,6 +991,6 @@ impl TsTypes {
 
                     self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
                 })
-        }
+        };
     }
 }

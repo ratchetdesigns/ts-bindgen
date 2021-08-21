@@ -105,6 +105,12 @@ impl Indexer {
 }
 
 #[derive(Debug, Clone)]
+pub struct TypeRef {
+    pub referent: TypeName,
+    pub type_params: Vec<TypeInfo>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TypeInfo {
     Interface {
         indexer: Option<Indexer>,
@@ -113,10 +119,7 @@ pub enum TypeInfo {
     Enum {
         members: Vec<EnumMember>,
     },
-    Ref {
-        referent: TypeName,
-        type_params: Vec<TypeInfo>,
-    },
+    Ref(TypeRef),
     Alias {
         target: TypeName,
     },
@@ -283,10 +286,10 @@ impl TypeInfo {
                     })
                     .collect(),
             },
-            Self::Ref {
+            Self::Ref(TypeRef {
                 referent,
                 type_params: alias_type_params,
-            } => {
+            }) => {
                 if let TypeIdent::Name(ref name) = &referent.name {
                     if let Some(constraint) = type_params.get(name) {
                         return Self::GenericType {
