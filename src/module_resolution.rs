@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
 use serde_json::Value;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Result;
-use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 pub fn typings_module_resolver(import_path: &Path, pkg: &Value) -> Result<PathBuf> {
     let types_rel_path = pkg

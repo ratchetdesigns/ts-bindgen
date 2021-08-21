@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
@@ -178,16 +178,9 @@ pub enum TypeInfo {
 
 #[derive(Debug, Clone)]
 pub enum NamespaceImport {
-    Default {
-        src: PathBuf,
-    },
-    All {
-        src: PathBuf,
-    },
-    Named {
-        src: PathBuf,
-        name: String
-    },
+    Default { src: PathBuf },
+    All { src: PathBuf },
+    Named { src: PathBuf, name: String },
 }
 
 impl TypeInfo {
@@ -307,16 +300,18 @@ impl TypeInfo {
                     .get(&referent.file)
                     .and_then(|types_by_name| {
                         let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
-                            TypeIdent::Name(qn.first().expect("must have a name in a qualified name").to_string())
+                            TypeIdent::Name(
+                                qn.first()
+                                    .expect("must have a name in a qualified name")
+                                    .to_string(),
+                            )
                         } else {
                             referent.name.clone()
                         };
 
-                        types_by_name.get(&n).map(|_|
-                            TypeInfo::Alias {
-                                target: referent.clone(),
-                            }
-                        )
+                        types_by_name.get(&n).map(|_| TypeInfo::Alias {
+                            target: referent.clone(),
+                        })
                     })
                     .or_else(|| {
                         self.resolve_builtin(
@@ -335,7 +330,7 @@ impl TypeInfo {
                         None
                     })
                     .expect("can't resolve alias")
-            },
+            }
             Self::Alias { target } => Self::Alias {
                 target: target.clone(),
             },

@@ -1,7 +1,9 @@
-use std::path::{PathBuf, Path};
-use std::collections::{HashMap, hash_map::Entry};
-use crate::ir::{Type, TypeInfo, NamespaceImport, Indexer, Member, Func, Param, EnumMember, TypeName, TypeIdent};
-use crate::module_resolution::{typings_module_resolver, get_ts_path};
+use crate::ir::{
+    EnumMember, Func, Indexer, Member, NamespaceImport, Param, Type, TypeIdent, TypeInfo, TypeName,
+};
+use crate::module_resolution::{get_ts_path, typings_module_resolver};
+use std::collections::{hash_map::Entry, HashMap};
+use std::path::{Path, PathBuf};
 use swc_common::{sync::Lrc, SourceMap};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
@@ -168,7 +170,7 @@ impl TsTypes {
                             is_exported: false,
                             info: TypeInfo::NamespaceImport(NamespaceImport::Default {
                                 src: file.to_path_buf(),
-                            })
+                            }),
                         },
                     );
                 }
@@ -181,7 +183,7 @@ impl TsTypes {
                             is_exported: false,
                             info: TypeInfo::NamespaceImport(NamespaceImport::All {
                                 src: file.to_path_buf(),
-                            })
+                            }),
                         },
                     );
                 }
@@ -562,9 +564,7 @@ impl TsTypes {
             info: TypeInfo::Interface {
                 indexer: body.body.iter().find_map(|el| match el {
                     TsTypeElement::TsIndexSignature(TsIndexSignature {
-                        readonly,
-                        params,
-                        ..
+                        readonly, params, ..
                     }) => {
                         if params.len() != 1 {
                             panic!("indexing signatures should only have 1 param");
@@ -928,49 +928,40 @@ impl TsTypes {
         let src = src.as_ref().expect("need a src").value.to_string();
         let dir = ts_path.parent().expect("All files must have a parent");
         let file = self
-            .process_module(
-                Some(dir.to_path_buf()),
-                &src
-            )
+            .process_module(Some(dir.to_path_buf()), &src)
             .expect("failed to process module");
 
         specifiers
             .iter()
             .map(|spec| match spec {
-                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
-                    Type {
-                        name: TypeName::for_name(ts_path, &exported.as_ref().unwrap_or(orig).sym.to_string()),
-                        is_exported: true,
-                        info: TypeInfo::NamespaceImport(NamespaceImport::Named {
-                            src: file.to_path_buf(),
-                            name: orig.sym.to_string(),
-                        })
-                    }
+                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => Type {
+                    name: TypeName::for_name(
+                        ts_path,
+                        &exported.as_ref().unwrap_or(orig).sym.to_string(),
+                    ),
+                    is_exported: true,
+                    info: TypeInfo::NamespaceImport(NamespaceImport::Named {
+                        src: file.to_path_buf(),
+                        name: orig.sym.to_string(),
+                    }),
                 },
-                ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => {
-                    Type {
-                        name: TypeName::for_name(ts_path, &exported.sym.to_string()),
-                        is_exported: true,
-                        info: TypeInfo::NamespaceImport(NamespaceImport::Default {
-                            src: file.to_path_buf(),
-                        })
-                    }
+                ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Type {
+                    name: TypeName::for_name(ts_path, &exported.sym.to_string()),
+                    is_exported: true,
+                    info: TypeInfo::NamespaceImport(NamespaceImport::Default {
+                        src: file.to_path_buf(),
+                    }),
                 },
-                ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => {
-                    Type {
-                        name: TypeName::for_name(ts_path, &name.sym.to_string()),
-                        is_exported: true,
-                        info: TypeInfo::NamespaceImport(NamespaceImport::All {
-                            src: file.to_path_buf(),
-                        })
-                    }
-                }
-            }).for_each(|typ| {
-                self.set_type_for_name_for_file(
-                    ts_path,
-                    typ.name.name.clone(),
-                    typ,
-                );
+                ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
+                    name: TypeName::for_name(ts_path, &name.sym.to_string()),
+                    is_exported: true,
+                    info: TypeInfo::NamespaceImport(NamespaceImport::All {
+                        src: file.to_path_buf(),
+                    }),
+                },
+            })
+            .for_each(|typ| {
+                self.set_type_for_name_for_file(ts_path, typ.name.name.clone(), typ);
             });
     }
 
