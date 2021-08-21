@@ -18,7 +18,7 @@ struct MutModDef {
 }
 
 impl MutModDef {
-    fn to_mod_def(self) -> ModDef {
+    fn into_mod_def(self) -> ModDef {
         ModDef {
             name: self.name,
             types: self.types,
@@ -29,7 +29,7 @@ impl MutModDef {
                     Rc::try_unwrap(c)
                         .expect("Rc still borrowed")
                         .into_inner()
-                        .to_mod_def()
+                        .into_mod_def()
                 })
                 .collect(),
         }
@@ -174,7 +174,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                     });
             });
 
-        Rc::try_unwrap(root).unwrap().into_inner().to_mod_def()
+        Rc::try_unwrap(root).unwrap().into_inner().into_mod_def()
     }
 }
 
@@ -299,7 +299,7 @@ fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> proc_
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
-        let name = to_camel_case_ident(&js_name);
+        let name = to_camel_case_ident(js_name);
 
         let our_toks = match &self.info {
             TypeInfo::Interface { indexer, fields } => {
@@ -426,7 +426,7 @@ impl ToTokens for Type {
                 type_params: _,
                 return_type,
             }) => {
-                let fn_name = to_snake_case_ident(&js_name);
+                let fn_name = to_snake_case_ident(js_name);
                 let mut is_variadic = false;
                 let param_toks: Vec<TokenStream2> = params
                     .iter()
@@ -489,7 +489,7 @@ impl ToTokens for Type {
                 } else {
                     quote! {}
                 };
-                let name = to_snake_case_ident(&js_name);
+                let name = to_snake_case_ident(js_name);
 
                 quote! {
                     #vis use #ns as #name;
@@ -548,7 +548,7 @@ impl ToTokens for TypeInfo {
                 referent,
                 type_params: _,
             } => {
-                let local_name = to_camel_case_ident(&referent.to_name());
+                let local_name = to_camel_case_ident(referent.to_name());
 
                 quote! {
                     #local_name
@@ -556,7 +556,7 @@ impl ToTokens for TypeInfo {
             }
             TypeInfo::Alias { target } => {
                 // TODO: need to get the local name for the alias (stored on the Type right now)
-                let local_name = to_camel_case_ident(&target.to_name());
+                let local_name = to_camel_case_ident(target.to_name());
 
                 quote! {
                     #local_name

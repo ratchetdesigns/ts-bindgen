@@ -62,14 +62,14 @@ impl TsTypes {
 
     fn process_module_item(&mut self, ts_path: &Path, item: &ModuleItem) {
         match item {
-            ModuleItem::ModuleDecl(decl) => self.process_module_decl(&ts_path, &decl),
-            ModuleItem::Stmt(stmt) => self.process_stmt(&ts_path, &stmt),
+            ModuleItem::ModuleDecl(decl) => self.process_module_decl(ts_path, decl),
+            ModuleItem::Stmt(stmt) => self.process_stmt(ts_path, stmt),
         }
     }
 
-    fn process_module_items(&mut self, ts_path: &Path, items: &Vec<ModuleItem>) {
+    fn process_module_items(&mut self, ts_path: &Path, items: &[ModuleItem]) {
         for item in items {
-            self.process_module_item(&ts_path, &item);
+            self.process_module_item(ts_path, item);
         }
     }
 
@@ -78,7 +78,7 @@ impl TsTypes {
         module_base: Option<PathBuf>,
         module_name: &str,
     ) -> Result<PathBuf, swc_ecma_parser::error::Error> {
-        let ts_path = get_ts_path(module_base, &module_name, &typings_module_resolver)
+        let ts_path = get_ts_path(module_base, module_name, &typings_module_resolver)
             .expect("TODO: Need to convert this exception type")
             .canonicalize()
             .expect("TODO: Need to convert this exception type");
@@ -87,7 +87,6 @@ impl TsTypes {
             Entry::Occupied(_) => return Ok(ts_path),
             Entry::Vacant(v) => {
                 v.insert(Default::default());
-                ()
             }
         }
 
@@ -106,8 +105,7 @@ impl TsTypes {
                         ns.push(s);
                     }
                     TypeIdent::DefaultExport() => panic!("default export within namespace"),
-                    TypeIdent::QualifiedName(name) => {
-                        let mut name = name.clone();
+                    TypeIdent::QualifiedName(mut name) => {
                         ns.append(&mut name);
                     }
                 }
@@ -142,52 +140,50 @@ impl TsTypes {
             .process_module(Some(base.to_path_buf()), &import)
             .expect("failed to process module");
 
-        specifiers
-            .into_iter()
-            .for_each(|specifier| match specifier {
-                ImportSpecifier::Named(ImportNamedSpecifier {
-                    local, imported, ..
-                }) => {
-                    self.set_type_for_name_for_file(
-                        ts_path,
-                        TypeIdent::Name(local.sym.to_string()),
-                        Type {
-                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
-                            is_exported: false,
-                            info: TypeInfo::NamespaceImport(NamespaceImport::Named {
-                                src: file.to_path_buf(),
-                                name: imported.as_ref().unwrap_or(local).sym.to_string(),
-                            }),
-                        },
-                    );
-                }
-                ImportSpecifier::Default(ImportDefaultSpecifier { local, .. }) => {
-                    self.set_type_for_name_for_file(
-                        ts_path,
-                        TypeIdent::Name(local.sym.to_string()),
-                        Type {
-                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
-                            is_exported: false,
-                            info: TypeInfo::NamespaceImport(NamespaceImport::Default {
-                                src: file.to_path_buf(),
-                            }),
-                        },
-                    );
-                }
-                ImportSpecifier::Namespace(ImportStarAsSpecifier { local, .. }) => {
-                    self.set_type_for_name_for_file(
-                        ts_path,
-                        TypeIdent::Name(local.sym.to_string()),
-                        Type {
-                            name: TypeName::for_name(ts_path, &local.sym.to_string()),
-                            is_exported: false,
-                            info: TypeInfo::NamespaceImport(NamespaceImport::All {
-                                src: file.to_path_buf(),
-                            }),
-                        },
-                    );
-                }
-            })
+        specifiers.iter().for_each(|specifier| match specifier {
+            ImportSpecifier::Named(ImportNamedSpecifier {
+                local, imported, ..
+            }) => {
+                self.set_type_for_name_for_file(
+                    ts_path,
+                    TypeIdent::Name(local.sym.to_string()),
+                    Type {
+                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        is_exported: false,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::Named {
+                            src: file.to_path_buf(),
+                            name: imported.as_ref().unwrap_or(local).sym.to_string(),
+                        }),
+                    },
+                );
+            }
+            ImportSpecifier::Default(ImportDefaultSpecifier { local, .. }) => {
+                self.set_type_for_name_for_file(
+                    ts_path,
+                    TypeIdent::Name(local.sym.to_string()),
+                    Type {
+                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        is_exported: false,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::Default {
+                            src: file.to_path_buf(),
+                        }),
+                    },
+                );
+            }
+            ImportSpecifier::Namespace(ImportStarAsSpecifier { local, .. }) => {
+                self.set_type_for_name_for_file(
+                    ts_path,
+                    TypeIdent::Name(local.sym.to_string()),
+                    Type {
+                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        is_exported: false,
+                        info: TypeInfo::NamespaceImport(NamespaceImport::All {
+                            src: file.to_path_buf(),
+                        }),
+                    },
+                );
+            }
+        })
     }
 
     fn process_export_all(&mut self, ts_path: &Path, export_all: &ExportAll) {
@@ -237,7 +233,7 @@ impl TsTypes {
     }
 
     fn qualified_name_to_type_name(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> TypeName {
-        let name_path = self.qualified_name_to_str_vec(&ts_path, qn);
+        let name_path = self.qualified_name_to_str_vec(ts_path, qn);
         TypeName::for_qualified_name(ts_path.to_path_buf(), name_path)
     }
 
@@ -261,7 +257,7 @@ impl TsTypes {
                             .map(|tp| self.process_type(ts_path, tp))
                             .collect()
                     })
-                    .unwrap_or(Default::default()),
+                    .unwrap_or_default(),
             },
             TsEntityName::TsQualifiedName(qn) => TypeInfo::Ref {
                 referent: self.qualified_name_to_type_name(ts_path, qn),
@@ -273,7 +269,7 @@ impl TsTypes {
                             .map(|tp| self.process_type(ts_path, tp))
                             .collect()
                     })
-                    .unwrap_or(Default::default()),
+                    .unwrap_or_default(),
             },
         }
     }
@@ -390,7 +386,7 @@ impl TsTypes {
         }
     }
 
-    fn process_params(&mut self, ts_path: &Path, params: &Vec<TsFnParam>) -> Vec<Param> {
+    fn process_params(&mut self, ts_path: &Path, params: &[TsFnParam]) -> Vec<Param> {
         params
             .iter()
             .map(|p| match p {
@@ -424,13 +420,13 @@ impl TsTypes {
                             p.name.sym.to_string(),
                             p.constraint
                                 .as_ref()
-                                .map(|c| self.process_type(ts_path, &c))
+                                .map(|c| self.process_type(ts_path, c))
                                 .unwrap_or(TypeInfo::PrimitiveAny {}),
                         )
                     })
                     .collect()
             })
-            .unwrap_or(Default::default())
+            .unwrap_or_default()
     }
 
     fn process_fn_type(
@@ -507,15 +503,15 @@ impl TsTypes {
             TsType::TsTypeLit(type_lit) => self.process_type_lit(ts_path, type_lit),
             TsType::TsLitType(lit_type) => self.process_literal_type(ts_path, lit_type),
             TsType::TsParenthesizedType(TsParenthesizedType { type_ann, .. }) => {
-                self.process_type(ts_path, &type_ann)
+                self.process_type(ts_path, type_ann)
             }
             TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsFnType(f)) => {
-                self.process_fn_type(ts_path, &f)
+                self.process_fn_type(ts_path, f)
             }
             TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsConstructorType(ctor)) => {
-                self.process_ctor_type(ts_path, &ctor)
+                self.process_ctor_type(ts_path, ctor)
             }
-            TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, &pred),
+            TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, pred),
             // TODO: more cases
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
@@ -571,7 +567,7 @@ impl TsTypes {
                         }
 
                         Some(Indexer {
-                            readonly: readonly.clone(),
+                            readonly: *readonly,
                             type_info: Box::new(match params.first().unwrap() {
                                 TsFnParam::Ident(ident) => ident
                                     .type_ann
@@ -633,7 +629,7 @@ impl TsTypes {
                                         _ => panic!("we only support ident params for methods"),
                                     })
                                     .collect(),
-                                type_params: self.process_fn_type_params(ts_path, &type_params),
+                                type_params: self.process_fn_type_params(ts_path, type_params),
                                 return_type: Box::new(
                                     type_ann
                                         .as_ref()
@@ -782,11 +778,7 @@ impl TsTypes {
         }
     }
 
-    fn process_raw_params(
-        &mut self,
-        ts_path: &Path,
-        params: &Vec<swc_ecma_ast::Param>,
-    ) -> Vec<Param> {
+    fn process_raw_params(&mut self, ts_path: &Path, params: &[swc_ecma_ast::Param]) -> Vec<Param> {
         params
             .iter()
             .map(|p| match &p.pat {
@@ -967,44 +959,37 @@ impl TsTypes {
 
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
-            ModuleDecl::Import(decl) => self.process_import_decl(&ts_path, &decl),
-            ModuleDecl::ExportDecl(decl) => self.process_export_decl(&ts_path, &decl),
-            ModuleDecl::ExportNamed(decl) => self.process_named_export(&ts_path, &decl),
+            ModuleDecl::Import(decl) => self.process_import_decl(ts_path, decl),
+            ModuleDecl::ExportDecl(decl) => self.process_export_decl(ts_path, decl),
+            ModuleDecl::ExportNamed(decl) => self.process_named_export(ts_path, decl),
             ModuleDecl::ExportDefaultDecl(_decl) => {
                 println!("DEFAULT DECL, {:?}", _decl);
-                ()
             }
             ModuleDecl::ExportDefaultExpr(_decl) => {
                 println!("export default expr, {:?}", _decl);
-                ()
             }
-            ModuleDecl::ExportAll(decl) => self.process_export_all(&ts_path, &decl),
+            ModuleDecl::ExportAll(decl) => self.process_export_all(ts_path, decl),
             ModuleDecl::TsImportEquals(_decl) => {
                 println!("import equals, {:?}", _decl);
-                ()
             }
             ModuleDecl::TsExportAssignment(_decl) => {
                 println!("export assignment, {:?}", _decl);
-                ()
             }
             ModuleDecl::TsNamespaceExport(_decl) => {
                 println!("export namespace, {:?}", _decl);
-                ()
             }
         }
     }
 
     fn process_stmt(&mut self, ts_path: &Path, stmt: &Stmt) {
-        match stmt {
-            Stmt::Decl(decl) => self
-                .process_decl(ts_path, &decl)
+        if let Stmt::Decl(decl) = stmt {
+            self.process_decl(ts_path, decl)
                 .into_iter()
                 .for_each(|typ| {
                     let type_name = typ.name.to_name().to_string();
 
                     self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
-                }),
-            _ => (), // we don't deal with most statements
+                })
         }
     }
 }

@@ -98,7 +98,7 @@ impl Indexer {
             readonly: self.readonly,
             type_info: Box::new(
                 self.type_info
-                    .resolve_names(&types_by_name_by_file, &type_params),
+                    .resolve_names(types_by_name_by_file, type_params),
             ),
         }
     }
@@ -187,7 +187,7 @@ impl TypeInfo {
     fn resolve_builtin(
         &self,
         referent: &TypeName,
-        alias_type_params: &Vec<TypeInfo>,
+        alias_type_params: &[TypeInfo],
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
         type_params: &HashMap<String, TypeInfo>,
     ) -> Option<TypeInfo> {
@@ -203,7 +203,7 @@ impl TypeInfo {
                         .first()
                         .as_ref()
                         .unwrap()
-                        .resolve_names(&types_by_name_by_file, &type_params),
+                        .resolve_names(types_by_name_by_file, type_params),
                 ),
             });
         }
@@ -221,7 +221,7 @@ impl TypeInfo {
                         .get(1)
                         .as_ref()
                         .unwrap()
-                        .resolve_names(&types_by_name_by_file, &type_params),
+                        .resolve_names(types_by_name_by_file, type_params),
                 ),
             });
         }
@@ -254,7 +254,7 @@ impl TypeInfo {
                     alias_type_params
                         .first()
                         .as_ref()
-                        .map(|p| p.resolve_names(&types_by_name_by_file, &type_params))
+                        .map(|p| p.resolve_names(types_by_name_by_file, type_params))
                         .unwrap_or(TypeInfo::PrimitiveAny {}),
                 ),
             });
@@ -272,13 +272,13 @@ impl TypeInfo {
             Self::Interface { indexer, fields } => Self::Interface {
                 indexer: indexer
                     .as_ref()
-                    .map(|i| i.resolve_names(&types_by_name_by_file, &type_params)),
+                    .map(|i| i.resolve_names(types_by_name_by_file, type_params)),
                 fields: fields
                     .iter()
                     .map(|(n, t)| {
                         (
                             n.to_string(),
-                            t.resolve_names(&types_by_name_by_file, &type_params),
+                            t.resolve_names(types_by_name_by_file, type_params),
                         )
                     })
                     .collect(),
@@ -315,10 +315,10 @@ impl TypeInfo {
                     })
                     .or_else(|| {
                         self.resolve_builtin(
-                            &referent,
-                            &alias_type_params,
-                            &types_by_name_by_file,
-                            &type_params,
+                            referent,
+                            alias_type_params,
+                            types_by_name_by_file,
+                            type_params,
                         )
                     })
                     .or_else(|| {
@@ -335,27 +335,25 @@ impl TypeInfo {
                 target: target.clone(),
             },
             Self::Array { item_type } => Self::Array {
-                item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
+                item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },
             Self::Optional { item_type } => Self::Optional {
-                item_type: Box::new(item_type.resolve_names(&types_by_name_by_file, &type_params)),
+                item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },
             Self::Union { types } => Self::Union {
                 types: types
                     .iter()
-                    .map(|t| t.resolve_names(&types_by_name_by_file, &type_params))
+                    .map(|t| t.resolve_names(types_by_name_by_file, type_params))
                     .collect(),
             },
             Self::Intersection { types } => Self::Intersection {
                 types: types
                     .iter()
-                    .map(|t| t.resolve_names(&types_by_name_by_file, &type_params))
+                    .map(|t| t.resolve_names(types_by_name_by_file, type_params))
                     .collect(),
             },
             Self::Mapped { value_type } => Self::Mapped {
-                value_type: Box::new(
-                    value_type.resolve_names(&types_by_name_by_file, &type_params),
-                ),
+                value_type: Box::new(value_type.resolve_names(types_by_name_by_file, type_params)),
             },
             Self::Func(Func {
                 params,
@@ -373,12 +371,12 @@ impl TypeInfo {
                         .iter()
                         .map(|p| Param {
                             name: p.name.to_string(),
-                            is_variadic: p.is_variadic.clone(),
-                            type_info: p.type_info.resolve_names(&types_by_name_by_file, &tps),
+                            is_variadic: p.is_variadic,
+                            type_info: p.type_info.resolve_names(types_by_name_by_file, &tps),
                         })
                         .collect(),
                     return_type: Box::new(
-                        return_type.resolve_names(&types_by_name_by_file, &type_params),
+                        return_type.resolve_names(types_by_name_by_file, type_params),
                     ),
                 })
             }
@@ -390,14 +388,14 @@ impl TypeInfo {
                     .iter()
                     .map(|p| Param {
                         name: p.name.to_string(),
-                        is_variadic: p.is_variadic.clone(),
+                        is_variadic: p.is_variadic,
                         type_info: p
                             .type_info
-                            .resolve_names(&types_by_name_by_file, &type_params),
+                            .resolve_names(types_by_name_by_file, type_params),
                     })
                     .collect(),
                 return_type: Box::new(
-                    return_type.resolve_names(&types_by_name_by_file, &type_params),
+                    return_type.resolve_names(types_by_name_by_file, type_params),
                 ),
             },
             Self::Class { members } => Self::Class {
@@ -406,19 +404,17 @@ impl TypeInfo {
                     .map(|(n, m)| {
                         (
                             n.to_string(),
-                            m.resolve_names(&types_by_name_by_file, &type_params),
+                            m.resolve_names(types_by_name_by_file, type_params),
                         )
                     })
                     .collect(),
             },
             Self::Var { type_info } => Self::Var {
-                type_info: Box::new(type_info.resolve_names(&types_by_name_by_file, &type_params)),
+                type_info: Box::new(type_info.resolve_names(types_by_name_by_file, type_params)),
             },
             Self::GenericType { name, constraint } => Self::GenericType {
                 name: name.to_string(),
-                constraint: Box::new(
-                    constraint.resolve_names(&types_by_name_by_file, &type_params),
-                ),
+                constraint: Box::new(constraint.resolve_names(types_by_name_by_file, type_params)),
             },
             Self::Enum { .. } => self.clone(),
             Self::PrimitiveAny {} => self.clone(),
@@ -458,7 +454,7 @@ impl Type {
             is_exported: self.is_exported,
             info: self
                 .info
-                .resolve_names(&types_by_name_by_file, &Default::default()),
+                .resolve_names(types_by_name_by_file, &Default::default()),
         }
     }
 }

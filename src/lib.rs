@@ -27,7 +27,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         .modules
         .iter()
         .map(|module| {
-            let tt = TsTypes::try_new(&module).expect("tt error");
+            let tt = TsTypes::try_new(module).expect("tt error");
             use std::borrow::Borrow;
             let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
             let mod_toks = quote! { #mod_def };

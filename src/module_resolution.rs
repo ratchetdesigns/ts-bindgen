@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Result;
 use std::path::{Path, PathBuf};
@@ -7,29 +6,35 @@ use std::path::{Path, PathBuf};
 pub fn typings_module_resolver(import_path: &Path, pkg: &Value) -> Result<PathBuf> {
     let types_rel_path = pkg
         .as_object()
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Bad package.json (expected top-level object) found in {}",
-                import_path.display()
-            ),
-        ))?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Bad package.json (expected top-level object) found in {}",
+                    import_path.display()
+                ),
+            )
+        })?
         .get("types")
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Bad package.json (expected 'types' property) found in {}",
-                import_path.display()
-            ),
-        ))?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Bad package.json (expected 'types' property) found in {}",
+                    import_path.display()
+                ),
+            )
+        })?
         .as_str()
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Bad package.json (expected 'types' to be a string) found in {}",
-                import_path.display()
-            ),
-        ))?;
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Bad package.json (expected 'types' to be a string) found in {}",
+                    import_path.display()
+                ),
+            )
+        })?;
 
     let types_path = import_path.join(types_rel_path);
     if types_path.is_file() {
@@ -49,10 +54,7 @@ pub fn typings_module_resolver(import_path: &Path, pkg: &Value) -> Result<PathBu
 fn path_with_ext_appended(path: &Path, ext: &str) -> PathBuf {
     path.with_file_name(format!(
         "{}.{}",
-        path.file_name()
-            .unwrap_or(OsStr::new(""))
-            .to_str()
-            .unwrap_or(""),
+        path.file_name().unwrap_or_default().to_string_lossy(),
         ext
     ))
 }
@@ -62,13 +64,15 @@ fn get_file_with_any_ext(path: &Path) -> Result<PathBuf> {
     exts.iter()
         .map(|ext| path_with_ext_appended(path, ext))
         .find(|path_with_ext| path_with_ext.is_file())
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!(
-                "Could not find module with any extension, {}",
-                path.display()
-            ),
-        ))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Could not find module with any extension, {}",
+                    path.display()
+                ),
+            )
+        })
 }
 
 pub fn get_ts_path(
@@ -84,9 +88,9 @@ pub fn get_ts_path(
         if abs_import_path.is_dir() {
             get_file_with_any_ext(&abs_import_path.join("index"))
         } else {
-            get_file_with_any_ext(&abs_import_path)
+            get_file_with_any_ext(abs_import_path)
         }
-    } else if import.starts_with(".") {
+    } else if import.starts_with('.') {
         let import_path = path.join(import);
         if import_path.is_dir() {
             get_file_with_any_ext(&import_path.join("index"))
@@ -110,10 +114,10 @@ pub fn get_ts_path(
                     break Ok(import_path);
                 } else {
                     // check with different file extensions
-                    match get_file_with_any_ext(&import_path) {
-                        Ok(import_path) => break Ok(import_path),
-                        Err(_) => (), // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
-                    };
+                    if let Ok(import_path) = get_file_with_any_ext(&import_path) {
+                        break Ok(import_path);
+                    }
+                    // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
                 }
             }
 
