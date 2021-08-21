@@ -112,7 +112,7 @@ pub fn get_ts_path(
                     // check with different file extensions
                     match get_file_with_any_ext(&import_path) {
                         Ok(import_path) => break Ok(import_path),
-                        Err(err) => (), // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
+                        Err(_) => (), // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
                     };
                 }
             }

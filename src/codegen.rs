@@ -1,6 +1,6 @@
 use proc_macro2::{TokenStream as TokenStream2};
 use quote::{quote, format_ident, ToTokens, TokenStreamExt};
-use std::convert::{From, Into};
+use std::convert::From;
 use std::rc::Rc;
 use std::path::{Path, PathBuf, Component};
 use std::cell::RefCell;
@@ -8,7 +8,7 @@ use heck::{SnakeCase, CamelCase};
 use unicode_xid::UnicodeXID;
 use std::collections::HashMap;
 use syn::parse_str as parse_syn_str;
-use crate::ir::{Type, TypeInfo, NamespaceImport, Indexer, Member, Func, Param, EnumMember, TypeName, TypeIdent};
+use crate::ir::{Type, TypeInfo, NamespaceImport, Indexer, Func, EnumMember, TypeName, TypeIdent};
 
 #[derive(Debug, Clone)]
 struct MutModDef {
@@ -135,7 +135,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
             types_by_name
                 .iter()
                 .filter_map(|(name, typ)| {
-                    if let TypeIdent::QualifiedName(names) = name {
+                    if let TypeIdent::QualifiedName(_) = name {
                         Some((name.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>(), typ))
                     } else {
                         None
@@ -267,7 +267,7 @@ impl<T, U> ToNsPath<T> for U where T: ToModPathIter, U: ToModPathIter + ?Sized {
     }
 }
 
-fn to_unique_ident(mut desired: String, taken: &Fn(&str) -> bool) -> proc_macro2::Ident {
+fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> proc_macro2::Ident {
     while taken(&desired) {
         desired += "_";
     }
@@ -293,7 +293,7 @@ impl ToTokens for Type {
                     }
                 }).collect::<Vec<TokenStream2>>();
 
-                if let Some(Indexer { readonly, type_info }) = &indexer {
+                if let Some(Indexer { readonly: _, type_info }) = &indexer {
                     let extra_fields_name = to_unique_ident("extra_fields".to_string(), &|x| fields.contains_key(x));
 
                     field_toks.push(
@@ -397,7 +397,7 @@ impl ToTokens for Type {
             TypeInfo::LitBoolean {
                 b: bool,
             },*/
-            TypeInfo::Func(Func { params, type_params, return_type }) => {
+            TypeInfo::Func(Func { params, type_params: _, return_type }) => {
                 let fn_name = to_snake_case_ident(&js_name);
                 let mut is_variadic = false;
                 let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
@@ -508,7 +508,7 @@ impl ToTokens for TypeInfo {
             TypeInfo::Enum { .. } => {
                 panic!("enum in type info");
             },
-            TypeInfo::Ref { referent, type_params } =>  {
+            TypeInfo::Ref { referent, type_params: _ } =>  {
                 let local_name = to_camel_case_ident(&referent.to_name());
 
                 quote! {
@@ -568,7 +568,7 @@ impl ToTokens for TypeInfo {
                 // TODO
                 quote! {}
             },
-            TypeInfo::BuiltinPromise { value_type } => {
+            TypeInfo::BuiltinPromise { value_type: _ } => {
                 // TODO: should be an async function with Result return type
                 quote! {
                     js_sys::Promise
@@ -590,11 +590,11 @@ impl ToTokens for TypeInfo {
                     Option<#item_type>
                 }
             },
-            TypeInfo::Union { types } => {
+            TypeInfo::Union { types: _ } => {
                 // TODO
                 quote! {}
             },
-            TypeInfo::Intersection { types } => {
+            TypeInfo::Intersection { types: _ } => {
                 // TODO
                 quote! {}
             },
@@ -603,27 +603,26 @@ impl ToTokens for TypeInfo {
                     std::collections::HashMap<String, #value_type>
                 }
             },
-            TypeInfo::LitNumber { n } => {
+            TypeInfo::LitNumber { n: _ } => {
                 // TODO
                 quote! {
                     f64
                 }
             },
-            TypeInfo::LitString { s } => {
+            TypeInfo::LitString { s: _ } => {
                 // TODO
                 quote! {
                     String
                 }
             },
-            TypeInfo::LitBoolean { b } => {
+            TypeInfo::LitBoolean { b: _ } => {
                 // TODO
                 quote! {
                     bool
                 }
             },
-            TypeInfo::Func(Func { params, type_params, return_type }) => {
+            TypeInfo::Func(Func { params, type_params: _, return_type }) => {
                 let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
-                    let param_name = to_snake_case_ident(&p.name);
                     let typ = &p.type_info;
 
                     if p.is_variadic {

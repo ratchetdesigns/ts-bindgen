@@ -12,14 +12,11 @@ mod codegen;
 
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2};
-use quote::{quote, format_ident, ToTokens, TokenStreamExt};
-use std::collections::HashMap;
+use quote::quote;
 use std::fs::File;
-use std::path::{Path, PathBuf, Component};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, LitStr, Result as ParseResult, Token, parse_str as parse_syn_str};
-use ir::{Type, TypeInfo, NamespaceImport, Indexer, Member, Func, Param, EnumMember, TypeName, TypeIdent};
+use syn::{parse_macro_input, LitStr, Result as ParseResult, Token};
 use parse::TsTypes;
 use codegen::ModDef;
 
@@ -36,7 +33,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
             let mod_toks = quote! { #mod_def };
             // let mod_toks = quote! { };
 
-            let mut file = std::fs::File::create("output.rs").expect("failed to create file");
+            let mut file = File::create("output.rs").expect("failed to create file");
             std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes()).expect("failed to write");
 
             mod_toks

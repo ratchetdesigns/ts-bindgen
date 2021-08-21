@@ -196,14 +196,12 @@ impl TsTypes {
             .process_module(Some(dir.to_path_buf()), &s)
             .expect("failed to process module");
 
-        let type_name = format!("*EXPORT_ALL*{}*", file.to_string_lossy());
-
         let to_export = self
             .types_by_name_by_file
             .get(&file)
             .expect("should have processed file already")
             .iter()
-            .filter(|(n, t)| t.is_exported)
+            .filter(|(_, t)| t.is_exported)
             .filter_map(|(n, t)| match n {
                 n @ TypeIdent::Name(_) => Some((n.clone(), t.clone())),
                 _ => None,
@@ -215,7 +213,7 @@ impl TsTypes {
         });
     }
 
-    fn qualified_name_to_str_vec(&mut self, ts_path: &Path, qn: &TsQualifiedName) -> Vec<String> {
+    fn qualified_name_to_str_vec(&mut self, _ts_path: &Path, qn: &TsQualifiedName) -> Vec<String> {
         let mut en = TsEntityName::TsQualifiedName(Box::new(qn.clone()));
         let mut names = Vec::new();
 
@@ -280,7 +278,7 @@ impl TsTypes {
 
     fn process_keyword_type(
         &mut self,
-        ts_path: &Path,
+        _ts_path: &Path,
         TsKeywordType { kind, .. }: &TsKeywordType,
     ) -> TypeInfo {
         match kind {
@@ -376,7 +374,7 @@ impl TsTypes {
 
     fn process_literal_type(
         &mut self,
-        ts_path: &Path,
+        _ts_path: &Path,
         TsLitType { lit, .. }: &TsLitType,
     ) -> TypeInfo {
         match lit {
@@ -385,8 +383,8 @@ impl TsTypes {
                 s: s.value.to_string(),
             },
             TsLit::Bool(b) => TypeInfo::LitBoolean { b: b.value },
-            TsLit::BigInt(n) => panic!("we don't support literal bigints yet"),
-            TsLit::Tpl(t) => panic!("we don't support template literals yet"),
+            TsLit::BigInt(_) => panic!("we don't support literal bigints yet"),
+            TsLit::Tpl(_) => panic!("we don't support template literals yet"),
         }
     }
 
@@ -440,7 +438,6 @@ impl TsTypes {
             type_ann,
             params,
             type_params,
-            span,
             ..
         }: &TsFnType,
     ) -> TypeInfo {
@@ -457,7 +454,7 @@ impl TsTypes {
         TsConstructorType {
             type_ann,
             params,
-            type_params,
+            type_params: _,
             ..
         }: &TsConstructorType,
     ) -> TypeInfo {
@@ -481,7 +478,7 @@ impl TsTypes {
             params: vec![Param {
                 name: match param_name {
                     TsThisTypeOrIdent::Ident(ident) => ident.sym.to_string(),
-                    TsThisTypeOrIdent::TsThisType(this) => "this".to_string(),
+                    TsThisTypeOrIdent::TsThisType(_) => "this".to_string(),
                 },
                 is_variadic: false,
                 type_info: type_ann
@@ -553,8 +550,8 @@ impl TsTypes {
         ts_path: &Path,
         TsInterfaceDecl {
             id,
-            type_params,
-            extends,
+            type_params: _,
+            extends: _,
             body,
             ..
         }: &TsInterfaceDecl,
@@ -566,7 +563,6 @@ impl TsTypes {
                 indexer: body.body.iter().find_map(|el| match el {
                     TsTypeElement::TsIndexSignature(TsIndexSignature {
                         readonly,
-                        type_ann,
                         params,
                         ..
                     }) => {
@@ -697,7 +693,7 @@ impl TsTypes {
         ts_path: &Path,
         TsTypeAliasDecl {
             id,
-            type_params,
+            type_params: _,
             type_ann,
             ..
         }: &TsTypeAliasDecl,
@@ -710,7 +706,7 @@ impl TsTypes {
         }
     }
 
-    fn process_prop_name(&mut self, ts_path: &Path, prop_name: &PropName) -> String {
+    fn process_prop_name(&mut self, _ts_path: &Path, prop_name: &PropName) -> String {
         match prop_name {
             PropName::Ident(ident) => ident.sym.to_string(),
             PropName::Str(s) => s.value.to_string(),
@@ -724,9 +720,9 @@ impl TsTypes {
         ts_path: &Path,
         Class {
             body,
-            super_class,
-            type_params,
-            super_type_params,
+            super_class: _,
+            type_params: _,
+            super_type_params: _,
             ..
         }: &Class,
     ) -> TypeInfo {
@@ -938,7 +934,7 @@ impl TsTypes {
             )
             .expect("failed to process module");
 
-        let to_export = specifiers
+        specifiers
             .iter()
             .map(|spec| match spec {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {

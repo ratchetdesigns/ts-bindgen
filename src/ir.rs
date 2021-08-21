@@ -75,8 +75,8 @@ pub enum Member {
 impl Member {
     fn resolve_names(
         &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        _types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        _type_params: &HashMap<String, TypeInfo>,
     ) -> Self {
         self.clone() // TODO
     }
