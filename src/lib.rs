@@ -494,13 +494,17 @@ impl TypeInfo {
                 types_by_name_by_file
                     .get(&referent.file)
                     .and_then(|types_by_name| {
-                        if types_by_name.get(&referent.name).is_none() {
-                            println!("Could not find type {:?}", referent);
-                        }
+                        let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
+                            TypeIdent::Name(qn.first().expect("must have a name in a qualified name").to_string())
+                        } else {
+                            referent.name.clone()
+                        };
 
-                        Some(TypeInfo::Alias {
-                            target: referent.clone(),
-                        })
+                        types_by_name.get(&n).map(|_|
+                            TypeInfo::Alias {
+                                target: referent.clone(),
+                            }
+                        )
                     })
                     .or_else(|| {
                         self.resolve_builtin(
@@ -1100,6 +1104,7 @@ impl ToTokens for Type {
                 } else {
                     quote! {}
                 };
+                let name = to_snake_case_ident(&js_name);
 
                 quote! {
                     #vis use #ns as #name;
@@ -1266,7 +1271,8 @@ impl ToTokens for TypeInfo {
                 let param_toks: Vec<TokenStream2> = params.iter().map(|p| {
                     let param_name = to_snake_case_ident(&p.name);
                     let typ = &p.type_info;
-                    let full_type = if p.is_variadic {
+
+                    if p.is_variadic {
                         quote! {
                             &[#typ]
                         }
@@ -1274,15 +1280,11 @@ impl ToTokens for TypeInfo {
                         quote! {
                             #typ
                         }
-                    };
-
-                    quote! {
-                        #param_name: #full_type
                     }
                 }).collect();
 
                 quote! {
-                    &Closure<dyn Fn(#(#param_toks),*) -> #return_type
+                    &Closure<dyn Fn(#(#param_toks),*) -> #return_type>
                 }
             },
             /*
