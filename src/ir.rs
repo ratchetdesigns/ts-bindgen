@@ -8,7 +8,7 @@ pub enum TypeIdent {
     QualifiedName(Vec<String>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeName {
     pub file: PathBuf,
     pub name: TypeIdent,
@@ -58,20 +58,20 @@ impl TypeName {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumMember {
     pub id: String,
     pub value: Option<String>, // TODO: really a string | number
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub type_info: TypeInfo,
     pub is_variadic: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Func {
     pub type_params: HashMap<String, TypeInfo>,
     pub params: Vec<Param>,
@@ -120,12 +120,12 @@ impl Func {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ctor {
     pub params: Vec<Param>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Member {
     Constructor(Ctor),
     Method(Func),
@@ -142,7 +142,7 @@ impl Member {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Indexer {
     pub readonly: bool,
     pub type_info: Box<TypeInfo>,
@@ -178,7 +178,7 @@ impl Indexer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeRef {
     pub referent: TypeName,
     pub type_params: Vec<TypeInfo>,
@@ -195,33 +195,33 @@ impl TypeRef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NamespaceImport {
     Default { src: PathBuf },
     All { src: PathBuf },
     Named { src: PathBuf, name: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BaseClass {
     Unresolved(TypeRef),
     Resolved(TypeInfo),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Class {
     pub super_class: Option<Box<TypeRef>>,
     pub members: HashMap<String, Member>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeInfo {
     Interface(Interface),
     Enum {
@@ -674,7 +674,7 @@ impl TypeInfo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: TypeName,
     pub is_exported: bool,

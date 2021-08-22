@@ -7,7 +7,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::convert::From;
+use std::convert::{From, identity};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use syn::parse_str as parse_syn_str;
@@ -59,7 +59,7 @@ impl MutModDef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
     name: proc_macro2::Ident,
     types: Vec<Type>,
@@ -181,7 +181,68 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
     }
 }
 
-fn to_ident(s: &str) -> proc_macro2::Ident {
+#[cfg(test)]
+mod mod_def_tests {
+    use super::*;
+
+    #[test]
+    fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
+        let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
+        let b_c = PathBuf::from("/tmp/a/node_modules/b/c");
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(b_c.parent().unwrap())?;
+        std::fs::File::create(&b_c)?;
+
+        tbnbf.insert(
+            b_c.clone(),
+            {
+                let mut tbn = HashMap::new();
+                tbn.insert(
+                    TypeIdent::Name("my_mod".to_string()),
+                    Type {
+                        name: TypeName {
+                            file: b_c.clone(),
+                            name: TypeIdent::Name("my_mod".to_string()),
+                        },
+                        is_exported: true,
+                        info: TypeInfo::PrimitiveAny {},
+                    }
+                );
+                tbn
+            }
+        );
+
+        let mods: ModDef = (&tbnbf).into();
+        assert_eq!(
+            mods,
+            ModDef {
+                name: to_ident("root"),
+                types: Default::default(),
+                children: vec![ModDef {
+                    name: to_ident("b"),
+                    types: Default::default(),
+                    children: vec![ModDef {
+                        name: to_ident("c"),
+                        types: vec![Type {
+                            name: TypeName {
+                                file: b_c,
+                                name: TypeIdent::Name("my_mod".to_string())
+                            },
+                            is_exported: true,
+                            info: TypeInfo::PrimitiveAny {}
+                        }],
+                        children: Default::default(),
+                    }]
+                }]
+            }
+        );
+
+        Ok(())
+    }
+}
+
+fn map_to_ident<F: Fn(String) -> String>(s: &str, map: F) -> proc_macro2::Ident {
     // make sure we have valid characters
     let mut chars = s.chars();
     let first: String = chars
@@ -207,7 +268,7 @@ fn to_ident(s: &str) -> proc_macro2::Ident {
         .collect();
 
     // now, make sure we have a valid rust identifier (no keyword collissions)
-    let mut full_ident = first + &rest;
+    let mut full_ident = map(first + &rest);
     while parse_syn_str::<syn::Ident>(&full_ident).is_err() {
         full_ident += "_";
     }
@@ -215,19 +276,87 @@ fn to_ident(s: &str) -> proc_macro2::Ident {
     format_ident!("{}", &full_ident)
 }
 
+fn to_ident(s: &str) -> proc_macro2::Ident {
+    map_to_ident(s, &identity)
+}
+
 fn to_camel_case_ident(s: &str) -> proc_macro2::Ident {
-    let s = s.to_camel_case();
-    to_ident(&s)
+    map_to_ident(&s, |s| s.to_camel_case())
 }
 
 fn to_ns_name(ns: &str) -> proc_macro2::Ident {
-    let ns = ns.to_snake_case();
-    to_ident(ns.trim_end_matches(".d.ts").trim_end_matches(".ts"))
+    map_to_ident(
+        ns.trim_end_matches(".d.ts").trim_end_matches(".ts"),
+        |s| s.to_snake_case(),
+    )
 }
 
 fn to_snake_case_ident(s: &str) -> proc_macro2::Ident {
-    let s = s.to_snake_case();
-    to_ident(&s)
+    map_to_ident(&s, |s| s.to_snake_case())
+}
+
+#[cfg(test)]
+mod ident_tests {
+    use super::*;
+
+    #[test]
+    fn snake_case_ident_test() {
+        assert_eq!(
+            to_snake_case_ident("IsThisSnake_Case").to_string(),
+            "is_this_snake_case"
+        );
+
+        assert_eq!(
+            to_snake_case_ident("2IsThisSnake_Case").to_string(),
+            "is_this_snake_case"
+        );
+
+        assert_eq!(
+            to_snake_case_ident("fn").to_string(),
+            "fn_"
+        );
+    }
+
+    #[test]
+    fn ns_name_test() {
+        assert_eq!(
+            to_ns_name("IsThisSnake_Case").to_string(),
+            "is_this_snake_case"
+        );
+
+        assert_eq!(
+            to_ns_name("2IsThisSnake_Case").to_string(),
+            "is_this_snake_case"
+        );
+
+        assert_eq!(
+            to_ns_name("mod").to_string(),
+            "mod_"
+        );
+    }
+
+    #[test]
+    fn camel_case_ident_test() {
+        assert_eq!(
+            to_camel_case_ident("thisIsMixedCase").to_string(),
+            "ThisIsMixedCase"
+        );
+
+        assert_eq!(
+            to_camel_case_ident("2is_this_snake_case").to_string(),
+            "IsThisSnakeCase"
+        );
+
+        assert_eq!(
+            to_camel_case_ident("super").to_string(),
+            "Super"
+        );
+
+        assert_eq!(
+            to_camel_case_ident("1super").to_string(),
+            "Super"
+        );
+    }
 }
 
 impl ToTokens for ModDef {
