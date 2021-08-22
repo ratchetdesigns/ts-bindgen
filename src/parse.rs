@@ -203,6 +203,27 @@ impl PropExt for TsPropertySignature {
     }
 }
 
+trait FnParamExt {
+    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param;
+}
+
+impl FnParamExt for TsFnParam {
+    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
+        match self {
+            TsFnParam::Ident(ident) => Param {
+                name: ident.id.sym.to_string(),
+                is_variadic: false,
+                type_info: ident
+                    .type_ann
+                    .as_ref()
+                    .map(|t| ts_types.process_type(ts_path, &t.type_ann))
+                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+            },
+            _ => panic!("we only support ident params for methods"),
+        }
+    }
+}
+
 trait FuncExt {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param>;
 
@@ -227,6 +248,23 @@ impl FuncExt for TsMethodSignature {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
         self.params
             .iter()
+            .map(|param| param.to_param(ts_path, ts_types))
+            .collect()
+    }
+
+    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+        &self.type_params
+    }
+
+    fn return_type(&self) -> Option<&TsType> {
+        self.type_ann.as_ref().map(|t| &*t.type_ann)
+    }
+}
+
+impl FuncExt for TsFnType {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
+        self.params
+            .iter()
             .map(|param| match param {
                 TsFnParam::Ident(ident) => Param {
                     name: ident.id.sym.to_string(),
@@ -247,7 +285,7 @@ impl FuncExt for TsMethodSignature {
     }
 
     fn return_type(&self) -> Option<&TsType> {
-        self.type_ann.as_ref().map(|t| &*t.type_ann)
+        Some(&self.type_ann.type_ann)
     }
 }
 
@@ -627,18 +665,7 @@ impl TsTypes {
     fn process_params(&mut self, ts_path: &Path, params: &[TsFnParam]) -> Vec<Param> {
         params
             .iter()
-            .map(|p| match p {
-                TsFnParam::Ident(id_param) => Param {
-                    name: id_param.id.sym.to_string(),
-                    is_variadic: false,
-                    type_info: id_param
-                        .type_ann
-                        .as_ref()
-                        .map(|p_type| self.process_type(ts_path, &p_type.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
-                },
-                _ => panic!("we only handle ident params"),
-            })
+            .map(|p| p.to_param(ts_path, self))
             .collect()
     }
 
