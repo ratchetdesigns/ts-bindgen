@@ -1,13 +1,13 @@
 use crate::ir::{
-    BaseClass, Class, EnumMember, Func, Indexer, Interface, NamespaceImport, Type, TypeIdent,
-    TypeInfo, TypeName, TypeRef, Param, Member
+    BaseClass, Class, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
+    TypeIdent, TypeInfo, TypeName, TypeRef,
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::convert::{From, identity};
+use std::convert::{identity, From};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use syn::parse_str as parse_syn_str;
@@ -194,24 +194,21 @@ mod mod_def_tests {
             .create(b_c.parent().unwrap())?;
         std::fs::File::create(&b_c)?;
 
-        tbnbf.insert(
-            b_c.clone(),
-            {
-                let mut tbn = HashMap::new();
-                tbn.insert(
-                    TypeIdent::Name("my_mod".to_string()),
-                    Type {
-                        name: TypeName {
-                            file: b_c.clone(),
-                            name: TypeIdent::Name("my_mod".to_string()),
-                        },
-                        is_exported: true,
-                        info: TypeInfo::PrimitiveAny {},
-                    }
-                );
-                tbn
-            }
-        );
+        tbnbf.insert(b_c.clone(), {
+            let mut tbn = HashMap::new();
+            tbn.insert(
+                TypeIdent::Name("my_mod".to_string()),
+                Type {
+                    name: TypeName {
+                        file: b_c.clone(),
+                        name: TypeIdent::Name("my_mod".to_string()),
+                    },
+                    is_exported: true,
+                    info: TypeInfo::PrimitiveAny {},
+                },
+            );
+            tbn
+        });
 
         let mods: ModDef = (&tbnbf).into();
         assert_eq!(
@@ -285,10 +282,9 @@ fn to_camel_case_ident(s: &str) -> proc_macro2::Ident {
 }
 
 fn to_ns_name(ns: &str) -> proc_macro2::Ident {
-    map_to_ident(
-        ns.trim_end_matches(".d.ts").trim_end_matches(".ts"),
-        |s| s.to_snake_case(),
-    )
+    map_to_ident(ns.trim_end_matches(".d.ts").trim_end_matches(".ts"), |s| {
+        s.to_snake_case()
+    })
 }
 
 fn to_snake_case_ident(s: &str) -> proc_macro2::Ident {
@@ -311,10 +307,7 @@ mod ident_tests {
             "is_this_snake_case"
         );
 
-        assert_eq!(
-            to_snake_case_ident("fn").to_string(),
-            "fn_"
-        );
+        assert_eq!(to_snake_case_ident("fn").to_string(), "fn_");
     }
 
     #[test]
@@ -329,10 +322,7 @@ mod ident_tests {
             "is_this_snake_case"
         );
 
-        assert_eq!(
-            to_ns_name("mod").to_string(),
-            "mod_"
-        );
+        assert_eq!(to_ns_name("mod").to_string(), "mod_");
     }
 
     #[test]
@@ -347,15 +337,9 @@ mod ident_tests {
             "IsThisSnakeCase"
         );
 
-        assert_eq!(
-            to_camel_case_ident("super").to_string(),
-            "Super"
-        );
+        assert_eq!(to_camel_case_ident("super").to_string(), "Super");
 
-        assert_eq!(
-            to_camel_case_ident("1super").to_string(),
-            "Super"
-        );
+        assert_eq!(to_camel_case_ident("1super").to_string(), "Super");
     }
 }
 
@@ -478,10 +462,8 @@ impl<'a> ToTokens for NamedFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let fn_name = to_snake_case_ident(self.js_name);
 
-        let param_toks: Vec<TokenStream2> = self.func.params
-            .iter()
-            .map(|p| quote! { #p })
-            .collect();
+        let param_toks: Vec<TokenStream2> =
+            self.func.params.iter().map(|p| quote! { #p }).collect();
 
         let return_type = &self.func.return_type;
 
@@ -631,10 +613,7 @@ impl ToTokens for Type {
                     }
                     attrs
                 };
-                let func = NamedFunc {
-                    js_name,
-                    func
-                };
+                let func = NamedFunc { js_name, func };
 
                 quote! {
                     #[wasm_bindgen]
@@ -643,7 +622,7 @@ impl ToTokens for Type {
                         #func
                     }
                 }
-            },
+            }
             /*
             TypeInfo::Constructor {
                 params: Vec<Param>,
@@ -666,13 +645,12 @@ impl ToTokens for Type {
                     });
                 }
 
-                let members: Vec<TokenStream2> = members.iter()
+                let members: Vec<TokenStream2> = members
+                    .iter()
                     .map(|(member_js_name, member)| match member {
                         Member::Constructor(ctor) => {
-                            let param_toks: Vec<TokenStream2> = ctor.params
-                                .iter()
-                                .map(|p| quote! { #p })
-                                .collect();
+                            let param_toks: Vec<TokenStream2> =
+                                ctor.params.iter().map(|p| quote! { #p }).collect();
 
                             quote! {
                                 #[wasm_bindgen(constructor)]
@@ -682,12 +660,12 @@ impl ToTokens for Type {
                         Member::Method(func) => {
                             let f = NamedFunc {
                                 js_name: member_js_name,
-                                func
+                                func,
                             };
                             let mut attrs = vec![
                                 quote! {js_name = #member_js_name},
                                 quote! {method},
-                                quote! {js_class = #js_name}
+                                quote! {js_class = #js_name},
                             ];
                             if func.is_variadic() {
                                 attrs.push(quote! { variadic });
@@ -708,7 +686,7 @@ impl ToTokens for Type {
                                 #[wasm_bindgen(method, structural, setter = #member_js_name)]
                                 fn #setter_name(this: &#name, value: #typ);
                             }
-                        },
+                        }
                     })
                     .collect();
 

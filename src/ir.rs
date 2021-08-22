@@ -115,7 +115,7 @@ impl Func {
     pub fn is_variadic(&self) -> bool {
         self.params
             .last()
-            .map(|Param{ is_variadic, .. }| *is_variadic)
+            .map(|Param { is_variadic, .. }| *is_variadic)
             .unwrap_or(false)
     }
 }
@@ -432,9 +432,7 @@ impl TypeInfo {
                 ),
             },
             Self::Func(f) => f.resolve_to_concrete_type(types_by_name_by_file, type_params),
-            Self::Constructor(Ctor {
-                params,
-            }) => Self::Constructor(Ctor {
+            Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
                 params: params
                     .iter()
                     .map(|p| Param {
@@ -617,9 +615,7 @@ impl TypeInfo {
                     ),
                 })
             }
-            Self::Constructor(Ctor {
-                params,
-            }) => Self::Constructor(Ctor {
+            Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
                 params: params
                     .iter()
                     .map(|p| Param {

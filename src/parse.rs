@@ -1,6 +1,6 @@
 use crate::ir::{
-    BaseClass, Class, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
-    TypeIdent, TypeInfo, TypeName, TypeRef, Ctor,
+    BaseClass, Class, Ctor, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param,
+    Type, TypeIdent, TypeInfo, TypeName, TypeRef,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -272,7 +272,7 @@ impl FnParamExt for swc_ecma_ast::Param {
                 type_info: type_ann
                     .as_ref()
                     .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny {})
+                    .unwrap_or(TypeInfo::PrimitiveAny {}),
             },
             Pat::Rest(RestPat { arg, type_ann, .. }) => match &**arg {
                 Pat::Ident(id_param) => Param {
@@ -298,10 +298,11 @@ impl FnParamExt for BindingIdent {
         Param {
             name: self.id.sym.to_string(),
             is_variadic: false,
-            type_info: self.type_ann
+            type_info: self
+                .type_ann
                 .as_ref()
                 .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
-                .unwrap_or(TypeInfo::PrimitiveAny {})
+                .unwrap_or(TypeInfo::PrimitiveAny {}),
         }
     }
 }
@@ -313,16 +314,19 @@ trait CtorExt {
 impl CtorExt for Constructor {
     fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Ctor {
         Ctor {
-            params: self.params
+            params: self
+                .params
                 .iter()
                 .map(|p| match p {
                     ParamOrTsParamProp::Param(p) => p.to_param(ts_path, ts_types),
                     ParamOrTsParamProp::TsParamProp(tsp) => match &tsp.param {
                         TsParamPropParam::Ident(id) => id.to_param(ts_path, ts_types),
-                        TsParamPropParam::Assign(_a) => panic!("we don't handle assignment params yet"),
+                        TsParamPropParam::Assign(_a) => {
+                            panic!("we don't handle assignment params yet")
+                        }
                     },
                 })
-                .collect()
+                .collect(),
         }
     }
 }
@@ -404,7 +408,8 @@ impl FuncExt for Function {
 
 impl FuncExt for ClassMethod {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
-        self.function.params
+        self.function
+            .params
             .iter()
             .map(|param| param.to_param(ts_path, ts_types))
             .collect()
@@ -793,10 +798,7 @@ impl TsTypes {
     }
 
     fn process_params(&mut self, ts_path: &Path, params: &[TsFnParam]) -> Vec<Param> {
-        params
-            .iter()
-            .map(|p| p.to_param(ts_path, self))
-            .collect()
+        params.iter().map(|p| p.to_param(ts_path, self)).collect()
     }
 
     fn process_fn_type_params(
@@ -1031,12 +1033,15 @@ impl TsTypes {
                 .iter()
                 .filter_map(|member| match member {
                     ClassMember::Constructor(ctor) => Some((
-                        ctor.key().unwrap_or_else(|| panic!("no key for constructor")),
+                        ctor.key()
+                            .unwrap_or_else(|| panic!("no key for constructor")),
                         Member::Constructor(ctor.to_ctor(ts_path, self)),
                     )),
                     // TODO: need to split Method into methods, getters, and setters
                     ClassMember::Method(method) => Some((
-                        method.key().unwrap_or_else(|| panic!("no key for constructor")),
+                        method
+                            .key()
+                            .unwrap_or_else(|| panic!("no key for constructor")),
                         Member::Method(method.to_func(ts_path, self)),
                     )),
                     ClassMember::PrivateMethod(_) => None,
@@ -1086,9 +1091,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         FnDecl {
-            ident,
-            function,
-            ..
+            ident, function, ..
         }: &FnDecl,
     ) -> Type {
         Type {
