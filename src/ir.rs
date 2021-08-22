@@ -204,6 +204,12 @@ pub struct Interface {
 }
 
 #[derive(Debug, Clone)]
+pub struct Class {
+    pub super_class: Option<Box<BaseClass>>,
+    pub members: HashMap<String, Member>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TypeInfo {
     Interface(Interface),
     Enum {
@@ -256,9 +262,7 @@ pub enum TypeInfo {
         params: Vec<Param>,
         return_type: Box<TypeInfo>,
     },
-    Class {
-        members: HashMap<String, Member>,
-    },
+    Class(Class),
     Var {
         type_info: Box<TypeInfo>,
     },
@@ -437,10 +441,13 @@ impl TypeInfo {
                     return_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
                 ),
             },
-            Self::Class { members } => Self::Class {
-                // TODO
+            Self::Class(Class {
+                members,
+                super_class,
+            }) => Self::Class(Class {
+                super_class: super_class.clone(),
                 members: members.clone(),
-            },
+            }),
             Self::Var { type_info } => Self::Var {
                 type_info: Box::new(
                     type_info.resolve_to_concrete_type(types_by_name_by_file, type_params),
@@ -623,7 +630,19 @@ impl TypeInfo {
                     return_type.resolve_names(types_by_name_by_file, type_params),
                 ),
             },
-            Self::Class { members } => Self::Class {
+            Self::Class(Class {
+                members,
+                super_class,
+            }) => Self::Class(Class {
+                super_class: super_class.as_ref().map(|sc| {
+                    if let BaseClass::Unresolved(tn) = &**sc {
+                        Box::new(BaseClass::Resolved(
+                            tn.resolve_to_concrete_type(types_by_name_by_file, type_params),
+                        ))
+                    } else {
+                        sc.clone()
+                    }
+                }),
                 members: members
                     .iter()
                     .map(|(n, m)| {
@@ -633,7 +652,7 @@ impl TypeInfo {
                         )
                     })
                     .collect(),
-            },
+            }),
             Self::Var { type_info } => Self::Var {
                 type_info: Box::new(type_info.resolve_names(types_by_name_by_file, type_params)),
             },

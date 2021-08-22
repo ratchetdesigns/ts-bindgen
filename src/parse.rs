@@ -1,5 +1,5 @@
 use crate::ir::{
-    BaseClass, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
+    BaseClass, Class, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
     TypeIdent, TypeInfo, TypeName, TypeRef,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
@@ -37,6 +37,40 @@ impl TypeRefExt for TsExprWithTypeArgs {
 
     fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
         &self.type_args
+    }
+}
+
+impl<'a> TypeRefExt for ClassSuperTypeRef<'a> {
+    fn entity_name(&self) -> &TsEntityName {
+        &self.entity_name
+    }
+
+    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+        self.type_args
+    }
+}
+
+struct ClassSuperTypeRef<'a> {
+    entity_name: TsEntityName,
+    type_args: &'a Option<TsTypeParamInstantiation>,
+}
+
+impl<'a> ClassSuperTypeRef<'a> {
+    fn from(class: &'a swc_ecma_ast::Class) -> Option<Self> {
+        class
+            .super_class
+            .as_ref()
+            .and_then(|sc| {
+                if let Expr::Ident(ident) = &**sc {
+                    Some(ident)
+                } else {
+                    None
+                }
+            })
+            .map(|sc| ClassSuperTypeRef {
+                entity_name: sc.clone().into(),
+                type_args: &class.super_type_params,
+            })
     }
 }
 
@@ -763,18 +797,19 @@ impl TsTypes {
         }
     }
 
-    fn process_class(
-        &mut self,
-        ts_path: &Path,
-        Class {
+    fn process_class(&mut self, ts_path: &Path, class: &swc_ecma_ast::Class) -> TypeInfo {
+        let swc_ecma_ast::Class {
             body,
-            super_class: _,
             type_params: _,
-            super_type_params: _,
             ..
-        }: &Class,
-    ) -> TypeInfo {
-        TypeInfo::Class {
+        } = class;
+
+        TypeInfo::Class(Class {
+            super_class: ClassSuperTypeRef::from(class).map(|super_ref| {
+                Box::new(BaseClass::Unresolved(
+                    Source::from(self, ts_path, &super_ref).into(),
+                ))
+            }),
             members: body
                 .iter()
                 .filter_map(|member| match member {
@@ -797,7 +832,7 @@ impl TsTypes {
                     ClassMember::Empty(_) => None,
                 })
                 .collect(),
-        }
+        })
     }
 
     fn process_class_type(
