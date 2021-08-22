@@ -1,6 +1,6 @@
 use crate::ir::{
     BaseClass, Class, EnumMember, Func, Indexer, Interface, NamespaceImport, Type, TypeIdent,
-    TypeInfo, TypeName, TypeRef,
+    TypeInfo, TypeName, TypeRef, Param, Member
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
@@ -319,6 +319,51 @@ fn get_recursive_fields(
         .collect()
 }
 
+impl ToTokens for Param {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let param_name = to_snake_case_ident(&self.name);
+        let typ = &self.type_info;
+        let full_type = if self.is_variadic {
+            quote! {
+                &[#typ]
+            }
+        } else {
+            quote! {
+                #typ
+            }
+        };
+
+        let our_toks = quote! {
+            #param_name: #full_type
+        };
+        toks.extend(our_toks);
+    }
+}
+
+struct NamedFunc<'a> {
+    func: &'a Func,
+    js_name: &'a str,
+}
+
+impl<'a> ToTokens for NamedFunc<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let fn_name = to_snake_case_ident(self.js_name);
+
+        let param_toks: Vec<TokenStream2> = self.func.params
+            .iter()
+            .map(|p| quote! { #p })
+            .collect();
+
+        let return_type = &self.func.return_type;
+
+        let our_toks = quote! {
+            fn #fn_name(#(#param_toks),*) -> #return_type;
+        };
+
+        toks.extend(our_toks);
+    }
+}
+
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
@@ -448,51 +493,28 @@ impl ToTokens for Type {
             TypeInfo::LitBoolean {
                 b: bool,
             },*/
-            TypeInfo::Func(Func {
-                params,
-                type_params: _,
-                return_type,
-            }) => {
-                let fn_name = to_snake_case_ident(js_name);
-                let mut is_variadic = false;
-                let param_toks: Vec<TokenStream2> = params
-                    .iter()
-                    .map(|p| {
-                        let param_name = to_snake_case_ident(&p.name);
-                        let typ = &p.type_info;
-                        let full_type = if p.is_variadic {
-                            is_variadic = true;
-                            quote! {
-                                &[#typ]
-                            }
-                        } else {
-                            quote! {
-                                #typ
-                            }
-                        };
-
-                        quote! {
-                            #param_name: #full_type
-                        }
-                    })
-                    .collect();
-
+            TypeInfo::Func(func) => {
+                let js_name = self.name.to_name();
                 let attrs = {
                     let mut attrs = vec![quote! { js_name = #js_name }];
-                    if is_variadic {
+                    if func.is_variadic() {
                         attrs.push(quote! { variadic });
                     }
                     attrs
+                };
+                let func = NamedFunc {
+                    js_name,
+                    func
                 };
 
                 quote! {
                     #[wasm_bindgen]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
-                        fn #fn_name(#(#param_toks),*) -> #return_type;
+                        #func
                     }
                 }
-            }
+            },
             /*
             TypeInfo::Constructor {
                 params: Vec<Param>,
@@ -515,11 +537,39 @@ impl ToTokens for Type {
                     });
                 }
 
+                let members: Vec<TokenStream2> = members.iter()
+                    .map(|(member_js_name, member)| match member {
+                        Member::Constructor() => quote! {},
+                        Member::Method(func) => {
+                            let f = NamedFunc {
+                                js_name: member_js_name,
+                                func
+                            };
+                            let mut attrs = vec![
+                                quote! {js_name = #member_js_name},
+                                quote! {method},
+                                quote! {js_class = #js_name}
+                            ];
+                            if func.is_variadic() {
+                                attrs.push(quote! { variadic });
+                            }
+
+                            quote! {
+                                #[wasm_bindgen(#(#attrs),*)]
+                                #f
+                            }
+                        }
+                        Member::Property(typ) => quote ! {},
+                    })
+                    .collect();
+
                 quote! {
                     #[wasm_bindgen]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
                         type #name;
+
+                        #(#members)*
                     }
                 }
             }

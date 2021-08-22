@@ -111,6 +111,13 @@ impl Func {
             ),
         })
     }
+
+    pub fn is_variadic(&self) -> bool {
+        self.params
+            .last()
+            .map(|Param{ is_variadic, .. }| *is_variadic)
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone)]
