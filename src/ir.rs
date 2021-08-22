@@ -205,7 +205,7 @@ pub struct Interface {
 
 #[derive(Debug, Clone)]
 pub struct Class {
-    pub super_class: Option<Box<BaseClass>>,
+    pub super_class: Option<Box<TypeRef>>,
     pub members: HashMap<String, Member>,
 }
 
@@ -634,15 +634,7 @@ impl TypeInfo {
                 members,
                 super_class,
             }) => Self::Class(Class {
-                super_class: super_class.as_ref().map(|sc| {
-                    if let BaseClass::Unresolved(tn) = &**sc {
-                        Box::new(BaseClass::Resolved(
-                            tn.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                        ))
-                    } else {
-                        sc.clone()
-                    }
-                }),
+                super_class: super_class.clone(),
                 members: members
                     .iter()
                     .map(|(n, m)| {

@@ -1,6 +1,6 @@
 use crate::ir::{
-    BaseClass, EnumMember, Func, Indexer, Interface, NamespaceImport, Type, TypeIdent, TypeInfo,
-    TypeName, TypeRef,
+    BaseClass, Class, EnumMember, Func, Indexer, Interface, NamespaceImport, Type, TypeIdent,
+    TypeInfo, TypeName, TypeRef,
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
@@ -497,10 +497,33 @@ impl ToTokens for Type {
             TypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
-            },
-            TypeInfo::Class {
-                members: HashMap<String, Member>,
-            },
+            },*/
+            TypeInfo::Class(Class {
+                super_class,
+                members,
+            }) => {
+                let mut attrs = vec![quote! { js_name = #js_name }];
+                if let Some(TypeRef {
+                    referent,
+                    type_params,
+                }) = super_class.as_ref().map(|sc| &**sc)
+                {
+                    let super_name = to_camel_case_ident(referent.to_name());
+
+                    attrs.push(quote! {
+                        extends = #super_name
+                    });
+                }
+
+                quote! {
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(#(#attrs),*)]
+                        type #name;
+                    }
+                }
+            }
+            /*
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },
@@ -718,9 +741,9 @@ impl ToTokens for TypeInfo {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
             },
-            TypeInfo::Class {
+            TypeInfo::Class(Class {
                 members: HashMap<String, Member>,
-            },
+            }),
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },

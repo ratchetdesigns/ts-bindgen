@@ -805,11 +805,8 @@ impl TsTypes {
         } = class;
 
         TypeInfo::Class(Class {
-            super_class: ClassSuperTypeRef::from(class).map(|super_ref| {
-                Box::new(BaseClass::Unresolved(
-                    Source::from(self, ts_path, &super_ref).into(),
-                ))
-            }),
+            super_class: ClassSuperTypeRef::from(class)
+                .map(|super_ref| Box::new(Source::from(self, ts_path, &super_ref).into())),
             members: body
                 .iter()
                 .filter_map(|member| match member {
