@@ -1,5 +1,6 @@
 use crate::ir::{
-    EnumMember, Func, Indexer, NamespaceImport, Type, TypeIdent, TypeInfo, TypeName, TypeRef,
+    BaseClass, EnumMember, Func, Indexer, Interface, NamespaceImport, Type, TypeIdent, TypeInfo,
+    TypeName, TypeRef,
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
@@ -298,14 +299,37 @@ fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> proc_
     to_ident(&desired)
 }
 
+fn get_recursive_fields(
+    Interface {
+        extends, fields, ..
+    }: &Interface,
+) -> HashMap<String, TypeInfo> {
+    fields
+        .iter()
+        .map(|(n, t)| (n.clone(), t.clone()))
+        .chain(extends.iter().flat_map(|ex| match ex {
+            BaseClass::Unresolved(_) => {
+                panic!("shouldn't have any unresolved base classes in code generation")
+            }
+            BaseClass::Resolved(t) => match t {
+                TypeInfo::Interface(inner_iface) => get_recursive_fields(inner_iface).into_iter(),
+                _ => HashMap::new().into_iter(),
+            },
+        }))
+        .collect()
+}
+
 impl ToTokens for Type {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
         let name = to_camel_case_ident(js_name);
 
         let our_toks = match &self.info {
-            TypeInfo::Interface { indexer, fields } => {
-                let mut field_toks = fields
+            TypeInfo::Interface(iface) => {
+                let Interface { indexer, .. } = iface;
+                let extended_fields = get_recursive_fields(iface);
+
+                let mut field_toks = extended_fields
                     .iter()
                     .map(|(js_field_name, typ)| {
                         let field_name = to_snake_case_ident(js_field_name);
@@ -321,8 +345,9 @@ impl ToTokens for Type {
                     type_info,
                 }) = &indexer
                 {
-                    let extra_fields_name =
-                        to_unique_ident("extra_fields".to_string(), &|x| fields.contains_key(x));
+                    let extra_fields_name = to_unique_ident("extra_fields".to_string(), &|x| {
+                        extended_fields.contains_key(x)
+                    });
 
                     field_toks.push(quote! {
                         #[serde(flatten)]
@@ -540,7 +565,7 @@ impl ToTokens for Type {
 impl ToTokens for TypeInfo {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = match &self {
-            TypeInfo::Interface { .. } => {
+            TypeInfo::Interface(_) => {
                 panic!("interface in type info");
             }
             TypeInfo::Enum { .. } => {

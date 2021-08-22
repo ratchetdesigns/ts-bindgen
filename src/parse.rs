@@ -1,6 +1,6 @@
 use crate::ir::{
-    EnumMember, Func, Indexer, Member, NamespaceImport, Param, Type, TypeIdent, TypeInfo, TypeName,
-    TypeRef,
+    BaseClass, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
+    TypeIdent, TypeInfo, TypeName, TypeRef,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -13,6 +13,31 @@ use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 pub struct TsTypes {
     pub types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
     pub namespace_stack: Vec<Vec<String>>,
+}
+
+trait TypeRefExt {
+    fn entity_name(&self) -> &TsEntityName;
+    fn type_args(&self) -> &Option<TsTypeParamInstantiation>;
+}
+
+impl TypeRefExt for TsTypeRef {
+    fn entity_name(&self) -> &TsEntityName {
+        &self.type_name
+    }
+
+    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+        &self.type_params
+    }
+}
+
+impl TypeRefExt for TsExprWithTypeArgs {
+    fn entity_name(&self) -> &TsEntityName {
+        &self.expr
+    }
+
+    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+        &self.type_args
+    }
 }
 
 struct Source<'a, T> {
@@ -31,24 +56,19 @@ impl<'a, T> Source<'a, T> {
     }
 }
 
-impl<'a> From<Source<'a, TsTypeRef>> for TypeRef {
-    fn from(
-        source: Source<'a, TsTypeRef>,
-    ) -> TypeRef {
+impl<'a, T: TypeRefExt> From<Source<'a, T>> for TypeRef {
+    fn from(source: Source<'a, T>) -> TypeRef {
         let Source {
             ts_types,
             ts_path,
-            node: TsTypeRef {
-                type_name,
-                type_params,
-                ..
-            }
+            node,
         } = source;
 
-        match type_name {
+        match node.entity_name() {
             TsEntityName::Ident(Ident { sym, .. }) => TypeRef {
                 referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
-                type_params: type_params
+                type_params: node
+                    .type_args()
                     .as_ref()
                     .map(|tps| {
                         tps.params
@@ -60,7 +80,8 @@ impl<'a> From<Source<'a, TsTypeRef>> for TypeRef {
             },
             TsEntityName::TsQualifiedName(qn) => TypeRef {
                 referent: ts_types.qualified_name_to_type_name(ts_path, qn),
-                type_params: type_params
+                type_params: node
+                    .type_args()
                     .as_ref()
                     .map(|tps| {
                         tps.params
@@ -297,11 +318,7 @@ impl TsTypes {
         TypeName::for_qualified_name(ts_path.to_path_buf(), name_path)
     }
 
-    fn process_type_ref(
-        &mut self,
-        ts_path: &Path,
-        ts_type_ref: &TsTypeRef,
-    ) -> TypeInfo {
+    fn process_type_ref(&mut self, ts_path: &Path, ts_type_ref: &TsTypeRef) -> TypeInfo {
         TypeInfo::Ref(Source::from(self, ts_path, ts_type_ref).into())
     }
 
@@ -580,7 +597,7 @@ impl TsTypes {
         TsInterfaceDecl {
             id,
             type_params: _,
-            extends: _,
+            extends,
             body,
             ..
         }: &TsInterfaceDecl,
@@ -588,7 +605,7 @@ impl TsTypes {
         Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
-            info: TypeInfo::Interface {
+            info: TypeInfo::Interface(Interface {
                 indexer: body.body.iter().find_map(|el| match el {
                     TsTypeElement::TsIndexSignature(TsIndexSignature {
                         readonly, params, ..
@@ -611,6 +628,10 @@ impl TsTypes {
                     }
                     _ => None,
                 }),
+                extends: extends
+                    .iter()
+                    .map(|e| BaseClass::Unresolved(Source::from(self, ts_path, e).into()))
+                    .collect(),
                 fields: body
                     .body
                     .iter()
@@ -677,7 +698,7 @@ impl TsTypes {
                         }
                     })
                     .collect(),
-            },
+            }),
         }
     }
 
