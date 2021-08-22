@@ -129,6 +129,162 @@ impl<'a, T: TypeRefExt> From<Source<'a, T>> for TypeRef {
     }
 }
 
+trait KeyedExt {
+    fn key(&self) -> Option<String>;
+}
+
+trait ExprKeyed {
+    fn expr_key(&self) -> &Expr;
+}
+
+impl<T: ExprKeyed> KeyedExt for T {
+    fn key(&self) -> Option<String> {
+        let expr = self.expr_key();
+        match expr {
+            Expr::Lit(lit) => match lit {
+                Lit::Str(s) => Some(s.value.to_string()),
+                _ => {
+                    println!("We only handle string properties. Received {:?}", lit);
+                    None
+                }
+            },
+            Expr::Ident(Ident { sym, .. }) => Some(sym.to_string()),
+            _ => {
+                println!(
+                    "We only handle literal and identifier properties. Received {:?}",
+                    expr
+                );
+                None
+            }
+        }
+    }
+}
+
+impl ExprKeyed for TsPropertySignature {
+    fn expr_key(&self) -> &Expr {
+        &*self.key
+    }
+}
+
+impl ExprKeyed for TsMethodSignature {
+    fn expr_key(&self) -> &Expr {
+        &*self.key
+    }
+}
+
+trait PropExt {
+    fn item_type(&self) -> Option<&TsType>;
+
+    fn is_optional(&self) -> bool;
+
+    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
+        self.item_type()
+            .map(|t| {
+                let item_type = ts_types.process_type(ts_path, t);
+                if self.is_optional() {
+                    TypeInfo::Optional {
+                        item_type: Box::new(item_type),
+                    }
+                } else {
+                    item_type
+                }
+            })
+            .unwrap_or(TypeInfo::PrimitiveAny {})
+    }
+}
+
+impl PropExt for TsPropertySignature {
+    fn item_type(&self) -> Option<&TsType> {
+        self.type_ann.as_ref().map(|t| &*t.type_ann)
+    }
+
+    fn is_optional(&self) -> bool {
+        self.optional
+    }
+}
+
+trait FuncExt {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param>;
+
+    fn type_params(&self) -> &Option<TsTypeParamDecl>;
+
+    fn return_type(&self) -> Option<&TsType>;
+
+    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
+        TypeInfo::Func(Func {
+            params: self.params(ts_path, ts_types),
+            type_params: ts_types.process_fn_type_params(ts_path, self.type_params()),
+            return_type: Box::new(
+                self.return_type()
+                    .map(|t| ts_types.process_type(ts_path, t))
+                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+            ),
+        })
+    }
+}
+
+impl FuncExt for TsMethodSignature {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
+        self.params
+            .iter()
+            .map(|param| match param {
+                TsFnParam::Ident(ident) => Param {
+                    name: ident.id.sym.to_string(),
+                    is_variadic: false,
+                    type_info: ident
+                        .type_ann
+                        .as_ref()
+                        .map(|t| ts_types.process_type(ts_path, &t.type_ann))
+                        .unwrap_or(TypeInfo::PrimitiveAny {}),
+                },
+                _ => panic!("we only support ident params for methods"),
+            })
+            .collect()
+    }
+
+    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+        &self.type_params
+    }
+
+    fn return_type(&self) -> Option<&TsType> {
+        self.type_ann.as_ref().map(|t| &*t.type_ann)
+    }
+}
+
+trait IndexerExt {
+    fn is_readonly(&self) -> bool;
+
+    fn value_type(&self) -> Option<&TsType>;
+
+    fn to_indexer(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Indexer {
+        Indexer {
+            readonly: self.is_readonly(),
+            type_info: Box::new(
+                self.value_type()
+                    .map(|t| ts_types.process_type(ts_path, t))
+                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+            ),
+        }
+    }
+}
+
+impl IndexerExt for TsIndexSignature {
+    fn is_readonly(&self) -> bool {
+        self.readonly
+    }
+
+    fn value_type(&self) -> Option<&TsType> {
+        if self.params.len() != 1 {
+            panic!("indexing signatures should only have 1 param");
+        }
+
+        match self.params.first().unwrap() {
+            TsFnParam::Ident(ident) => ident.type_ann.as_ref().map(|t| &*t.type_ann),
+            _ => panic!("we only support ident indexers"),
+        }
+    }
+}
+
 impl TsTypes {
     pub fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
         let mut tt: TsTypes = Default::default();
@@ -641,24 +797,8 @@ impl TsTypes {
             is_exported: false,
             info: TypeInfo::Interface(Interface {
                 indexer: body.body.iter().find_map(|el| match el {
-                    TsTypeElement::TsIndexSignature(TsIndexSignature {
-                        readonly, params, ..
-                    }) => {
-                        if params.len() != 1 {
-                            panic!("indexing signatures should only have 1 param");
-                        }
-
-                        Some(Indexer {
-                            readonly: *readonly,
-                            type_info: Box::new(match params.first().unwrap() {
-                                TsFnParam::Ident(ident) => ident
-                                    .type_ann
-                                    .as_ref()
-                                    .map(|t| self.process_type(ts_path, &t.type_ann))
-                                    .unwrap_or(TypeInfo::PrimitiveAny {}),
-                                _ => panic!("we only support ident indexers"),
-                            }),
-                        })
+                    TsTypeElement::TsIndexSignature(indexer) => {
+                        Some(indexer.to_indexer(ts_path, self))
                     }
                     _ => None,
                 }),
@@ -670,59 +810,13 @@ impl TsTypes {
                     .body
                     .iter()
                     .filter_map(|el| match el {
-                        TsTypeElement::TsPropertySignature(TsPropertySignature {
-                            key,
-                            type_ann,
-                            optional,
-                            ..
-                        }) => Some((
-                            self.prop_key_to_name(key).expect("bad prop key"),
-                            type_ann
-                                .as_ref()
-                                .map(|t| {
-                                    let item_type = self.process_type(ts_path, &t.type_ann);
-                                    if *optional {
-                                        TypeInfo::Optional {
-                                            item_type: Box::new(item_type),
-                                        }
-                                    } else {
-                                        item_type
-                                    }
-                                })
-                                .unwrap_or(TypeInfo::PrimitiveAny {}),
+                        TsTypeElement::TsPropertySignature(prop) => Some((
+                            prop.key().expect("bad prop key"),
+                            prop.to_type_info(ts_path, self),
                         )),
-                        TsTypeElement::TsMethodSignature(TsMethodSignature {
-                            key,
-                            params,
-                            type_ann,
-                            type_params,
-                            ..
-                        }) => Some((
-                            self.prop_key_to_name(key).expect("bad method key"),
-                            TypeInfo::Func(Func {
-                                params: params
-                                    .iter()
-                                    .map(|param| match param {
-                                        TsFnParam::Ident(ident) => Param {
-                                            name: ident.id.sym.to_string(),
-                                            is_variadic: false,
-                                            type_info: ident
-                                                .type_ann
-                                                .as_ref()
-                                                .map(|t| self.process_type(ts_path, &t.type_ann))
-                                                .unwrap_or(TypeInfo::PrimitiveAny {}),
-                                        },
-                                        _ => panic!("we only support ident params for methods"),
-                                    })
-                                    .collect(),
-                                type_params: self.process_fn_type_params(ts_path, type_params),
-                                return_type: Box::new(
-                                    type_ann
-                                        .as_ref()
-                                        .map(|t| self.process_type(ts_path, &t.type_ann))
-                                        .unwrap_or(TypeInfo::PrimitiveAny {}),
-                                ),
-                            }),
+                        TsTypeElement::TsMethodSignature(method) => Some((
+                            method.key().expect("bad method key"),
+                            method.to_type_info(ts_path, self),
                         )),
                         TsTypeElement::TsIndexSignature(TsIndexSignature { .. }) => None,
                         // TODO: add other variants
