@@ -559,7 +559,17 @@ impl ToTokens for Type {
                                 #f
                             }
                         }
-                        Member::Property(typ) => quote ! {},
+                        Member::Property(typ) => {
+                            let member_name = to_snake_case_ident(member_js_name);
+                            let setter_name = format_ident!("set_{}", member_name);
+                            quote! {
+                                #[wasm_bindgen(method, structural, getter = #member_js_name)]
+                                fn #member_name(this: &#name) -> #typ;
+
+                                #[wasm_bindgen(method, structural, setter = #member_js_name)]
+                                fn #setter_name(this: &#name, value: #typ);
+                            }
+                        },
                     })
                     .collect();
 
