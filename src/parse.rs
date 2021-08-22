@@ -1,6 +1,6 @@
 use crate::ir::{
     BaseClass, Class, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
-    TypeIdent, TypeInfo, TypeName, TypeRef,
+    TypeIdent, TypeInfo, TypeName, TypeRef, Ctor,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -289,6 +289,40 @@ impl FnParamExt for swc_ecma_ast::Param {
                 }
             },
             _ => panic!("we only support ident params for methods"),
+        }
+    }
+}
+
+impl FnParamExt for BindingIdent {
+    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
+        Param {
+            name: self.id.sym.to_string(),
+            is_variadic: false,
+            type_info: self.type_ann
+                .as_ref()
+                .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                .unwrap_or(TypeInfo::PrimitiveAny {})
+        }
+    }
+}
+
+trait CtorExt {
+    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Ctor;
+}
+
+impl CtorExt for Constructor {
+    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Ctor {
+        Ctor {
+            params: self.params
+                .iter()
+                .map(|p| match p {
+                    ParamOrTsParamProp::Param(p) => p.to_param(ts_path, ts_types),
+                    ParamOrTsParamProp::TsParamProp(tsp) => match &tsp.param {
+                        TsParamPropParam::Ident(id) => id.to_param(ts_path, ts_types),
+                        TsParamPropParam::Assign(_a) => panic!("we don't handle assignment params yet"),
+                    },
+                })
+                .collect()
         }
     }
 }
@@ -816,9 +850,9 @@ impl TsTypes {
             ..
         }: &TsConstructorType,
     ) -> TypeInfo {
-        TypeInfo::Constructor {
+        TypeInfo::Constructor(Ctor {
             params: self.process_params(ts_path, params),
-        }
+        })
     }
 
     fn process_type_predicate(
@@ -998,7 +1032,7 @@ impl TsTypes {
                 .filter_map(|member| match member {
                     ClassMember::Constructor(ctor) => Some((
                         ctor.key().unwrap_or_else(|| panic!("no key for constructor")),
-                        Member::Constructor(),
+                        Member::Constructor(ctor.to_ctor(ts_path, self)),
                     )),
                     // TODO: need to split Method into methods, getters, and setters
                     ClassMember::Method(method) => Some((

@@ -539,7 +539,17 @@ impl ToTokens for Type {
 
                 let members: Vec<TokenStream2> = members.iter()
                     .map(|(member_js_name, member)| match member {
-                        Member::Constructor() => quote! {},
+                        Member::Constructor(ctor) => {
+                            let param_toks: Vec<TokenStream2> = ctor.params
+                                .iter()
+                                .map(|p| quote! { #p })
+                                .collect();
+
+                            quote! {
+                                #[wasm_bindgen(constructor)]
+                                fn new(#(#param_toks),*) -> #name;
+                            }
+                        }
                         Member::Method(func) => {
                             let f = NamedFunc {
                                 js_name: member_js_name,

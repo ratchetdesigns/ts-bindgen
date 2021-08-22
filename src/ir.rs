@@ -121,8 +121,13 @@ impl Func {
 }
 
 #[derive(Debug, Clone)]
+pub struct Ctor {
+    pub params: Vec<Param>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Member {
-    Constructor(),
+    Constructor(Ctor),
     Method(Func),
     Property(TypeInfo),
 }
@@ -265,9 +270,7 @@ pub enum TypeInfo {
         b: bool,
     },
     Func(Func),
-    Constructor {
-        params: Vec<Param>,
-    },
+    Constructor(Ctor),
     Class(Class),
     Var {
         type_info: Box<TypeInfo>,
@@ -429,9 +432,9 @@ impl TypeInfo {
                 ),
             },
             Self::Func(f) => f.resolve_to_concrete_type(types_by_name_by_file, type_params),
-            Self::Constructor {
+            Self::Constructor(Ctor {
                 params,
-            } => Self::Constructor {
+            }) => Self::Constructor(Ctor {
                 params: params
                     .iter()
                     .map(|p| Param {
@@ -442,7 +445,7 @@ impl TypeInfo {
                             .resolve_to_concrete_type(types_by_name_by_file, type_params),
                     })
                     .collect(),
-            },
+            }),
             Self::Class(Class {
                 members,
                 super_class,
@@ -614,9 +617,9 @@ impl TypeInfo {
                     ),
                 })
             }
-            Self::Constructor {
+            Self::Constructor(Ctor {
                 params,
-            } => Self::Constructor {
+            }) => Self::Constructor(Ctor {
                 params: params
                     .iter()
                     .map(|p| Param {
@@ -627,7 +630,7 @@ impl TypeInfo {
                             .resolve_names(types_by_name_by_file, type_params),
                     })
                     .collect(),
-            },
+            }),
             Self::Class(Class {
                 members,
                 super_class,
