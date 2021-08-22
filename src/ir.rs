@@ -116,8 +116,8 @@ impl Func {
 #[derive(Debug, Clone)]
 pub enum Member {
     Constructor(),
-    Method(),
-    Property(),
+    Method(Func),
+    Property(TypeInfo),
 }
 
 impl Member {
@@ -260,7 +260,6 @@ pub enum TypeInfo {
     Func(Func),
     Constructor {
         params: Vec<Param>,
-        return_type: Box<TypeInfo>,
     },
     Class(Class),
     Var {
@@ -425,7 +424,6 @@ impl TypeInfo {
             Self::Func(f) => f.resolve_to_concrete_type(types_by_name_by_file, type_params),
             Self::Constructor {
                 params,
-                return_type,
             } => Self::Constructor {
                 params: params
                     .iter()
@@ -437,9 +435,6 @@ impl TypeInfo {
                             .resolve_to_concrete_type(types_by_name_by_file, type_params),
                     })
                     .collect(),
-                return_type: Box::new(
-                    return_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
             },
             Self::Class(Class {
                 members,
@@ -614,7 +609,6 @@ impl TypeInfo {
             }
             Self::Constructor {
                 params,
-                return_type,
             } => Self::Constructor {
                 params: params
                     .iter()
@@ -626,9 +620,6 @@ impl TypeInfo {
                             .resolve_names(types_by_name_by_file, type_params),
                     })
                     .collect(),
-                return_type: Box::new(
-                    return_type.resolve_names(types_by_name_by_file, type_params),
-                ),
             },
             Self::Class(Class {
                 members,

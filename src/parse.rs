@@ -172,6 +172,35 @@ impl ExprKeyed for TsMethodSignature {
     }
 }
 
+impl ExprKeyed for ClassProp {
+    fn expr_key(&self) -> &Expr {
+        &*self.key
+    }
+}
+
+impl KeyedExt for PropName {
+    fn key(&self) -> Option<String> {
+        match self {
+            PropName::Ident(ident) => Some(ident.sym.to_string()),
+            PropName::Str(s) => Some(s.value.to_string()),
+            PropName::Num(n) => Some(n.value.to_string()),
+            _ => None,
+        }
+    }
+}
+
+impl KeyedExt for ClassMethod {
+    fn key(&self) -> Option<String> {
+        self.key.key()
+    }
+}
+
+impl KeyedExt for Constructor {
+    fn key(&self) -> Option<String> {
+        self.key.key()
+    }
+}
+
 trait PropExt {
     fn item_type(&self) -> Option<&TsType>;
 
@@ -203,6 +232,16 @@ impl PropExt for TsPropertySignature {
     }
 }
 
+impl PropExt for ClassProp {
+    fn item_type(&self) -> Option<&TsType> {
+        self.type_ann.as_ref().map(|t| &*t.type_ann)
+    }
+
+    fn is_optional(&self) -> bool {
+        self.is_optional
+    }
+}
+
 trait FnParamExt {
     fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param;
 }
@@ -224,6 +263,36 @@ impl FnParamExt for TsFnParam {
     }
 }
 
+impl FnParamExt for swc_ecma_ast::Param {
+    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
+        match &self.pat {
+            Pat::Ident(BindingIdent { id, type_ann }) => Param {
+                name: id.sym.to_string(),
+                is_variadic: false,
+                type_info: type_ann
+                    .as_ref()
+                    .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                    .unwrap_or(TypeInfo::PrimitiveAny {})
+            },
+            Pat::Rest(RestPat { arg, type_ann, .. }) => match &**arg {
+                Pat::Ident(id_param) => Param {
+                    name: id_param.id.sym.to_string(),
+                    is_variadic: true,
+                    type_info: type_ann
+                        .as_ref()
+                        .map(|t| ts_types.process_type(ts_path, &t.type_ann))
+                        .unwrap_or(TypeInfo::PrimitiveAny {}),
+                },
+                _ => {
+                    println!("found rest param arg {:?}", &arg);
+                    panic!("we only handle idents in rest patterns");
+                }
+            },
+            _ => panic!("we only support ident params for methods"),
+        }
+    }
+}
+
 trait FuncExt {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param>;
 
@@ -231,8 +300,8 @@ trait FuncExt {
 
     fn return_type(&self) -> Option<&TsType>;
 
-    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
-        TypeInfo::Func(Func {
+    fn to_func(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Func {
+        Func {
             params: self.params(ts_path, ts_types),
             type_params: ts_types.process_fn_type_params(ts_path, self.type_params()),
             return_type: Box::new(
@@ -240,7 +309,11 @@ trait FuncExt {
                     .map(|t| ts_types.process_type(ts_path, t))
                     .unwrap_or(TypeInfo::PrimitiveAny {}),
             ),
-        })
+        }
+    }
+
+    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
+        TypeInfo::Func(self.to_func(ts_path, ts_types))
     }
 }
 
@@ -265,18 +338,7 @@ impl FuncExt for TsFnType {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
         self.params
             .iter()
-            .map(|param| match param {
-                TsFnParam::Ident(ident) => Param {
-                    name: ident.id.sym.to_string(),
-                    is_variadic: false,
-                    type_info: ident
-                        .type_ann
-                        .as_ref()
-                        .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
-                },
-                _ => panic!("we only support ident params for methods"),
-            })
+            .map(|param| param.to_param(ts_path, ts_types))
             .collect()
     }
 
@@ -286,6 +348,40 @@ impl FuncExt for TsFnType {
 
     fn return_type(&self) -> Option<&TsType> {
         Some(&self.type_ann.type_ann)
+    }
+}
+
+impl FuncExt for Function {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
+        self.params
+            .iter()
+            .map(|param| param.to_param(ts_path, ts_types))
+            .collect()
+    }
+
+    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+        &self.type_params
+    }
+
+    fn return_type(&self) -> Option<&TsType> {
+        self.return_type.as_ref().map(|t| &*t.type_ann)
+    }
+}
+
+impl FuncExt for ClassMethod {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
+        self.function.params
+            .iter()
+            .map(|param| param.to_param(ts_path, ts_types))
+            .collect()
+    }
+
+    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+        &self.function.type_params
+    }
+
+    fn return_type(&self) -> Option<&TsType> {
+        self.function.return_type.as_ref().map(|t| &*t.type_ann)
     }
 }
 
@@ -715,7 +811,6 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsConstructorType {
-            type_ann,
             params,
             type_params: _,
             ..
@@ -723,7 +818,6 @@ impl TsTypes {
     ) -> TypeInfo {
         TypeInfo::Constructor {
             params: self.process_params(ts_path, params),
-            return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
         }
     }
 
@@ -784,26 +878,6 @@ impl TsTypes {
                     referent: TypeName::default_export_for(ts_path.to_path_buf()),
                     type_params: Default::default(),
                 })
-            }
-        }
-    }
-
-    fn prop_key_to_name(&self, expr: &Expr) -> Option<String> {
-        match expr {
-            Expr::Lit(lit) => match lit {
-                Lit::Str(s) => Some(s.value.to_string()),
-                _ => {
-                    println!("We only handle string properties. Received {:?}", lit);
-                    None
-                }
-            },
-            Expr::Ident(Ident { sym, .. }) => Some(sym.to_string()),
-            _ => {
-                println!(
-                    "We only handle literal and identifier properties. Received {:?}",
-                    expr
-                );
-                None
             }
         }
     }
@@ -909,15 +983,6 @@ impl TsTypes {
         }
     }
 
-    fn process_prop_name(&mut self, _ts_path: &Path, prop_name: &PropName) -> String {
-        match prop_name {
-            PropName::Ident(ident) => ident.sym.to_string(),
-            PropName::Str(s) => s.value.to_string(),
-            PropName::Num(n) => n.value.to_string(),
-            _ => panic!("We only support ident, str, and num property names"),
-        }
-    }
-
     fn process_class(&mut self, ts_path: &Path, class: &swc_ecma_ast::Class) -> TypeInfo {
         let swc_ecma_ast::Class {
             body,
@@ -932,18 +997,18 @@ impl TsTypes {
                 .iter()
                 .filter_map(|member| match member {
                     ClassMember::Constructor(ctor) => Some((
-                        self.process_prop_name(ts_path, &ctor.key),
+                        ctor.key().unwrap_or_else(|| panic!("no key for constructor")),
                         Member::Constructor(),
                     )),
+                    // TODO: need to split Method into methods, getters, and setters
                     ClassMember::Method(method) => Some((
-                        self.process_prop_name(ts_path, &method.key),
-                        Member::Method(),
+                        method.key().unwrap_or_else(|| panic!("no key for constructor")),
+                        Member::Method(method.to_func(ts_path, self)),
                     )),
                     ClassMember::PrivateMethod(_) => None,
                     ClassMember::ClassProp(prop) => Some((
-                        self.prop_key_to_name(&prop.key)
-                            .expect("we only handle some prop key types"),
-                        Member::Property(),
+                        prop.key().expect("we only handle some prop key types"),
+                        Member::Property(prop.to_type_info(ts_path, self)),
                     )),
                     ClassMember::PrivateProp(_) => None,
                     ClassMember::TsIndexSignature(_) => None,
@@ -983,69 +1048,19 @@ impl TsTypes {
         }
     }
 
-    fn process_raw_params(&mut self, ts_path: &Path, params: &[swc_ecma_ast::Param]) -> Vec<Param> {
-        params
-            .iter()
-            .map(|p| match &p.pat {
-                Pat::Ident(id_param) => Param {
-                    name: id_param.id.sym.to_string(),
-                    is_variadic: false,
-                    type_info: id_param
-                        .type_ann
-                        .as_ref()
-                        .map(|p_type| self.process_type(ts_path, &p_type.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
-                },
-                Pat::Rest(RestPat { arg, type_ann, .. }) => match &**arg {
-                    Pat::Ident(id_param) => Param {
-                        name: id_param.id.sym.to_string(),
-                        is_variadic: false,
-                        type_info: type_ann
-                            .as_ref()
-                            .map(|t| self.process_type(ts_path, &t.type_ann))
-                            .unwrap_or(TypeInfo::PrimitiveAny {}),
-                    },
-                    _ => {
-                        println!("found rest param arg {:?}", &arg);
-                        panic!("we only handle idents in rest patterns");
-                    }
-                },
-                _ => {
-                    println!("found param, {:?}", &p);
-                    panic!("bad params")
-                }
-            })
-            .collect()
-    }
-
     fn process_fn_decl(
         &mut self,
         ts_path: &Path,
         FnDecl {
             ident,
-            function:
-                Function {
-                    params,
-                    return_type,
-                    type_params,
-                    ..
-                },
+            function,
             ..
         }: &FnDecl,
     ) -> Type {
         Type {
             name: TypeName::for_name(ts_path, &ident.sym.to_string()),
             is_exported: false,
-            info: TypeInfo::Func(Func {
-                params: self.process_raw_params(ts_path, params),
-                type_params: self.process_fn_type_params(ts_path, type_params),
-                return_type: Box::new(
-                    return_type
-                        .as_ref()
-                        .map(|t| self.process_type(ts_path, &t.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
-                ),
-            }),
+            info: function.to_type_info(ts_path, self),
         }
     }
 
