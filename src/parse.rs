@@ -1,6 +1,6 @@
 use crate::ir::{
     BaseClass, Class, Ctor, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param,
-    Type, TypeIdent, TypeInfo, TypeName, TypeRef,
+    Type, TypeIdent, TypeInfo, TypeName, TypeRef, Intersection, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -732,12 +732,12 @@ impl TsTypes {
         ts_path: &Path,
         TsUnionType { types, .. }: &TsUnionType,
     ) -> TypeInfo {
-        TypeInfo::Union {
+        TypeInfo::Union(Union {
             types: types
                 .iter()
                 .map(|t| self.process_type(ts_path, t))
                 .collect(),
-        }
+        })
     }
 
     fn process_intersection_type(
@@ -745,12 +745,12 @@ impl TsTypes {
         ts_path: &Path,
         TsIntersectionType { types, .. }: &TsIntersectionType,
     ) -> TypeInfo {
-        TypeInfo::Intersection {
+        TypeInfo::Intersection(Intersection {
             types: types
                 .iter()
                 .map(|t| self.process_type(ts_path, t))
                 .collect(),
-        }
+        })
     }
 
     fn process_type_lit(

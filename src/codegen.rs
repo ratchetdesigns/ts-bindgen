@@ -1,6 +1,6 @@
 use crate::ir::{
     BaseClass, Class, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param, Type,
-    TypeIdent, TypeInfo, TypeName, TypeRef,
+    TypeIdent, TypeInfo, TypeName, TypeRef, Intersection, Union,
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
@@ -278,7 +278,7 @@ fn to_ident(s: &str) -> proc_macro2::Ident {
 }
 
 fn to_camel_case_ident(s: &str) -> proc_macro2::Ident {
-    map_to_ident(&s, |s| s.to_camel_case())
+    map_to_ident(s, |s| s.to_camel_case())
 }
 
 fn to_ns_name(ns: &str) -> proc_macro2::Ident {
@@ -288,7 +288,7 @@ fn to_ns_name(ns: &str) -> proc_macro2::Ident {
 }
 
 fn to_snake_case_ident(s: &str) -> proc_macro2::Ident {
-    map_to_ident(&s, |s| s.to_snake_case())
+    map_to_ident(s, |s| s.to_snake_case())
 }
 
 #[cfg(test)]
@@ -856,11 +856,11 @@ impl ToTokens for TypeInfo {
                     Option<#item_type>
                 }
             }
-            TypeInfo::Union { types: _ } => {
+            TypeInfo::Union(Union { types: _ }) => {
                 // TODO
                 quote! {}
             }
-            TypeInfo::Intersection { types: _ } => {
+            TypeInfo::Intersection(Intersection { types: _ }) => {
                 // TODO
                 quote! {}
             }

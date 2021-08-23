@@ -222,6 +222,16 @@ pub struct Class {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Intersection {
+    pub types: Vec<TypeInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Union {
+    pub types: Vec<TypeInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeInfo {
     Interface(Interface),
     Enum {
@@ -251,12 +261,8 @@ pub enum TypeInfo {
     Optional {
         item_type: Box<TypeInfo>,
     },
-    Union {
-        types: Vec<TypeInfo>,
-    },
-    Intersection {
-        types: Vec<TypeInfo>,
-    },
+    Union(Union),
+    Intersection(Intersection),
     Mapped {
         value_type: Box<TypeInfo>,
     },
@@ -414,18 +420,18 @@ impl TypeInfo {
                     item_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
                 ),
             },
-            Self::Union { types } => Self::Union {
+            Self::Union(Union { types }) => Self::Union(Union {
                 types: types
                     .iter()
                     .map(|t| t.resolve_to_concrete_type(types_by_name_by_file, type_params))
                     .collect(),
-            },
-            Self::Intersection { types } => Self::Intersection {
+            }),
+            Self::Intersection(Intersection { types }) => Self::Intersection(Intersection {
                 types: types
                     .iter()
                     .map(|t| t.resolve_to_concrete_type(types_by_name_by_file, type_params))
                     .collect(),
-            },
+            }),
             Self::Mapped { value_type } => Self::Mapped {
                 value_type: Box::new(
                     value_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
@@ -575,18 +581,18 @@ impl TypeInfo {
             Self::Optional { item_type } => Self::Optional {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },
-            Self::Union { types } => Self::Union {
+            Self::Union(Union { types }) => Self::Union(Union {
                 types: types
                     .iter()
                     .map(|t| t.resolve_names(types_by_name_by_file, type_params))
                     .collect(),
-            },
-            Self::Intersection { types } => Self::Intersection {
+            }),
+            Self::Intersection(Intersection { types }) => Self::Intersection(Intersection {
                 types: types
                     .iter()
                     .map(|t| t.resolve_names(types_by_name_by_file, type_params))
                     .collect(),
-            },
+            }),
             Self::Mapped { value_type } => Self::Mapped {
                 value_type: Box::new(value_type.resolve_names(types_by_name_by_file, type_params)),
             },
