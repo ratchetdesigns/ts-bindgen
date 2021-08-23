@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use strum_macros::Display as StrumDisplay;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
@@ -231,7 +232,7 @@ pub struct Union {
     pub types: Vec<TypeInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, StrumDisplay)]
 pub enum TypeInfo {
     Interface(Interface),
     Enum {

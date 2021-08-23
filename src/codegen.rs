@@ -340,6 +340,168 @@ mod ident_tests {
         assert_eq!(to_camel_case_ident("super").to_string(), "Super");
 
         assert_eq!(to_camel_case_ident("1super").to_string(), "Super");
+
+        assert_eq!(to_camel_case_ident("a_b_c").to_string(), "ABC");
+
+        assert_eq!(to_camel_case_ident("ab_bc_cd").to_string(), "AbBcCd");
+    }
+}
+
+struct AuxTypes<'a> {
+    inner_type: &'a TypeInfo,
+    outer_names: &'a [&'a str],
+}
+
+impl<'a> AuxTypes<'a> {
+    fn inner_aux_types(&self) -> Vec<TokenStream2> {
+        match &self.inner_type {
+            TypeInfo::Union(Union { types }) => {
+                let name = self.outer_names.join("_");
+                let variants = types.iter().map(|t| {
+                    let id = to_camel_case_ident(&t.to_string());
+                    quote! {
+                        #id(#t)
+                    }
+                });
+
+                vec![quote! {
+                    enum #name {
+                        #(#variants),*
+                    }
+                }]
+            },
+            //TypeInfo::Intersection { types },
+            TypeInfo::Interface(iface) => {
+                let Interface { indexer, .. } = iface;
+                let extended_fields = get_recursive_fields(iface);
+
+                let mut aux_types: Vec<TokenStream2> = extended_fields
+                    .iter()
+                    .flat_map(|(field_name, typ)| {
+                        AuxTypes {
+                            inner_type: typ,
+                            outer_names: &self.outer_names.iter().cloned().chain([field_name.as_ref()]).collect::<Vec<_>>(),
+                        }.inner_aux_types()
+                    })
+                    .collect();
+
+                if let Some(Indexer { type_info, .. }) = &indexer {
+                    aux_types.extend(AuxTypes {
+                        inner_type: type_info,
+                        outer_names: &self.outer_names.iter().cloned().chain(["indexer"]).collect::<Vec<_>>(),
+                    }.inner_aux_types());
+                }
+
+                vec![quote! {
+                    #(#aux_types)*
+                }]
+            },
+            /*
+            TypeInfo::BuiltinPromise { value_type } => AuxTypes {
+                inner_type: value_type,
+                outer_names: self.outer_names,
+            }.inner_aux_types(),
+            TypeInfo::Array { item_type } => AuxTypes {
+                inner_type: item_type,
+                outer_names: self.outer_names,
+            }.inner_aux_types(),
+            TypeInfo::Optional { item_type } => AuxTypes {
+                inner_type: item_type,
+                outer_names: self.outer_names,
+            }.inner_aux_types(),
+            TypeInfo::Mapped { value_type } => AuxTypes {
+                inner_type: value_type
+            }.inner_aux_types(),
+            TypeInfo::Func(func) => {
+                vec![]
+            }
+            TypeInfo::Constructor {
+                params: Vec<Param>,
+                return_type: Box<TypeInfo>,
+            },
+            TypeInfo::Class(Class {
+                super_class,
+                members,
+            }) => {
+                let mut attrs = vec![quote! { js_name = #js_name }];
+                if let Some(TypeRef {
+                    referent,
+                    type_params,
+                }) = super_class.as_ref().map(|sc| &**sc)
+                {
+                    let super_name = to_camel_case_ident(referent.to_name());
+
+                    attrs.push(quote! {
+                        extends = #super_name
+                    });
+                }
+
+                let members: Vec<TokenStream2> = members
+                    .iter()
+                    .map(|(member_js_name, member)| match member {
+                        Member::Constructor(ctor) => {
+                            let param_toks: Vec<TokenStream2> =
+                                ctor.params.iter().map(|p| quote! { #p }).collect();
+
+                            quote! {
+                                #[wasm_bindgen(constructor)]
+                                fn new(#(#param_toks),*) -> #name;
+                            }
+                        }
+                        Member::Method(func) => {
+                            let f = NamedFunc {
+                                js_name: member_js_name,
+                                func,
+                            };
+                            let mut attrs = vec![
+                                quote! {js_name = #member_js_name},
+                                quote! {method},
+                                quote! {js_class = #js_name},
+                            ];
+                            if func.is_variadic() {
+                                attrs.push(quote! { variadic });
+                            }
+
+                            quote! {
+                                #[wasm_bindgen(#(#attrs),*)]
+                                #f
+                            }
+                        }
+                        Member::Property(typ) => {
+                            let member_name = to_snake_case_ident(member_js_name);
+                            let setter_name = format_ident!("set_{}", member_name);
+                            quote! {
+                                #[wasm_bindgen(method, structural, getter = #member_js_name)]
+                                fn #member_name(this: &#name) -> #typ;
+
+                                #[wasm_bindgen(method, structural, setter = #member_js_name)]
+                                fn #setter_name(this: &#name, value: #typ);
+                            }
+                        }
+                    })
+                    .collect();
+
+                quote! {
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(#(#attrs),*)]
+                        type #name;
+
+                        #(#members)*
+                    }
+                }
+            }
+            TypeInfo::Var {
+                type_info: Box<TypeInfo>,
+            },
+            TypeInfo::GenericType {
+                name: String,
+                constraint: Box<TypeInfo>,
+            },*/
+            _ => {
+                Default::default()
+            }
+        }
     }
 }
 
@@ -347,6 +509,12 @@ impl ToTokens for ModDef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let mod_name = &self.name;
         let types = &self.types;
+        let aux_types = self.types
+            .iter()
+            .flat_map(|typ| AuxTypes {
+                inner_type: &typ.info,
+                outer_names: &[typ.name.to_name()],
+            }.inner_aux_types());
         let children = &self.children;
 
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
@@ -357,6 +525,8 @@ impl ToTokens for ModDef {
                 use wasm_bindgen::prelude::*;
 
                 #(#types)*
+
+                #(#aux_types)*
 
                 #(#children)*
             }
