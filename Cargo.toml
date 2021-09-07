@@ -1,7 +1,9 @@
 [package]
-name = "my-wasm-testing-ts-macros"
+name = "ts-bindgen"
 version = "0.1.0"
-authors = ["adam"]
+description = "Generate a wasm-bindgen interface from a typescript interface."
+authors = ["Adam Berger <adam@ratchetdesigns.com>"]
+license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [lib]
@@ -19,3 +21,6 @@ proc-macro2 = "1.0.24"
 unicode-xid = "0.2.2"
 heck = "0.3.3"
 strum_macros = "0.21.1"
+
+[dev-dependencies]
+trybuild = "1.0.25"
