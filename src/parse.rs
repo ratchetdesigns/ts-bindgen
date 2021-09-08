@@ -1,6 +1,9 @@
 use crate::ir::{
-    BaseClass, Class, Ctor, EnumMember, Func, Indexer, Interface, Member, NamespaceImport, Param,
-    Type, TypeIdent, TypeInfo, TypeName, TypeRef, Intersection, Union,
+    BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection, LitBoolean,
+    LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny, PrimitiveBigInt,
+    PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
+    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type, TypeIdent, TypeInfo, TypeName,
+    TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -218,7 +221,7 @@ trait PropExt {
                     item_type
                 }
             })
-            .unwrap_or(TypeInfo::PrimitiveAny {})
+            .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny()))
     }
 }
 
@@ -256,7 +259,7 @@ impl FnParamExt for TsFnParam {
                     .type_ann
                     .as_ref()
                     .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             },
             _ => panic!("we only support ident params for methods"),
         }
@@ -272,7 +275,7 @@ impl FnParamExt for swc_ecma_ast::Param {
                 type_info: type_ann
                     .as_ref()
                     .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             },
             Pat::Rest(RestPat { arg, type_ann, .. }) => match &**arg {
                 Pat::Ident(id_param) => Param {
@@ -281,7 +284,7 @@ impl FnParamExt for swc_ecma_ast::Param {
                     type_info: type_ann
                         .as_ref()
                         .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
+                        .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
                 },
                 _ => {
                     println!("found rest param arg {:?}", &arg);
@@ -302,7 +305,7 @@ impl FnParamExt for BindingIdent {
                 .type_ann
                 .as_ref()
                 .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
-                .unwrap_or(TypeInfo::PrimitiveAny {}),
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
         }
     }
 }
@@ -345,7 +348,7 @@ trait FuncExt {
             return_type: Box::new(
                 self.return_type()
                     .map(|t| ts_types.process_type(ts_path, t))
-                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             ),
         }
     }
@@ -435,7 +438,7 @@ trait IndexerExt {
             type_info: Box::new(
                 self.value_type()
                     .map(|t| ts_types.process_type(ts_path, t))
-                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             ),
         }
     }
@@ -691,17 +694,19 @@ impl TsTypes {
         TsKeywordType { kind, .. }: &TsKeywordType,
     ) -> TypeInfo {
         match kind {
-            TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny {},
+            TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny(PrimitiveAny()),
             TsKeywordTypeKind::TsUnknownKeyword => panic!("unknown keyword"),
-            TsKeywordTypeKind::TsNumberKeyword => TypeInfo::PrimitiveNumber {},
-            TsKeywordTypeKind::TsObjectKeyword => TypeInfo::PrimitiveObject {},
-            TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean {},
-            TsKeywordTypeKind::TsBigIntKeyword => TypeInfo::PrimitiveBigInt {},
-            TsKeywordTypeKind::TsStringKeyword => TypeInfo::PrimitiveString {},
-            TsKeywordTypeKind::TsSymbolKeyword => TypeInfo::PrimitiveSymbol {},
-            TsKeywordTypeKind::TsVoidKeyword => TypeInfo::PrimitiveVoid {},
-            TsKeywordTypeKind::TsUndefinedKeyword => TypeInfo::PrimitiveUndefined {},
-            TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull {},
+            TsKeywordTypeKind::TsNumberKeyword => TypeInfo::PrimitiveNumber(PrimitiveNumber()),
+            TsKeywordTypeKind::TsObjectKeyword => TypeInfo::PrimitiveObject(PrimitiveObject()),
+            TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean(PrimitiveBoolean()),
+            TsKeywordTypeKind::TsBigIntKeyword => TypeInfo::PrimitiveBigInt(PrimitiveBigInt()),
+            TsKeywordTypeKind::TsStringKeyword => TypeInfo::PrimitiveString(PrimitiveString()),
+            TsKeywordTypeKind::TsSymbolKeyword => TypeInfo::PrimitiveSymbol(PrimitiveSymbol()),
+            TsKeywordTypeKind::TsVoidKeyword => TypeInfo::PrimitiveVoid(PrimitiveVoid()),
+            TsKeywordTypeKind::TsUndefinedKeyword => {
+                TypeInfo::PrimitiveUndefined(PrimitiveUndefined())
+            }
+            TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull(PrimitiveNull()),
             TsKeywordTypeKind::TsNeverKeyword => panic!("never keyword"),
             TsKeywordTypeKind::TsIntrinsicKeyword => panic!("intrinsic keyword"),
         }
@@ -787,11 +792,11 @@ impl TsTypes {
         TsLitType { lit, .. }: &TsLitType,
     ) -> TypeInfo {
         match lit {
-            TsLit::Number(n) => TypeInfo::LitNumber { n: n.value },
-            TsLit::Str(s) => TypeInfo::LitString {
+            TsLit::Number(n) => TypeInfo::LitNumber(LitNumber { n: n.value }),
+            TsLit::Str(s) => TypeInfo::LitString(LitString {
                 s: s.value.to_string(),
-            },
-            TsLit::Bool(b) => TypeInfo::LitBoolean { b: b.value },
+            }),
+            TsLit::Bool(b) => TypeInfo::LitBoolean(LitBoolean { b: b.value }),
             TsLit::BigInt(_) => panic!("we don't support literal bigints yet"),
             TsLit::Tpl(_) => panic!("we don't support template literals yet"),
         }
@@ -818,7 +823,7 @@ impl TsTypes {
                             p.constraint
                                 .as_ref()
                                 .map(|c| self.process_type(ts_path, c))
-                                .unwrap_or(TypeInfo::PrimitiveAny {}),
+                                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
                         )
                     })
                     .collect()
@@ -877,9 +882,9 @@ impl TsTypes {
                 type_info: type_ann
                     .as_ref()
                     .map(|t| self.process_type(ts_path, &t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny {}),
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             }],
-            return_type: Box::new(TypeInfo::PrimitiveBoolean {}),
+            return_type: Box::new(TypeInfo::PrimitiveBoolean(PrimitiveBoolean())),
         })
     }
 
@@ -975,7 +980,7 @@ impl TsTypes {
         Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
-            info: TypeInfo::Enum {
+            info: TypeInfo::Enum(Enum {
                 members: members
                     .iter()
                     .map(|TsEnumMember { id, init, .. }| {
@@ -997,7 +1002,7 @@ impl TsTypes {
                         }
                     })
                     .collect(),
-            },
+            }),
         }
     }
 
@@ -1079,7 +1084,7 @@ impl TsTypes {
                         type_ann
                             .as_ref()
                             .map(|t| self.process_type(ts_path, &t.type_ann))
-                            .unwrap_or(TypeInfo::PrimitiveAny {}),
+                            .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
                     ),
                 },
             },

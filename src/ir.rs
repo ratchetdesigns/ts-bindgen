@@ -232,60 +232,100 @@ pub struct Union {
     pub types: Vec<TypeInfo>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Enum {
+    pub members: Vec<EnumMember>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alias {
+    pub target: TypeName,
+}
+
+macro_rules! make_primitives {
+    () => {};
+    ($prim:ident) => {
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct $prim();
+    };
+    ($prim:ident, $($rest:ident),* $(,)*) => {
+        make_primitives!($prim);
+
+        make_primitives!($($rest),*);
+    };
+}
+
+make_primitives!(
+    PrimitiveAny,
+    PrimitiveNumber,
+    PrimitiveObject,
+    PrimitiveBoolean,
+    PrimitiveBigInt,
+    PrimitiveString,
+    PrimitiveSymbol,
+    PrimitiveVoid,
+    PrimitiveUndefined,
+    PrimitiveNull,
+    BuiltinDate,
+);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuiltinPromise {
+    pub value_type: Box<TypeInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LitNumber {
+    pub n: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LitString {
+    pub s: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LitBoolean {
+    pub b: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericType {
+    name: String,
+    constraint: Box<TypeInfo>,
+}
+
 #[derive(Debug, Clone, PartialEq, StrumDisplay)]
 pub enum TypeInfo {
     Interface(Interface),
-    Enum {
-        members: Vec<EnumMember>,
-    },
+    Enum(Enum),
     Ref(TypeRef),
-    Alias {
-        target: TypeName,
-    },
-    PrimitiveAny {},
-    PrimitiveNumber {},
-    PrimitiveObject {},
-    PrimitiveBoolean {},
-    PrimitiveBigInt {},
-    PrimitiveString {},
-    PrimitiveSymbol {},
-    PrimitiveVoid {},
-    PrimitiveUndefined {},
-    PrimitiveNull {},
-    BuiltinPromise {
-        value_type: Box<TypeInfo>,
-    },
-    BuiltinDate {},
-    Array {
-        item_type: Box<TypeInfo>,
-    },
-    Optional {
-        item_type: Box<TypeInfo>,
-    },
+    Alias(Alias),
+    PrimitiveAny(PrimitiveAny),
+    PrimitiveNumber(PrimitiveNumber),
+    PrimitiveObject(PrimitiveObject),
+    PrimitiveBoolean(PrimitiveBoolean),
+    PrimitiveBigInt(PrimitiveBigInt),
+    PrimitiveString(PrimitiveString),
+    PrimitiveSymbol(PrimitiveSymbol),
+    PrimitiveVoid(PrimitiveVoid),
+    PrimitiveUndefined(PrimitiveUndefined),
+    PrimitiveNull(PrimitiveNull),
+    BuiltinPromise(BuiltinPromise),
+    BuiltinDate(BuiltinDate),
+    Array { item_type: Box<TypeInfo> },
+    Optional { item_type: Box<TypeInfo> },
     Union(Union),
     Intersection(Intersection),
-    Mapped {
-        value_type: Box<TypeInfo>,
-    },
-    LitNumber {
-        n: f64,
-    },
-    LitString {
-        s: String,
-    },
-    LitBoolean {
-        b: bool,
-    },
+    Mapped { value_type: Box<TypeInfo> },
+    LitNumber(LitNumber),
+    LitString(LitString),
+    LitBoolean(LitBoolean),
     Func(Func),
     Constructor(Ctor),
     Class(Class),
-    Var {
-        type_info: Box<TypeInfo>,
-    },
-    GenericType {
-        name: String,
-        constraint: Box<TypeInfo>,
-    },
+    Var { type_info: Box<TypeInfo> },
+    GenericType(GenericType),
     NamespaceImport(NamespaceImport),
 }
 
@@ -333,16 +373,16 @@ impl TypeInfo {
         }
 
         if referent.name == TypeIdent::Name("Date".to_string()) {
-            return Some(TypeInfo::BuiltinDate {});
+            return Some(TypeInfo::BuiltinDate(BuiltinDate()));
         }
 
         if referent.name == TypeIdent::Name("Function".to_string()) {
             return Some(TypeInfo::Func(Func {
                 type_params: Default::default(),
-                return_type: Box::new(TypeInfo::PrimitiveAny {}),
+                return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
                 params: vec![Param {
                     name: "args".to_string(),
-                    type_info: TypeInfo::PrimitiveAny {},
+                    type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
                     is_variadic: true,
                 }],
             }));
@@ -350,20 +390,20 @@ impl TypeInfo {
 
         if referent.name == TypeIdent::Name("Object".to_string()) {
             return Some(TypeInfo::Mapped {
-                value_type: Box::new(TypeInfo::PrimitiveAny {}),
+                value_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
             });
         }
 
         if referent.name == TypeIdent::Name("Promise".to_string()) {
-            return Some(TypeInfo::BuiltinPromise {
+            return Some(TypeInfo::BuiltinPromise(BuiltinPromise {
                 value_type: Box::new(
                     alias_type_params
                         .first()
                         .as_ref()
                         .map(|p| p.resolve_names(types_by_name_by_file, type_params))
-                        .unwrap_or(TypeInfo::PrimitiveAny {}),
+                        .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
                 ),
-            });
+            }));
         }
 
         None
@@ -408,7 +448,7 @@ impl TypeInfo {
             Self::Ref(type_ref) => {
                 type_ref.resolve_to_concrete_type(types_by_name_by_file, type_params)
             }
-            Self::Alias { target } => {
+            Self::Alias(Alias { target }) => {
                 target.resolve_to_concrete_type(types_by_name_by_file, type_params)
             }
             Self::Array { item_type } => Self::Array {
@@ -463,28 +503,28 @@ impl TypeInfo {
                     type_info.resolve_to_concrete_type(types_by_name_by_file, type_params),
                 ),
             },
-            Self::GenericType { name, constraint } => Self::GenericType {
+            Self::GenericType(GenericType { name, constraint }) => Self::GenericType(GenericType {
                 name: name.to_string(),
                 constraint: Box::new(
                     constraint.resolve_to_concrete_type(types_by_name_by_file, type_params),
                 ),
-            },
-            Self::Enum { .. } => self.clone(),
-            Self::PrimitiveAny {} => self.clone(),
-            Self::PrimitiveNumber {} => self.clone(),
-            Self::PrimitiveObject {} => self.clone(),
-            Self::PrimitiveBoolean {} => self.clone(),
-            Self::PrimitiveBigInt {} => self.clone(),
-            Self::PrimitiveString {} => self.clone(),
-            Self::PrimitiveSymbol {} => self.clone(),
-            Self::PrimitiveVoid {} => self.clone(),
-            Self::PrimitiveUndefined {} => self.clone(),
-            Self::PrimitiveNull {} => self.clone(),
-            Self::LitNumber { .. } => self.clone(),
-            Self::LitString { .. } => self.clone(),
-            Self::LitBoolean { .. } => self.clone(),
-            Self::BuiltinDate {} => self.clone(),
-            Self::BuiltinPromise { .. } => self.clone(),
+            }),
+            Self::Enum(_) => self.clone(),
+            Self::PrimitiveAny(PrimitiveAny()) => self.clone(),
+            Self::PrimitiveNumber(PrimitiveNumber()) => self.clone(),
+            Self::PrimitiveObject(PrimitiveObject()) => self.clone(),
+            Self::PrimitiveBoolean(PrimitiveBoolean()) => self.clone(),
+            Self::PrimitiveBigInt(PrimitiveBigInt()) => self.clone(),
+            Self::PrimitiveString(PrimitiveString()) => self.clone(),
+            Self::PrimitiveSymbol(PrimitiveSymbol()) => self.clone(),
+            Self::PrimitiveVoid(PrimitiveVoid()) => self.clone(),
+            Self::PrimitiveUndefined(PrimitiveUndefined()) => self.clone(),
+            Self::PrimitiveNull(PrimitiveNull()) => self.clone(),
+            Self::LitNumber(_) => self.clone(),
+            Self::LitString(_) => self.clone(),
+            Self::LitBoolean(_) => self.clone(),
+            Self::BuiltinDate(BuiltinDate()) => self.clone(),
+            Self::BuiltinPromise(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
         }
     }
@@ -531,10 +571,10 @@ impl TypeInfo {
             }) => {
                 if let TypeIdent::Name(ref name) = &referent.name {
                     if let Some(constraint) = type_params.get(name) {
-                        return Self::GenericType {
+                        return Self::GenericType(GenericType {
                             name: name.to_string(),
                             constraint: Box::new(constraint.clone()),
-                        };
+                        });
                     }
                 }
 
@@ -551,8 +591,10 @@ impl TypeInfo {
                             referent.name.clone()
                         };
 
-                        types_by_name.get(&n).map(|_| TypeInfo::Alias {
-                            target: referent.clone(),
+                        types_by_name.get(&n).map(|_| {
+                            TypeInfo::Alias(Alias {
+                                target: referent.clone(),
+                            })
                         })
                     })
                     .or_else(|| {
@@ -573,9 +615,9 @@ impl TypeInfo {
                     })
                     .expect("can't resolve alias")
             }
-            Self::Alias { target } => Self::Alias {
+            Self::Alias(Alias { target }) => Self::Alias(Alias {
                 target: target.clone(),
-            },
+            }),
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },
@@ -652,26 +694,26 @@ impl TypeInfo {
             Self::Var { type_info } => Self::Var {
                 type_info: Box::new(type_info.resolve_names(types_by_name_by_file, type_params)),
             },
-            Self::GenericType { name, constraint } => Self::GenericType {
+            Self::GenericType(GenericType { name, constraint }) => Self::GenericType(GenericType {
                 name: name.to_string(),
                 constraint: Box::new(constraint.resolve_names(types_by_name_by_file, type_params)),
-            },
-            Self::Enum { .. } => self.clone(),
-            Self::PrimitiveAny {} => self.clone(),
-            Self::PrimitiveNumber {} => self.clone(),
-            Self::PrimitiveObject {} => self.clone(),
-            Self::PrimitiveBoolean {} => self.clone(),
-            Self::PrimitiveBigInt {} => self.clone(),
-            Self::PrimitiveString {} => self.clone(),
-            Self::PrimitiveSymbol {} => self.clone(),
-            Self::PrimitiveVoid {} => self.clone(),
-            Self::PrimitiveUndefined {} => self.clone(),
-            Self::PrimitiveNull {} => self.clone(),
-            Self::LitNumber { .. } => self.clone(),
-            Self::LitString { .. } => self.clone(),
-            Self::LitBoolean { .. } => self.clone(),
-            Self::BuiltinDate {} => self.clone(),
-            Self::BuiltinPromise { .. } => self.clone(),
+            }),
+            Self::Enum(_) => self.clone(),
+            Self::PrimitiveAny(PrimitiveAny()) => self.clone(),
+            Self::PrimitiveNumber(PrimitiveNumber()) => self.clone(),
+            Self::PrimitiveObject(PrimitiveObject()) => self.clone(),
+            Self::PrimitiveBoolean(PrimitiveBoolean()) => self.clone(),
+            Self::PrimitiveBigInt(PrimitiveBigInt()) => self.clone(),
+            Self::PrimitiveString(PrimitiveString()) => self.clone(),
+            Self::PrimitiveSymbol(PrimitiveSymbol()) => self.clone(),
+            Self::PrimitiveVoid(PrimitiveVoid()) => self.clone(),
+            Self::PrimitiveUndefined(PrimitiveUndefined()) => self.clone(),
+            Self::PrimitiveNull(PrimitiveNull()) => self.clone(),
+            Self::LitNumber(_) => self.clone(),
+            Self::LitString(_) => self.clone(),
+            Self::LitBoolean(_) => self.clone(),
+            Self::BuiltinDate(BuiltinDate()) => self.clone(),
+            Self::BuiltinPromise(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
         }
     }
