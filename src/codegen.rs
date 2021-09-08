@@ -356,7 +356,7 @@ impl<'a> AuxTypes<'a> {
     fn inner_aux_types(&self) -> Vec<TokenStream2> {
         match &self.inner_type {
             TypeInfo::Union(Union { types }) => {
-                let name = self.outer_names.join("_");
+                let name = format_ident!("{}", self.outer_names.join("_"));
                 let variants = types.iter().map(|t| {
                     let id = to_camel_case_ident(&t.to_string());
                     quote! {
