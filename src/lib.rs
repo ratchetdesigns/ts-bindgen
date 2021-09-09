@@ -1,6 +1,7 @@
 extern crate proc_macro;
 
 mod codegen;
+mod flattened_ir;
 mod ir;
 mod module_resolution;
 mod parse;
