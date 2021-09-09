@@ -59,20 +59,20 @@ impl TypeName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
     pub value: Option<String>, // TODO: really a string | number
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
     pub name: String,
     pub type_info: TypeInfo,
     pub is_variadic: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
     pub type_params: HashMap<String, TypeInfo>,
     pub params: Vec<Param>,
@@ -121,12 +121,12 @@ impl Func {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
     Constructor(Ctor),
     Method(Func),
@@ -143,7 +143,7 @@ impl Member {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Indexer {
     pub readonly: bool,
     pub type_info: Box<TypeInfo>,
@@ -179,7 +179,7 @@ impl Indexer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeRef {
     pub referent: TypeName,
     pub type_params: Vec<TypeInfo>,
@@ -196,48 +196,48 @@ impl TypeRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceImport {
     Default { src: PathBuf },
     All { src: PathBuf },
     Named { src: PathBuf, name: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BaseClass {
     Unresolved(TypeRef),
     Resolved(TypeInfo),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Class {
     pub super_class: Option<Box<TypeRef>>,
     pub members: HashMap<String, Member>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intersection {
     pub types: Vec<TypeInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
     pub types: Vec<TypeInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub members: Vec<EnumMember>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeName,
 }
@@ -245,7 +245,7 @@ pub struct Alias {
 macro_rules! make_primitives {
     () => {};
     ($prim:ident) => {
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $prim();
     };
     ($prim:ident, $($rest:ident),* $(,)*) => {
@@ -269,7 +269,7 @@ make_primitives!(
     BuiltinDate,
 );
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinPromise {
     pub value_type: Box<TypeInfo>,
 }
@@ -279,23 +279,19 @@ pub struct LitNumber {
     pub n: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl Eq for LitNumber {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LitString {
     pub s: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LitBoolean {
     pub b: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct GenericType {
-    name: String,
-    constraint: Box<TypeInfo>,
-}
-
-#[derive(Debug, Clone, PartialEq, StrumDisplay)]
+#[derive(Debug, Clone, PartialEq, Eq, StrumDisplay)]
 pub enum TypeInfo {
     Interface(Interface),
     Enum(Enum),
@@ -325,7 +321,6 @@ pub enum TypeInfo {
     Constructor(Ctor),
     Class(Class),
     Var { type_info: Box<TypeInfo> },
-    GenericType(GenericType),
     NamespaceImport(NamespaceImport),
 }
 
@@ -503,12 +498,6 @@ impl TypeInfo {
                     type_info.resolve_to_concrete_type(types_by_name_by_file, type_params),
                 ),
             },
-            Self::GenericType(GenericType { name, constraint }) => Self::GenericType(GenericType {
-                name: name.to_string(),
-                constraint: Box::new(
-                    constraint.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
-            }),
             Self::Enum(_) => self.clone(),
             Self::PrimitiveAny(PrimitiveAny()) => self.clone(),
             Self::PrimitiveNumber(PrimitiveNumber()) => self.clone(),
@@ -568,53 +557,42 @@ impl TypeInfo {
             Self::Ref(TypeRef {
                 referent,
                 type_params: alias_type_params,
-            }) => {
-                if let TypeIdent::Name(ref name) = &referent.name {
-                    if let Some(constraint) = type_params.get(name) {
-                        return Self::GenericType(GenericType {
-                            name: name.to_string(),
-                            constraint: Box::new(constraint.clone()),
-                        });
-                    }
-                }
+            }) => types_by_name_by_file
+                .get(&referent.file)
+                .and_then(|types_by_name| {
+                    let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
+                        TypeIdent::Name(
+                            qn.first()
+                                .expect("must have a name in a qualified name")
+                                .to_string(),
+                        )
+                    } else {
+                        referent.name.clone()
+                    };
 
-                types_by_name_by_file
-                    .get(&referent.file)
-                    .and_then(|types_by_name| {
-                        let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
-                            TypeIdent::Name(
-                                qn.first()
-                                    .expect("must have a name in a qualified name")
-                                    .to_string(),
-                            )
-                        } else {
-                            referent.name.clone()
-                        };
-
-                        types_by_name.get(&n).map(|_| {
-                            TypeInfo::Alias(Alias {
-                                target: referent.clone(),
-                            })
+                    types_by_name.get(&n).map(|_| {
+                        TypeInfo::Alias(Alias {
+                            target: referent.clone(),
                         })
                     })
-                    .or_else(|| {
-                        self.resolve_builtin(
-                            referent,
-                            alias_type_params,
-                            types_by_name_by_file,
-                            type_params,
-                        )
-                    })
-                    .or_else(|| {
-                        println!(
-                            "can't resolve, {:?}, {:?}",
-                            self,
-                            types_by_name_by_file.get(&referent.file)
-                        );
-                        None
-                    })
-                    .expect("can't resolve alias")
-            }
+                })
+                .or_else(|| {
+                    self.resolve_builtin(
+                        referent,
+                        alias_type_params,
+                        types_by_name_by_file,
+                        type_params,
+                    )
+                })
+                .or_else(|| {
+                    println!(
+                        "can't resolve, {:?}, {:?}",
+                        self,
+                        types_by_name_by_file.get(&referent.file)
+                    );
+                    None
+                })
+                .expect("can't resolve alias"),
             Self::Alias(Alias { target }) => Self::Alias(Alias {
                 target: target.clone(),
             }),
@@ -694,10 +672,6 @@ impl TypeInfo {
             Self::Var { type_info } => Self::Var {
                 type_info: Box::new(type_info.resolve_names(types_by_name_by_file, type_params)),
             },
-            Self::GenericType(GenericType { name, constraint }) => Self::GenericType(GenericType {
-                name: name.to_string(),
-                constraint: Box::new(constraint.resolve_names(types_by_name_by_file, type_params)),
-            }),
             Self::Enum(_) => self.clone(),
             Self::PrimitiveAny(PrimitiveAny()) => self.clone(),
             Self::PrimitiveNumber(PrimitiveNumber()) => self.clone(),
@@ -719,7 +693,7 @@ impl TypeInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Type {
     pub name: TypeName,
     pub is_exported: bool,
