@@ -21,6 +21,7 @@ proc-macro2 = "1.0.24"
 unicode-xid = "0.2.2"
 heck = "0.3.3"
 strum_macros = "0.21.1"
+enum_to_enum = "0.1.0"
 
 [dev-dependencies]
 trybuild = "1.0.25"
