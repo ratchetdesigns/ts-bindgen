@@ -11,10 +11,17 @@ use enum_to_enum::{FromEnum, WithEffects};
 use std::collections::HashMap;
 use std::iter::{Extend, FromIterator};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    CreateType { name: String, typ: NameableTypeInfo },
+    CreateType {
+        name: String,
+        typ: NameableTypeInfo,
+        generated_name_id: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +29,8 @@ pub struct EffectContainer<Value> {
     value: Value,
     effects: Vec<Effect>,
 }
+
+type EffectIterator = Box<dyn Iterator<Item = Effect>>;
 
 impl<Value> WithEffects for EffectContainer<Value> {
     type Value = Value;
@@ -31,7 +40,7 @@ impl<Value> WithEffects for EffectContainer<Value> {
         Self { value, effects }
     }
 
-    fn into_value_and_effects(self) -> (Self::Value, Box<dyn Iterator<Item = Self::Effect>>) {
+    fn into_value_and_effects(self) -> (Self::Value, EffectIterator) {
         (self.value, Box::new(self.effects.into_iter()))
     }
 }
@@ -48,7 +57,7 @@ where
     Coll: FromIterator<Value> + Default + Extend<Value>,
 {
     fn from_iter<I: IntoIterator<Item = EffectContainer<Value>>>(iter: I) -> Self {
-        let (vals, effects): (Coll, Vec<Box<dyn Iterator<Item = Effect>>>) = iter
+        let (vals, effects): (Coll, Vec<EffectIterator>) = iter
             .into_iter()
             .map(|ec| ec.into_value_and_effects())
             .unzip();
@@ -67,7 +76,7 @@ impl<K: std::hash::Hash + Eq, V> FromIterator<(K, EffectContainer<V>)>
     for EffectContainer<HashMap<K, V>>
 {
     fn from_iter<I: IntoIterator<Item = (K, EffectContainer<V>)>>(iter: I) -> Self {
-        let (vals, effects): (HashMap<K, V>, Vec<Box<dyn Iterator<Item = Effect>>>) = iter
+        let (vals, effects): (HashMap<K, V>, Vec<EffectIterator>) = iter
             .into_iter()
             .map(|(k, ec)| {
                 let (v, es) = ec.into_value_and_effects();
@@ -214,6 +223,9 @@ pub enum TypeIdent {
     Builtin {
         rust_type_name: String,
     },
+    GeneratedName {
+        id: usize,
+    },
     Name {
         file: PathBuf,
         name: String,
@@ -256,66 +268,57 @@ pub struct TypeRef {
 impl From<TypeInfoIR> for EffectContainer<TypeRef> {
     fn from(src: TypeInfoIR) -> EffectContainer<TypeRef> {
         match src {
-            // TODO
-            _ => EffectContainer::new(
-                TypeRef {
-                    referent: TypeIdent::Builtin {
-                        rust_type_name: "String".to_string(),
-                    },
-                    type_params: Default::default(),
-                },
-                Default::default(),
-            ),
-            /*Interface(iface),
-            Enum {
-                members: Vec<EnumMember>,
-            },
-            Ref(TypeRef),
-            Alias {
-                target: TypeName,
-            },
-            PrimitiveAny {},
-            PrimitiveNumber {},
-            PrimitiveObject {},
-            PrimitiveBoolean {},
-            PrimitiveBigInt {},
-            PrimitiveString {},
-            PrimitiveSymbol {},
-            PrimitiveVoid {},
-            PrimitiveUndefined {},
-            PrimitiveNull {},
-            BuiltinPromise {
-                value_type: Box<TypeInfo>,
-            },
-            BuiltinDate {},
-            Array {
-                item_type: Box<TypeInfo>,
-            },
-            Optional {
-                item_type: Box<TypeInfo>,
-            },
-            Union(Union),
-            Intersection(Intersection),
-            Mapped {
-                value_type: Box<TypeInfo>,
-            },
-            LitNumber {
-                n: f64,
-            },
-            LitString {
-                s: String,
-            },
-            LitBoolean {
-                b: bool,
-            },
-            Func(Func),
-            Constructor(Ctor),
-            Class(Class),
-            Var {
-                type_info: Box<TypeInfo>,
-            },
-            NamespaceImport(NamespaceImport),
-            */
+            TypeInfoIR::Interface(_) => panic!("NOPE"),
+            TypeInfoIR::Enum(_) => panic!("NOPE"),
+            TypeInfoIR::Ref(t) => t.into(),
+            TypeInfoIR::Alias(_) => panic!("NOPE"),
+            TypeInfoIR::PrimitiveAny(p) => p.into(),
+            TypeInfoIR::PrimitiveNumber(p) => p.into(),
+            TypeInfoIR::PrimitiveObject(p) => p.into(),
+            TypeInfoIR::PrimitiveBoolean(p) => p.into(),
+            TypeInfoIR::PrimitiveBigInt(p) => p.into(),
+            TypeInfoIR::PrimitiveString(p) => p.into(),
+            TypeInfoIR::PrimitiveSymbol(p) => p.into(),
+            TypeInfoIR::PrimitiveVoid(p) => p.into(),
+            TypeInfoIR::PrimitiveUndefined(p) => p.into(),
+            TypeInfoIR::PrimitiveNull(p) => p.into(),
+            TypeInfoIR::BuiltinPromise(b) => b.into(),
+            TypeInfoIR::BuiltinDate(b) => b.into(),
+            TypeInfoIR::Array { item_type } => {
+                let item_type: EffectContainer<TypeRef> = (*item_type).into();
+                combine_effects!(
+                    item_type;
+                    TypeRef {
+                        referent: TypeIdent::Builtin {
+                            rust_type_name: "Vec".to_string(),
+                        },
+                        type_params: vec![item_type],
+                    }
+                )
+            }
+            TypeInfoIR::Optional { item_type } => {
+                let item_type: EffectContainer<TypeRef> = (*item_type).into();
+                combine_effects!(
+                    item_type;
+                    TypeRef {
+                        referent: TypeIdent::Builtin {
+                            rust_type_name: "Option".to_string(),
+                        },
+                        type_params: vec![item_type],
+                    }
+                )
+            }
+            TypeInfoIR::Union(u) => u.into(),
+            TypeInfoIR::Intersection(i) => i.into(),
+            TypeInfoIR::Mapped { value_type: _ } => panic!("NOPE"),
+            TypeInfoIR::LitNumber(l) => l.into(),
+            TypeInfoIR::LitString(l) => l.into(),
+            TypeInfoIR::LitBoolean(l) => l.into(),
+            TypeInfoIR::Func(f) => f.into(),
+            TypeInfoIR::Constructor(_) => panic!("NOPE"),
+            TypeInfoIR::Class(_) => panic!("NOPE"),
+            TypeInfoIR::Var { type_info: _ } => panic!("NOPE"),
+            TypeInfoIR::NamespaceImport(_) => panic!("NOPE"),
         }
     }
 }
@@ -347,6 +350,79 @@ impl From<BaseClassIR> for EffectContainer<TypeRef> {
         }
     }
 }
+
+impl From<FuncIR> for EffectContainer<TypeRef> {
+    fn from(src: FuncIR) -> EffectContainer<TypeRef> {
+        let f: EffectContainer<Func> = src.into();
+
+        combine_effects!(
+            f;
+            TypeRef {
+                referent: TypeIdent::Builtin {
+                    rust_type_name: "Fn".to_string(),
+                },
+                type_params: f.params.into_iter().map(|p| {
+                    if p.is_variadic {
+                        TypeRef {
+                            referent: TypeIdent::Builtin {
+                                // TODO: how to really handle this?
+                                rust_type_name: "&[]".to_string(),
+                            },
+                            type_params: vec![p.type_info],
+                        }
+                    } else {
+                        p.type_info
+                    }
+                }).chain(
+                    std::iter::once(*f.return_type)
+                ).collect(),
+            }
+        )
+    }
+}
+
+macro_rules! impl_effectful_conversion_from_nameable_type_to_type_ref {
+    () => {};
+    ($src:path => $nameable:ident) => {
+        impl From<$src> for EffectContainer<TypeRef> {
+            fn from(src: $src) -> EffectContainer<TypeRef> {
+                let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+                let ec: EffectContainer<_> = src.into();
+                let (val, effects) = ec.into_value_and_effects();
+                let effect = Effect::CreateType {
+                    name: "".to_string(), // our name is filled in as we bubble up
+                    typ: NameableTypeInfo::$nameable(val),
+                    generated_name_id: id,
+                };
+                let effects = effects.chain(std::iter::once(effect)).collect();
+                let type_ref = TypeRef {
+                    referent: TypeIdent::GeneratedName {
+                        id,
+                    },
+                    type_params: Default::default(),
+                };
+
+                EffectContainer::new(
+                    type_ref,
+                    effects,
+                )
+            }
+        }
+    };
+    ($src:path => $nameable:ident, $($rest_src:path => $rest_nameable:ident),* $(,)?) => {
+        impl_effectful_conversion_from_nameable_type_to_type_ref!(
+            $src => $nameable
+        );
+        impl_effectful_conversion_from_nameable_type_to_type_ref!(
+            $($rest_src => $rest_nameable),*
+        );
+    };
+}
+
+impl_effectful_conversion_from_nameable_type_to_type_ref!(
+    UnionIR => Union,
+    IntersectionIR => Intersection,
+);
 
 macro_rules! type_ref_from_prims {
     ($(,)*) => {};
