@@ -4,13 +4,13 @@ extern crate proc_macro;
 // any ts files we use so we recompile when they do:
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
 
-use ts_bindgen_gen::generate_rust_for_typescript;
 use proc_macro::TokenStream;
 use quote::quote;
 use std::fs::File;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, LitStr, Result as ParseResult, Token};
+use ts_bindgen_gen::generate_rust_for_typescript;
 
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {

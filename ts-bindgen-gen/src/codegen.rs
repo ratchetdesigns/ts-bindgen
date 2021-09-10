@@ -1,3 +1,4 @@
+use crate::flattened_ir::flatten_types;
 use crate::ir::{
     Alias, BaseClass, BuiltinDate, BuiltinPromise, Class, Enum, EnumMember, Func, Indexer,
     Interface, Intersection, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param,
@@ -5,7 +6,6 @@ use crate::ir::{
     PrimitiveObject, PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type,
     TypeIdent, TypeInfo, TypeName, TypeRef, Union,
 };
-use crate::flattened_ir::flatten_types;
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};

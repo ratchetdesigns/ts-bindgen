@@ -572,9 +572,7 @@ impl TypeInfo {
 
                     // look up the type just to make sure it exists, we get a builtin if it doesn't
                     // exist below
-                    types_by_name.get(&n).map(|_| {
-                        self.clone()
-                    })
+                    types_by_name.get(&n).map(|_| self.clone())
                 })
                 .or_else(|| {
                     self.resolve_builtin(
