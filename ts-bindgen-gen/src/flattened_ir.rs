@@ -217,7 +217,7 @@ impl ApplyNames for FlattenedTypeInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub indexer: Option<Indexer>,
-    pub extends: Vec<TypeRef>,
+    pub extends: Vec<Interface>,
     pub fields: HashMap<String, TypeRef>,
 }
 
@@ -385,7 +385,7 @@ impl ApplyNames for TypeRef {
 impl From<TypeInfoIR> for EffectContainer<TypeRef> {
     fn from(src: TypeInfoIR) -> EffectContainer<TypeRef> {
         match src {
-            TypeInfoIR::Interface(i) => panic!("Interface only expected as top-level type"),
+            TypeInfoIR::Interface(_) => panic!("Interface only expected as top-level type"),
             TypeInfoIR::Enum(_) => panic!("Enum only expected as top-level type"),
             TypeInfoIR::Ref(t) => t.into(),
             TypeInfoIR::Alias(_) => panic!("Alias only expected as top-level type"),
@@ -446,7 +446,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                         ],
                     }
                 )
-            },
+            }
             TypeInfoIR::LitNumber(l) => l.into(),
             TypeInfoIR::LitString(l) => l.into(),
             TypeInfoIR::LitBoolean(l) => l.into(),
@@ -454,7 +454,9 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::Constructor(_) => panic!("Constructor only expected as top-level type"),
             TypeInfoIR::Class(_) => panic!("Class only expected as top-level type"),
             TypeInfoIR::Var { type_info: _ } => panic!("Var only expected as a top-level type"),
-            TypeInfoIR::NamespaceImport(_) => panic!("Namespace import only expected as a top-level construct"),
+            TypeInfoIR::NamespaceImport(_) => {
+                panic!("Namespace import only expected as a top-level construct")
+            }
         }
     }
 }
@@ -478,11 +480,20 @@ impl From<TypeRefIR> for EffectContainer<TypeRef> {
     }
 }
 
-impl From<BaseClassIR> for EffectContainer<TypeRef> {
-    fn from(src: BaseClassIR) -> EffectContainer<TypeRef> {
+impl From<BaseClassIR> for EffectContainer<Interface> {
+    fn from(src: BaseClassIR) -> EffectContainer<Interface> {
         match src {
             BaseClassIR::Resolved(ti) => ti.into(),
             BaseClassIR::Unresolved(_) => panic!("expected only resolved base classes"),
+        }
+    }
+}
+
+impl From<TypeInfoIR> for EffectContainer<Interface> {
+    fn from(src: TypeInfoIR) -> EffectContainer<Interface> {
+        match src {
+            TypeInfoIR::Interface(i) => i.into(),
+            _ => panic!("expected an interface"),
         }
     }
 }
