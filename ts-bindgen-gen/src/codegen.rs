@@ -5,6 +5,7 @@ use crate::ir::{
     PrimitiveObject, PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type,
     TypeIdent, TypeInfo, TypeName, TypeRef, Union,
 };
+use crate::flattened_ir::flatten_types;
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -524,7 +525,9 @@ impl ToTokens for ModDef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let mod_name = &self.name;
         let types = &self.types;
-        let aux_types = self.types.iter().flat_map(|typ| {
+        println!("TYPES {:?}", types);
+        let flat_types: Vec<_> = flatten_types(types.clone()).collect();
+        let aux_types = types.iter().flat_map(|typ| {
             AuxTypes {
                 inner_type: &typ.info,
                 outer_names: &[typ.name.to_name()],

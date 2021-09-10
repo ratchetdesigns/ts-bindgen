@@ -380,15 +380,15 @@ impl ApplyNames for TypeRef {
 /// Convert a [`TypeInfoIR`] to a [`TypeRef`], creating a set of [`Effect`]s, directing the
 /// creation of named, top-level types for any anonymous types we encounter.
 ///
-/// This conversion is only really valid for a non-top-level [TypeInfoIR] because we assume that
+/// This conversion is only valid for a non-top-level [TypeInfoIR] because we assume that
 /// anything we find is un-named.
 impl From<TypeInfoIR> for EffectContainer<TypeRef> {
     fn from(src: TypeInfoIR) -> EffectContainer<TypeRef> {
         match src {
-            TypeInfoIR::Interface(_) => panic!("NOPE"),
-            TypeInfoIR::Enum(_) => panic!("NOPE"),
+            TypeInfoIR::Interface(i) => panic!("Interface only expected as top-level type"),
+            TypeInfoIR::Enum(_) => panic!("Enum only expected as top-level type"),
             TypeInfoIR::Ref(t) => t.into(),
-            TypeInfoIR::Alias(_) => panic!("NOPE"),
+            TypeInfoIR::Alias(_) => panic!("Alias only expected as top-level type"),
             TypeInfoIR::PrimitiveAny(p) => p.into(),
             TypeInfoIR::PrimitiveNumber(p) => p.into(),
             TypeInfoIR::PrimitiveObject(p) => p.into(),
@@ -427,15 +427,34 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             }
             TypeInfoIR::Union(u) => u.into(),
             TypeInfoIR::Intersection(i) => i.into(),
-            TypeInfoIR::Mapped { value_type: _ } => panic!("NOPE"),
+            TypeInfoIR::Mapped { value_type } => {
+                let value_type: EffectContainer<TypeRef> = (*value_type).into();
+                combine_effects!(
+                    value_type;
+                    TypeRef {
+                        referent: TypeIdent::Builtin {
+                            rust_type_name: "HashMap".to_string(),
+                        },
+                        type_params: vec![
+                            TypeRef {
+                                referent: TypeIdent::Builtin {
+                                    rust_type_name: "String".to_string(),
+                                },
+                                type_params: Default::default(),
+                            },
+                            value_type,
+                        ],
+                    }
+                )
+            },
             TypeInfoIR::LitNumber(l) => l.into(),
             TypeInfoIR::LitString(l) => l.into(),
             TypeInfoIR::LitBoolean(l) => l.into(),
             TypeInfoIR::Func(f) => f.into(),
-            TypeInfoIR::Constructor(_) => panic!("NOPE"),
-            TypeInfoIR::Class(_) => panic!("NOPE"),
-            TypeInfoIR::Var { type_info: _ } => panic!("NOPE"),
-            TypeInfoIR::NamespaceImport(_) => panic!("NOPE"),
+            TypeInfoIR::Constructor(_) => panic!("Constructor only expected as top-level type"),
+            TypeInfoIR::Class(_) => panic!("Class only expected as top-level type"),
+            TypeInfoIR::Var { type_info: _ } => panic!("Var only expected as a top-level type"),
+            TypeInfoIR::NamespaceImport(_) => panic!("Namespace import only expected as a top-level construct"),
         }
     }
 }

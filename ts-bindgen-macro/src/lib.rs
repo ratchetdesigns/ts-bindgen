@@ -1,20 +1,11 @@
 extern crate proc_macro;
 
-mod codegen;
-mod flattened_ir;
-mod ir;
-mod module_resolution;
-mod parse;
-
-// TODO: aliases should point to modules
 // TODO: when generating code, use include_str! to make the compiler think we have a dependency on
 // any ts files we use so we recompile when they do:
 // https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
 
-use codegen::ModDef;
-use parse::TsTypes;
+use ts_bindgen_gen::generate_rust_for_typescript;
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use std::fs::File;
 use syn::parse::{Parse, ParseStream};
@@ -28,11 +19,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         .modules
         .iter()
         .map(|module| {
-            let tt = TsTypes::try_new(module).expect("tt error");
-            use std::borrow::Borrow;
-            let mod_def: ModDef = tt.types_by_name_by_file.borrow().into();
-            let mod_toks = quote! { #mod_def };
-            // let mod_toks = quote! { };
+            let mod_toks = generate_rust_for_typescript(module);
 
             let mut file = File::create("output.rs").expect("failed to create file");
             std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes())
@@ -40,7 +27,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
 
             mod_toks
         })
-        .collect::<Vec<TokenStream2>>();
+        .collect::<Vec<_>>();
     (quote! {
         #(#mods)*
     })
