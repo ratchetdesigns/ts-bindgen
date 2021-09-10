@@ -4,7 +4,7 @@ use crate::ir::{
     Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean, LitNumber, LitString,
     Member as MemberIR, NamespaceImport, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
-    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, TypeIdent as TypeIdentIR,
+    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type as TypeIR, TypeIdent as TypeIdentIR,
     TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR, Union as UnionIR,
 };
 use enum_to_enum::{FromEnum, WithEffects};
@@ -14,6 +14,27 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+trait ApplyNames {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatType {
+    pub name: TypeIdent,
+    pub is_exported: bool,
+    pub info: FlattenedTypeInfo,
+}
+
+impl ApplyNames for FlatType {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        FlatType {
+            name: self.name,
+            is_exported: self.is_exported,
+            info: self.info.apply_names(names_by_id),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
@@ -101,6 +122,15 @@ pub enum NameableTypeInfo {
     Intersection(Intersection),
 }
 
+impl From<NameableTypeInfo> for FlattenedTypeInfo {
+    fn from(src: NameableTypeInfo) -> FlattenedTypeInfo {
+        match src {
+            NameableTypeInfo::Union(u) => FlattenedTypeInfo::Union(u),
+            NameableTypeInfo::Intersection(i) => FlattenedTypeInfo::Intersection(i),
+        }
+    }
+}
+
 /// FlattenedTypeInfo's represent a view of [`crate::ir::TypeInfo`]
 /// with all anonymous inner types converted into references to
 /// a top-level, named type.
@@ -149,11 +179,64 @@ pub enum FlattenedTypeInfo {
     NamespaceImport(NamespaceImport),
 }
 
+impl ApplyNames for FlattenedTypeInfo {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        match self {
+            FlattenedTypeInfo::Interface(i) => {
+                FlattenedTypeInfo::Interface(i.apply_names(names_by_id))
+            }
+            FlattenedTypeInfo::Enum(e) => FlattenedTypeInfo::Enum(e.apply_names(names_by_id)),
+            FlattenedTypeInfo::Alias(a) => FlattenedTypeInfo::Alias(a.apply_names(names_by_id)),
+            FlattenedTypeInfo::Ref(r) => FlattenedTypeInfo::Ref(r.apply_names(names_by_id)),
+            FlattenedTypeInfo::Array { item_type } => FlattenedTypeInfo::Array {
+                item_type: Box::new(item_type.apply_names(names_by_id)),
+            },
+            FlattenedTypeInfo::Optional { item_type } => FlattenedTypeInfo::Optional {
+                item_type: Box::new(item_type.apply_names(names_by_id)),
+            },
+            FlattenedTypeInfo::Union(u) => FlattenedTypeInfo::Union(u.apply_names(names_by_id)),
+            FlattenedTypeInfo::Intersection(i) => {
+                FlattenedTypeInfo::Intersection(i.apply_names(names_by_id))
+            }
+            FlattenedTypeInfo::Mapped { value_type } => FlattenedTypeInfo::Mapped {
+                value_type: Box::new(value_type.apply_names(names_by_id)),
+            },
+            FlattenedTypeInfo::Func(f) => FlattenedTypeInfo::Func(f.apply_names(names_by_id)),
+            FlattenedTypeInfo::Constructor(c) => {
+                FlattenedTypeInfo::Constructor(c.apply_names(names_by_id))
+            }
+            FlattenedTypeInfo::Class(c) => FlattenedTypeInfo::Class(c.apply_names(names_by_id)),
+            FlattenedTypeInfo::Var { type_info } => FlattenedTypeInfo::Var {
+                type_info: Box::new(type_info.apply_names(names_by_id)),
+            },
+            FlattenedTypeInfo::NamespaceImport(n) => FlattenedTypeInfo::NamespaceImport(n),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
+}
+
+impl ApplyNames for Interface {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Interface {
+            indexer: self.indexer.map(|i| i.apply_names(names_by_id)),
+            extends: self
+                .extends
+                .into_iter()
+                .map(|e| e.apply_names(names_by_id))
+                .collect(),
+            fields: self
+                .fields
+                .into_iter()
+                .map(|(k, v)| (k, v.apply_names(names_by_id)))
+                .collect(),
+        }
+    }
 }
 
 macro_rules! combine_effects {
@@ -204,6 +287,15 @@ pub struct Indexer {
     pub value_type: TypeRef,
 }
 
+impl ApplyNames for Indexer {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Indexer {
+            readonly: self.readonly,
+            value_type: self.value_type.apply_names(names_by_id),
+        }
+    }
+}
+
 impl From<IndexerIR> for EffectContainer<Indexer> {
     fn from(src: IndexerIR) -> EffectContainer<Indexer> {
         let value_type = (*src.type_info).into();
@@ -226,6 +318,7 @@ pub enum TypeIdent {
     GeneratedName {
         id: usize,
     },
+    LocalName(String),
     Name {
         file: PathBuf,
         name: String,
@@ -235,6 +328,17 @@ pub enum TypeIdent {
         file: PathBuf,
         name_parts: Vec<String>,
     },
+}
+
+impl ApplyNames for TypeIdent {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        match self {
+            TypeIdent::GeneratedName { id } => {
+                TypeIdent::LocalName(names_by_id.get(&id).unwrap().clone())
+            }
+            _ => self,
+        }
+    }
 }
 
 impl From<TypeNameIR> for TypeIdent {
@@ -258,6 +362,19 @@ impl From<TypeNameIR> for EffectContainer<TypeIdent> {
 pub struct TypeRef {
     pub referent: TypeIdent,
     pub type_params: Vec<TypeRef>,
+}
+
+impl ApplyNames for TypeRef {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        TypeRef {
+            referent: self.referent.apply_names(names_by_id),
+            type_params: self
+                .type_params
+                .into_iter()
+                .map(|p| p.apply_names(names_by_id))
+                .collect(),
+        }
+    }
 }
 
 /// Convert a [`TypeInfoIR`] to a [`TypeRef`], creating a set of [`Effect`]s, directing the
@@ -477,6 +594,18 @@ pub struct Union {
     pub types: Vec<FlattenedTypeInfo>,
 }
 
+impl ApplyNames for Union {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Union {
+            types: self
+                .types
+                .into_iter()
+                .map(|t| t.apply_names(names_by_id))
+                .collect(),
+        }
+    }
+}
+
 impl From<UnionIR> for EffectContainer<Union> {
     fn from(src: UnionIR) -> EffectContainer<Union> {
         let types = src.types.into_iter().map(EffectContainer::from).collect();
@@ -492,6 +621,18 @@ impl From<UnionIR> for EffectContainer<Union> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intersection {
     pub types: Vec<FlattenedTypeInfo>,
+}
+
+impl ApplyNames for Intersection {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Intersection {
+            types: self
+                .types
+                .into_iter()
+                .map(|t| t.apply_names(names_by_id))
+                .collect(),
+        }
+    }
 }
 
 impl From<IntersectionIR> for EffectContainer<Intersection> {
@@ -511,6 +652,24 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
+}
+
+impl ApplyNames for Func {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Func {
+            type_params: self
+                .type_params
+                .into_iter()
+                .map(|(n, p)| (n, p.apply_names(names_by_id)))
+                .collect(),
+            params: self
+                .params
+                .into_iter()
+                .map(|p| p.apply_names(names_by_id))
+                .collect(),
+            return_type: Box::new(self.return_type.apply_names(names_by_id)),
+        }
+    }
 }
 
 impl From<FuncIR> for EffectContainer<Func> {
@@ -543,6 +702,16 @@ pub struct Param {
     pub is_variadic: bool,
 }
 
+impl ApplyNames for Param {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Param {
+            name: self.name,
+            type_info: self.type_info.apply_names(names_by_id),
+            is_variadic: self.is_variadic,
+        }
+    }
+}
+
 impl From<ParamIR> for EffectContainer<Param> {
     fn from(src: ParamIR) -> EffectContainer<Param> {
         let type_info = src.type_info.into();
@@ -563,6 +732,18 @@ pub struct Ctor {
     pub params: Vec<Param>,
 }
 
+impl ApplyNames for Ctor {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Ctor {
+            params: self
+                .params
+                .into_iter()
+                .map(|p| p.apply_names(names_by_id))
+                .collect(),
+        }
+    }
+}
+
 impl From<CtorIR> for EffectContainer<Ctor> {
     fn from(src: CtorIR) -> EffectContainer<Ctor> {
         let params = src.params.into_iter().map(EffectContainer::from).collect();
@@ -579,6 +760,19 @@ impl From<CtorIR> for EffectContainer<Ctor> {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
+}
+
+impl ApplyNames for Class {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Class {
+            super_class: self.super_class.map(|s| s.apply_names(names_by_id)),
+            members: self
+                .members
+                .into_iter()
+                .map(|(n, m)| (n, m.apply_names(names_by_id)))
+                .collect(),
+        }
+    }
 }
 
 impl From<ClassIR> for EffectContainer<Class> {
@@ -608,6 +802,16 @@ pub enum Member {
     Property(TypeRef),
 }
 
+impl ApplyNames for Member {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        match self {
+            Member::Constructor(c) => Member::Constructor(c.apply_names(names_by_id)),
+            Member::Method(c) => Member::Method(c.apply_names(names_by_id)),
+            Member::Property(c) => Member::Property(c.apply_names(names_by_id)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
@@ -626,6 +830,12 @@ impl From<EnumMemberIR> for EnumMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub members: Vec<EnumMember>,
+}
+
+impl ApplyNames for Enum {
+    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
+        self
+    }
 }
 
 impl From<EnumIR> for Enum {
@@ -657,3 +867,42 @@ impl_effectless_conversion!(
     EnumIR => Enum,
     EnumMemberIR => EnumMember,
 );
+
+impl ApplyNames for Alias {
+    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
+        self
+    }
+}
+
+pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterator<Item = FlatType> {
+    types.into_iter().flat_map(|t| {
+        let info = t.info.into();
+        let ft = combine_effects!(
+            info;
+            FlatType {
+                name: t.name.into(),
+                is_exported: t.is_exported,
+                info,
+            }
+        );
+        let (v, effs) = ft.into_value_and_effects();
+        let (effs, names_by_id): (Vec<FlatType>, HashMap<usize, String>) = effs
+            .map(|eff| match eff {
+                Effect::CreateType {
+                    name,
+                    typ,
+                    generated_name_id,
+                } => (
+                    FlatType {
+                        name: TypeIdent::LocalName(name.clone()),
+                        is_exported: true,
+                        info: typ.into(),
+                    },
+                    (generated_name_id, name),
+                ),
+            })
+            .unzip();
+        effs.into_iter()
+            .chain(std::iter::once(v.apply_names(&names_by_id)))
+    })
+}
