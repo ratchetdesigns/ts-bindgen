@@ -570,10 +570,10 @@ impl TypeInfo {
                         referent.name.clone()
                     };
 
+                    // look up the type just to make sure it exists, we get a builtin if it doesn't
+                    // exist below
                     types_by_name.get(&n).map(|_| {
-                        TypeInfo::Alias(Alias {
-                            target: referent.clone(),
-                        })
+                        self.clone()
                     })
                 })
                 .or_else(|| {
