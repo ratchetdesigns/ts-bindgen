@@ -212,6 +212,7 @@ trait PropExt {
     fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
         self.item_type()
             .map(|t| {
+                println!("T {:?}", t);
                 let item_type = ts_types.process_type(ts_path, t);
                 if self.is_optional() {
                     TypeInfo::Optional {

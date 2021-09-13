@@ -1,13 +1,15 @@
+pub use crate::ir::NamespaceImport;
 use crate::ir::{
-    Alias, BaseClass as BaseClassIR, BuiltinDate, BuiltinPromise, Class as ClassIR, Ctor as CtorIR,
-    Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR, Indexer as IndexerIR,
-    Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean, LitNumber, LitString,
-    Member as MemberIR, NamespaceImport, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
+    Alias as AliasIR, BaseClass as BaseClassIR, BuiltinDate, BuiltinPromise, Class as ClassIR,
+    Ctor as CtorIR, Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR,
+    Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean,
+    LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
     PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type as TypeIR, TypeIdent as TypeIdentIR,
     TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR, Union as UnionIR,
 };
 use enum_to_enum::{FromEnum, WithEffects};
+use paste::paste;
 use std::collections::HashMap;
 use std::iter::{Extend, FromIterator};
 use std::path::PathBuf;
@@ -310,7 +312,7 @@ impl From<IndexerIR> for EffectContainer<Indexer> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
     Builtin {
         rust_type_name: String,
@@ -571,22 +573,35 @@ impl_effectful_conversion_from_nameable_type_to_type_ref!(
     IntersectionIR => Intersection,
 );
 
+macro_rules! builtin_const {
+    ($name:ident => $rust_type_name:ty) => {
+        paste! {
+            pub fn [<builtin_$name:snake>]() -> TypeRef {
+                TypeRef {
+                    referent: TypeIdent::Builtin {
+                        rust_type_name: String::from("$rust_type_name"),
+                    },
+                    type_params: Default::default(),
+                }
+            }
+        }
+    };
+}
+
 macro_rules! type_ref_from_prims {
     ($(,)*) => {};
     ($prim:ident => $rust_type_name:ty, $($rest:tt)*) => {
+        builtin_const!($prim => $rust_type_name);
+
         impl From<$prim> for EffectContainer<TypeRef> {
             fn from(_: $prim) -> EffectContainer<TypeRef> {
                 EffectContainer::new(
-                    TypeRef {
-                        referent: TypeIdent::Builtin {
-                            rust_type_name: String::from("$rust_type_name"),
-                        },
-                        type_params: Default::default(),
-                    },
+                    paste! { [<builtin_$prim:snake>]() },
                     Default::default(),
                 )
             }
         }
+
         type_ref_from_prims!($($rest)*);
     };
 }
@@ -876,6 +891,25 @@ impl From<EnumIR> for Enum {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    pub target: TypeIdent,
+}
+
+impl From<AliasIR> for Alias {
+    fn from(src: AliasIR) -> Alias {
+        Alias {
+            target: src.target.into(),
+        }
+    }
+}
+
+impl ApplyNames for Alias {
+    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
+        self
+    }
+}
+
 macro_rules! impl_effectless_conversion {
     () => {};
     ($src:path => $dest:path) => {
@@ -893,16 +927,10 @@ macro_rules! impl_effectless_conversion {
 
 impl_effectless_conversion!(
     NamespaceImport => NamespaceImport,
-    Alias => Alias,
+    AliasIR => Alias,
     EnumIR => Enum,
     EnumMemberIR => EnumMember,
 );
-
-impl ApplyNames for Alias {
-    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
-        self
-    }
-}
 
 pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterator<Item = FlatType> {
     types.into_iter().flat_map(|t| {

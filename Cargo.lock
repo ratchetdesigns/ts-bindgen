@@ -353,6 +353,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acbf547ad0c65e31259204bd90935776d1c693cec2f4ff7abb7a1bbbd40dfe58"
+
+[[package]]
 name = "phf_generator"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,6 +796,7 @@ version = "0.1.0"
 dependencies = [
  "enum_to_enum",
  "heck",
+ "paste",
  "proc-macro2",
  "quote",
  "serde_json",

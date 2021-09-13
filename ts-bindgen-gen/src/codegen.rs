@@ -1,10 +1,10 @@
-use crate::flattened_ir::flatten_types;
+use crate::flattened_ir::{
+    flatten_types, Alias, Ctor, Enum, EnumMember, FlatType, FlattenedTypeInfo, Func, Indexer,
+    Interface, Intersection, NamespaceImport, Param, TypeIdent, TypeRef, Union,
+};
 use crate::ir::{
-    Alias, BaseClass, BuiltinDate, BuiltinPromise, Class, Enum, EnumMember, Func, Indexer,
-    Interface, Intersection, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param,
-    PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber,
-    PrimitiveObject, PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type,
-    TypeIdent, TypeInfo, TypeName, TypeRef, Union,
+    PrimitiveAny as PrimitiveAnyIR, Type as TypeIR, TypeIdent as TypeIdentIR,
+    TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
 };
 use heck::{CamelCase, SnakeCase};
 use proc_macro2::TokenStream as TokenStream2;
@@ -20,7 +20,7 @@ use unicode_xid::UnicodeXID;
 #[derive(Debug, Clone)]
 struct MutModDef {
     name: proc_macro2::Ident,
-    types: Vec<Type>,
+    types: Vec<TypeIR>,
     children: Vec<Rc<RefCell<MutModDef>>>,
 }
 
@@ -45,7 +45,7 @@ impl MutModDef {
     fn add_child_mod(
         &mut self,
         mod_name: proc_macro2::Ident,
-        types: Vec<Type>,
+        types: Vec<TypeIR>,
     ) -> Rc<RefCell<MutModDef>> {
         if let Some(child) = self.children.iter().find(|c| c.borrow().name == mod_name) {
             let child = child.clone();
@@ -66,7 +66,7 @@ impl MutModDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
     name: proc_macro2::Ident,
-    types: Vec<Type>,
+    types: Vec<TypeIR>,
     children: Vec<ModDef>,
 }
 
@@ -95,9 +95,9 @@ impl ToModPathIter for Path {
     }
 }
 
-impl ToModPathIter for TypeIdent {
+impl ToModPathIter for TypeIdentIR {
     fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
-        if let TypeIdent::QualifiedName(names) = &self {
+        if let TypeIdentIR::QualifiedName(names) = &self {
             Box::new(
                 (&names[..names.len() - 1])
                     .to_vec()
@@ -110,19 +110,32 @@ impl ToModPathIter for TypeIdent {
     }
 }
 
-impl ToModPathIter for TypeName {
+impl ToModPathIter for TypeIdent {
     fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
-        Box::new(
-            self.file
-                .to_mod_path_iter()
-                .chain(self.name.to_mod_path_iter()),
-        )
+        match self {
+            TypeIdent::QualifiedName { file, name_parts } => Box::new(
+                file.to_mod_path_iter().chain(
+                    (&name_parts[..name_parts.len() - 1])
+                        .to_vec()
+                        .into_iter()
+                        .map(|n| to_snake_case_ident(&n)),
+                ),
+            ),
+            TypeIdent::Name { file, .. } => file.to_mod_path_iter(),
+            _ => Box::new((vec![]).into_iter()),
+        }
+    }
+}
+
+impl ToModPathIter for TypeRef {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+        self.referent.to_mod_path_iter()
     }
 }
 
 // TODO: maybe don't make "index" namespaces and put their types in the parent
-impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
-    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>) -> Self {
+impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
+    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>) -> Self {
         let root = Rc::new(RefCell::new(MutModDef {
             name: to_ns_name("root"),
             types: Default::default(),
@@ -145,7 +158,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                     .fold(root.clone(), move |parent, (i, mod_name)| {
                         let mut parent = parent.borrow_mut();
                         let types = if i == last_idx {
-                            types_by_name.values().cloned().collect::<Vec<Type>>()
+                            types_by_name.values().cloned().collect::<Vec<TypeIR>>()
                         } else {
                             Default::default()
                         };
@@ -155,7 +168,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, Type>>> for ModDef {
                 types_by_name
                     .iter()
                     .filter_map(|(name, typ)| {
-                        if let TypeIdent::QualifiedName(_) = name {
+                        if let TypeIdentIR::QualifiedName { .. } = name {
                             Some((
                                 name.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>(),
                                 typ,
@@ -191,7 +204,7 @@ mod mod_def_tests {
 
     #[test]
     fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
-        let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdent, Type>> = HashMap::new();
+        let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>> = HashMap::new();
         let b_c = PathBuf::from("/tmp/a/node_modules/b/c");
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -201,14 +214,14 @@ mod mod_def_tests {
         tbnbf.insert(b_c.clone(), {
             let mut tbn = HashMap::new();
             tbn.insert(
-                TypeIdent::Name("my_mod".to_string()),
-                Type {
-                    name: TypeName {
+                TypeIdentIR::Name("my_mod".to_string()),
+                TypeIR {
+                    name: TypeNameIR {
                         file: b_c.clone(),
-                        name: TypeIdent::Name("my_mod".to_string()),
+                        name: TypeIdentIR::Name("my_mod".to_string()),
                     },
                     is_exported: true,
-                    info: TypeInfo::PrimitiveAny(PrimitiveAny()),
+                    info: TypeInfoIR::PrimitiveAny(PrimitiveAnyIR {}),
                 },
             );
             tbn
@@ -225,13 +238,13 @@ mod mod_def_tests {
                     types: Default::default(),
                     children: vec![ModDef {
                         name: to_ident("c"),
-                        types: vec![Type {
-                            name: TypeName {
+                        types: vec![TypeIR {
+                            name: TypeNameIR {
                                 file: b_c,
-                                name: TypeIdent::Name("my_mod".to_string())
+                                name: TypeIdentIR::Name("my_mod".to_string()),
                             },
                             is_exported: true,
-                            info: TypeInfo::PrimitiveAny(PrimitiveAny())
+                            info: TypeInfoIR::PrimitiveAny(PrimitiveAnyIR {})
                         }],
                         children: Default::default(),
                     }]
@@ -351,189 +364,11 @@ mod ident_tests {
     }
 }
 
-struct AuxTypes<'a> {
-    inner_type: &'a TypeInfo,
-    outer_names: &'a [&'a str],
-}
-
-impl<'a> AuxTypes<'a> {
-    fn inner_aux_types(&self) -> Vec<TokenStream2> {
-        match &self.inner_type {
-            TypeInfo::Union(Union { types }) => {
-                let name = format_ident!("{}", self.outer_names.join("_"));
-                let variants = types.iter().map(|t| {
-                    let id = to_camel_case_ident(&t.to_string());
-                    quote! {
-                        #id(#t)
-                    }
-                });
-
-                vec![quote! {
-                    enum #name {
-                        #(#variants),*
-                    }
-                }]
-            }
-            //TypeInfo::Intersection { types },
-            TypeInfo::Interface(iface) => {
-                let Interface { indexer, .. } = iface;
-                let extended_fields = get_recursive_fields(iface);
-
-                let mut aux_types: Vec<TokenStream2> = extended_fields
-                    .iter()
-                    .flat_map(|(field_name, typ)| {
-                        AuxTypes {
-                            inner_type: typ,
-                            outer_names: &self
-                                .outer_names
-                                .iter()
-                                .cloned()
-                                .chain([field_name.as_ref()])
-                                .collect::<Vec<_>>(),
-                        }
-                        .inner_aux_types()
-                    })
-                    .collect();
-
-                if let Some(Indexer { type_info, .. }) = &indexer {
-                    aux_types.extend(
-                        AuxTypes {
-                            inner_type: type_info,
-                            outer_names: &self
-                                .outer_names
-                                .iter()
-                                .cloned()
-                                .chain(["indexer"])
-                                .collect::<Vec<_>>(),
-                        }
-                        .inner_aux_types(),
-                    );
-                }
-
-                vec![quote! {
-                    #(#aux_types)*
-                }]
-            }
-            /*
-            TypeInfo::BuiltinPromise { value_type } => AuxTypes {
-                inner_type: value_type,
-                outer_names: self.outer_names,
-            }.inner_aux_types(),
-            TypeInfo::Array { item_type } => AuxTypes {
-                inner_type: item_type,
-                outer_names: self.outer_names,
-            }.inner_aux_types(),
-            TypeInfo::Optional { item_type } => AuxTypes {
-                inner_type: item_type,
-                outer_names: self.outer_names,
-            }.inner_aux_types(),
-            TypeInfo::Mapped { value_type } => AuxTypes {
-                inner_type: value_type
-            }.inner_aux_types(),
-            TypeInfo::Func(func) => {
-                vec![]
-            }
-            TypeInfo::Constructor {
-                params: Vec<Param>,
-                return_type: Box<TypeInfo>,
-            },
-            TypeInfo::Class(Class {
-                super_class,
-                members,
-            }) => {
-                let mut attrs = vec![quote! { js_name = #js_name }];
-                if let Some(TypeRef {
-                    referent,
-                    type_params,
-                }) = super_class.as_ref().map(|sc| &**sc)
-                {
-                    let super_name = to_camel_case_ident(referent.to_name());
-
-                    attrs.push(quote! {
-                        extends = #super_name
-                    });
-                }
-
-                let members: Vec<TokenStream2> = members
-                    .iter()
-                    .map(|(member_js_name, member)| match member {
-                        Member::Constructor(ctor) => {
-                            let param_toks: Vec<TokenStream2> =
-                                ctor.params.iter().map(|p| quote! { #p }).collect();
-
-                            quote! {
-                                #[wasm_bindgen(constructor)]
-                                fn new(#(#param_toks),*) -> #name;
-                            }
-                        }
-                        Member::Method(func) => {
-                            let f = NamedFunc {
-                                js_name: member_js_name,
-                                func,
-                            };
-                            let mut attrs = vec![
-                                quote! {js_name = #member_js_name},
-                                quote! {method},
-                                quote! {js_class = #js_name},
-                            ];
-                            if func.is_variadic() {
-                                attrs.push(quote! { variadic });
-                            }
-
-                            quote! {
-                                #[wasm_bindgen(#(#attrs),*)]
-                                #f
-                            }
-                        }
-                        Member::Property(typ) => {
-                            let member_name = to_snake_case_ident(member_js_name);
-                            let setter_name = format_ident!("set_{}", member_name);
-                            quote! {
-                                #[wasm_bindgen(method, structural, getter = #member_js_name)]
-                                fn #member_name(this: &#name) -> #typ;
-
-                                #[wasm_bindgen(method, structural, setter = #member_js_name)]
-                                fn #setter_name(this: &#name, value: #typ);
-                            }
-                        }
-                    })
-                    .collect();
-
-                quote! {
-                    #[wasm_bindgen]
-                    extern "C" {
-                        #[wasm_bindgen(#(#attrs),*)]
-                        type #name;
-
-                        #(#members)*
-                    }
-                }
-            }
-            TypeInfo::Var {
-                type_info: Box<TypeInfo>,
-            },
-            TypeInfo::GenericType {
-                name: String,
-                constraint: Box<TypeInfo>,
-            },*/
-            _ => Default::default(),
-        }
-    }
-}
-
 impl ToTokens for ModDef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let mod_name = &self.name;
         let types = &self.types;
-        println!("TYPES {:?}", types);
         let flat_types: Vec<_> = flatten_types(types.clone()).collect();
-        let aux_types = types.iter().flat_map(|typ| {
-            AuxTypes {
-                inner_type: &typ.info,
-                outer_names: &[typ.name.to_name()],
-            }
-            .inner_aux_types()
-        });
         let children = &self.children;
 
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
@@ -543,9 +378,7 @@ impl ToTokens for ModDef {
             pub mod #mod_name {
                 use wasm_bindgen::prelude::*;
 
-                #(#types)*
-
-                #(#aux_types)*
+                #(#flat_types)*
 
                 #(#children)*
             }
@@ -605,19 +438,15 @@ fn get_recursive_fields(
     Interface {
         extends, fields, ..
     }: &Interface,
-) -> HashMap<String, TypeInfo> {
+) -> HashMap<String, TypeRef> {
     fields
         .iter()
         .map(|(n, t)| (n.clone(), t.clone()))
-        .chain(extends.iter().flat_map(|ex| match ex {
-            BaseClass::Unresolved(_) => {
-                panic!("shouldn't have any unresolved base classes in code generation")
-            }
-            BaseClass::Resolved(t) => match t {
-                TypeInfo::Interface(inner_iface) => get_recursive_fields(inner_iface).into_iter(),
-                _ => HashMap::new().into_iter(),
-            },
-        }))
+        .chain(
+            extends
+                .iter()
+                .flat_map(|base| get_recursive_fields(base).into_iter()),
+        )
         .collect()
 }
 
@@ -664,13 +493,34 @@ impl<'a> ToTokens for NamedFunc<'a> {
     }
 }
 
-impl ToTokens for Type {
+trait Named {
+    fn to_name(&self) -> &str;
+}
+
+impl Named for TypeIdent {
+    fn to_name(&self) -> &str {
+        match self {
+            TypeIdent::Builtin { rust_type_name } => rust_type_name,
+            TypeIdent::GeneratedName { .. } => {
+                panic!("expected all generated names to be resolved")
+            }
+            TypeIdent::LocalName(n) => n,
+            TypeIdent::Name { file, name } => name,
+            TypeIdent::DefaultExport(_) => "default",
+            TypeIdent::QualifiedName { name_parts, .. } => {
+                name_parts.last().expect("bad qualified name")
+            }
+        }
+    }
+}
+
+impl ToTokens for FlatType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_name = self.name.to_name();
         let name = to_camel_case_ident(js_name);
 
         let our_toks = match &self.info {
-            TypeInfo::Interface(iface) => {
+            FlattenedTypeInfo::Interface(iface) => {
                 let Interface { indexer, .. } = iface;
                 let extended_fields = get_recursive_fields(iface);
 
@@ -687,7 +537,7 @@ impl ToTokens for Type {
 
                 if let Some(Indexer {
                     readonly: _,
-                    type_info,
+                    value_type,
                 }) = &indexer
                 {
                     let extra_fields_name = to_unique_ident("extra_fields".to_string(), &|x| {
@@ -696,7 +546,7 @@ impl ToTokens for Type {
 
                     field_toks.push(quote! {
                         #[serde(flatten)]
-                        pub #extra_fields_name: std::collections::HashMap<String, #type_info>
+                        pub #extra_fields_name: std::collections::HashMap<String, #value_type>
                     });
                 }
 
@@ -707,7 +557,7 @@ impl ToTokens for Type {
                     }
                 }
             }
-            TypeInfo::Enum(Enum { members }) => {
+            /*FlattenedTypeInfo::Enum(Enum { members }) => {
                 quote! {
                     #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -716,8 +566,7 @@ impl ToTokens for Type {
                     }
                 }
             }
-            TypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
-            TypeInfo::Alias(Alias { target }) => {
+            FlattenedTypeInfo::Alias(Alias { target }) => {
                 // we super::super our way up to root and then append the target namespace
                 let use_path = target.to_ns_path(&self.name);
 
@@ -725,50 +574,7 @@ impl ToTokens for Type {
                     use #use_path as #name;
                 }
             }
-            TypeInfo::PrimitiveAny(PrimitiveAny()) => {
-                quote! {
-                    pub type #name = JsValue;
-                }
-            }
-            TypeInfo::PrimitiveNumber(PrimitiveNumber()) => {
-                quote! {
-                    pub type #name = f64;
-                }
-            }
-            TypeInfo::PrimitiveObject(PrimitiveObject()) => {
-                quote! {
-                    pub type #name = std::collections::HashMap<String, JsValue>;
-                }
-            }
-            TypeInfo::PrimitiveBoolean(PrimitiveBoolean()) => {
-                quote! {
-                    pub type #name = bool;
-                }
-            }
-            TypeInfo::PrimitiveBigInt(PrimitiveBigInt()) => {
-                // TODO
-                quote! {
-                    pub type #name = u64;
-                }
-            }
-            TypeInfo::PrimitiveString(PrimitiveString()) => {
-                quote! {
-                    pub type #name = String;
-                }
-            }
-            TypeInfo::PrimitiveSymbol(PrimitiveSymbol()) => panic!("how do we handle symbols"),
-            TypeInfo::PrimitiveVoid(PrimitiveVoid()) => {
-                quote! {}
-            }
-            TypeInfo::PrimitiveUndefined(PrimitiveUndefined()) => {
-                quote! {}
-            }
-            /*
-            TypeInfo::PrimitiveNull(PrimitiveNull()),
-            TypeInfo::BuiltinPromise {
-                value_type: Box<TypeInfo>,
-            },
-            TypeInfo::BuiltinDate {},
+            FlattenedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
             TypeInfo::Array {
                 item_type: Box<TypeInfo>,
             },
@@ -792,7 +598,7 @@ impl ToTokens for Type {
             },
             TypeInfo::LitBoolean {
                 b: bool,
-            },*/
+            },
             TypeInfo::Func(func) => {
                 let js_name = self.name.to_name();
                 let attrs = {
@@ -812,11 +618,10 @@ impl ToTokens for Type {
                     }
                 }
             }
-            /*
             TypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
-            },*/
+            },
             TypeInfo::Class(Class {
                 super_class,
                 members,
@@ -889,15 +694,10 @@ impl ToTokens for Type {
                     }
                 }
             }
-            /*
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
-            },
-            TypeInfo::GenericType {
-                name: String,
-                constraint: Box<TypeInfo>,
             },*/
-            TypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
+            FlattenedTypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
                     let vis = format_ident!("pub");
@@ -911,7 +711,7 @@ impl ToTokens for Type {
                     #vis use #ns as #name;
                 }
             }
-            TypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
+            FlattenedTypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
                     let vis = format_ident!("pub");
@@ -925,7 +725,7 @@ impl ToTokens for Type {
                     #vis use #ns::#default_export as #name;
                 }
             }
-            TypeInfo::NamespaceImport(NamespaceImport::Named {
+            FlattenedTypeInfo::NamespaceImport(NamespaceImport::Named {
                 src,
                 name: item_name,
             }) => {
@@ -951,16 +751,16 @@ impl ToTokens for Type {
     }
 }
 
-impl ToTokens for TypeInfo {
+impl ToTokens for FlattenedTypeInfo {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = match &self {
-            TypeInfo::Interface(_) => {
+            FlattenedTypeInfo::Interface(_) => {
                 panic!("interface in type info");
             }
-            TypeInfo::Enum(_) => {
+            FlattenedTypeInfo::Enum(_) => {
                 panic!("enum in type info");
             }
-            TypeInfo::Ref(TypeRef {
+            FlattenedTypeInfo::Ref(TypeRef {
                 referent,
                 type_params: _,
             }) => {
@@ -970,7 +770,7 @@ impl ToTokens for TypeInfo {
                     #local_name
                 }
             }
-            TypeInfo::Alias(Alias { target }) => {
+            FlattenedTypeInfo::Alias(Alias { target }) => {
                 // TODO: need to get the local name for the alias (stored on the Type right now)
                 let local_name = to_camel_case_ident(target.to_name());
 
@@ -978,105 +778,30 @@ impl ToTokens for TypeInfo {
                     #local_name
                 }
             }
-            TypeInfo::PrimitiveAny(PrimitiveAny()) => {
-                quote! {
-                    JsValue
-                }
-            }
-            TypeInfo::PrimitiveNumber(PrimitiveNumber()) => {
-                quote! {
-                    f64
-                }
-            }
-            TypeInfo::PrimitiveObject(PrimitiveObject()) => {
-                quote! {
-                    std::collections::HashMap<String, JsValue>
-                }
-            }
-            TypeInfo::PrimitiveBoolean(PrimitiveBoolean()) => {
-                quote! {
-                    bool
-                }
-            }
-            TypeInfo::PrimitiveBigInt(PrimitiveBigInt()) => {
-                // TODO
-                quote! {
-                    u64
-                }
-            }
-            TypeInfo::PrimitiveString(PrimitiveString()) => {
-                quote! {
-                    String
-                }
-            }
-            TypeInfo::PrimitiveSymbol(PrimitiveSymbol()) => panic!("how do we handle symbols"),
-            TypeInfo::PrimitiveVoid(PrimitiveVoid()) => {
-                quote! {
-                    ()
-                }
-            }
-            TypeInfo::PrimitiveUndefined(PrimitiveUndefined()) => {
-                // TODO
-                quote! {}
-            }
-            TypeInfo::PrimitiveNull(PrimitiveNull()) => {
-                // TODO
-                quote! {}
-            }
-            TypeInfo::BuiltinPromise(BuiltinPromise { value_type: _ }) => {
-                // TODO: should be an async function with Result return type
-                quote! {
-                    js_sys::Promise
-                }
-            }
-            TypeInfo::BuiltinDate(BuiltinDate()) => {
-                // TODO
-                quote! {
-                    js_sys::Date
-                }
-            }
-            TypeInfo::Array { item_type } => {
+            FlattenedTypeInfo::Array { item_type } => {
                 quote! {
                     Vec<#item_type>
                 }
             }
-            TypeInfo::Optional { item_type } => {
+            FlattenedTypeInfo::Optional { item_type } => {
                 quote! {
                     Option<#item_type>
                 }
             }
-            TypeInfo::Union(Union { types: _ }) => {
+            FlattenedTypeInfo::Union(Union { types: _ }) => {
                 // TODO
                 quote! {}
             }
-            TypeInfo::Intersection(Intersection { types: _ }) => {
+            FlattenedTypeInfo::Intersection(Intersection { types: _ }) => {
                 // TODO
                 quote! {}
             }
-            TypeInfo::Mapped { value_type } => {
+            FlattenedTypeInfo::Mapped { value_type } => {
                 quote! {
                     std::collections::HashMap<String, #value_type>
                 }
             }
-            TypeInfo::LitNumber(LitNumber { n: _ }) => {
-                // TODO
-                quote! {
-                    f64
-                }
-            }
-            TypeInfo::LitString(LitString { s: _ }) => {
-                // TODO
-                quote! {
-                    String
-                }
-            }
-            TypeInfo::LitBoolean(LitBoolean { b: _ }) => {
-                // TODO
-                quote! {
-                    bool
-                }
-            }
-            TypeInfo::Func(Func {
+            FlattenedTypeInfo::Func(Func {
                 params,
                 type_params: _,
                 return_type,
@@ -1103,23 +828,39 @@ impl ToTokens for TypeInfo {
                 }
             }
             /*
-            TypeInfo::Constructor {
+            FlattenedTypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
             },
-            TypeInfo::Class(Class {
+            FlattenedTypeInfo::Class(Class {
                 members: HashMap<String, Member>,
             }),
-            TypeInfo::Var {
+            FlattenedTypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },
-            TypeInfo::GenericType {
+            FlattenedTypeInfo::GenericType {
                 name: String,
                 constraint: Box<TypeInfo>,
             },*/
-            TypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
+            FlattenedTypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
             _ => {
                 quote! {}
+            }
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+impl ToTokens for TypeRef {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let our_toks = {
+            let name = to_ident(self.referent.to_name());
+            if self.type_params.is_empty() {
+                quote! { #name }
+            } else {
+                let type_params = self.type_params.iter().map(|p| quote! { p });
+                quote! { #name<#(#type_params),*> }
             }
         };
 
