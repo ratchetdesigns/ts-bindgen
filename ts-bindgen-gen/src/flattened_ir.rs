@@ -55,6 +55,15 @@ pub struct EffectContainer<Value> {
 
 type EffectIterator = Box<dyn Iterator<Item = Effect>>;
 
+impl<Value> EffectContainer<Value> {
+    fn adapt_effects<T: Fn(Effect) -> Effect>(self, mapper: T) -> EffectContainer<Value> {
+        EffectContainer {
+            value: self.value,
+            effects: self.effects.into_iter().map(mapper).collect(),
+        }
+    }
+}
+
 impl<Value> WithEffects for EffectContainer<Value> {
     type Value = Value;
     type Effect = Effect;
@@ -248,32 +257,63 @@ macro_rules! combine_effects {
             $effects.into_boxed_slice(),
         )
     };
-    (@cont $effects:ident $param:ident $(,)? $($params:ident),* ; $item:expr) => {
+    (@cont $effects:ident $param:ident => $f:tt $(,)? $($params:ident => $fs:tt),* ; $item:expr) => {
         {
             let $param: EffectContainer<_> = $param;
             let ($param, these_effects) = $param.into_value_and_effects();
-            $effects.extend(these_effects);
-            combine_effects!(@cont $effects $($params),* ; $item)
+            $effects.extend(these_effects.map($f));
+            combine_effects!(@cont $effects $($params => $fs),* ; $item)
         }
     };
-    ($($params:ident),+ ; $item:expr) => {
+    ($($params:ident => $f:tt),+ ; $item:expr) => {
         {
             let mut effects = Vec::new();
-            combine_effects!(@cont effects $($params),+ ; $item)
+            combine_effects!(@cont effects $($params => $f),+ ; $item)
         }
     };
+}
+
+mod effect_mappers {
+    use super::{Effect, EffectContainer};
+    use heck::TitleCase;
+
+    pub fn prepend_name<T: AsRef<str>>(prefix: T) -> impl Fn(Effect) -> Effect {
+        move |e: Effect| match e {
+            Effect::CreateType {
+                name,
+                typ,
+                generated_name_id,
+            } => Effect::CreateType {
+                name: prefix.as_ref().to_title_case().to_string() + &name,
+                typ,
+                generated_name_id,
+            },
+        }
+    }
+
+    pub fn identity() -> impl Fn(Effect) -> Effect {
+        |ec: Effect| ec
+    }
 }
 
 impl From<InterfaceIR> for EffectContainer<Interface> {
     fn from(src: InterfaceIR) -> EffectContainer<Interface> {
         let indexer = src.indexer.map(EffectContainer::from).into();
         let extends = src.extends.into_iter().map(EffectContainer::from).collect();
-        let fields = src.fields.into_iter().map(|(n, t)| (n, t.into())).collect();
+        let fields = src
+            .fields
+            .into_iter()
+            .map(|(n, t)| {
+                let effects =
+                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
+                (n, effects)
+            })
+            .collect();
 
         combine_effects!(
-            indexer,
-            extends,
-            fields;
+            indexer => (effect_mappers::prepend_name("Indexer")),
+            extends => (effect_mappers::identity()),
+            fields => (effect_mappers::identity());
             Interface {
                 indexer,
                 extends,
@@ -303,7 +343,7 @@ impl From<IndexerIR> for EffectContainer<Indexer> {
         let value_type = (*src.type_info).into();
 
         combine_effects!(
-            value_type;
+            value_type => (effect_mappers::identity());
             Indexer {
                 readonly: src.readonly,
                 value_type
@@ -406,7 +446,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::Array { item_type } => {
                 let item_type: EffectContainer<TypeRef> = (*item_type).into();
                 combine_effects!(
-                    item_type;
+                    item_type => (effect_mappers::identity());
                     TypeRef {
                         referent: TypeIdent::Builtin {
                             rust_type_name: "Vec".to_string(),
@@ -418,7 +458,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::Optional { item_type } => {
                 let item_type: EffectContainer<TypeRef> = (*item_type).into();
                 combine_effects!(
-                    item_type;
+                    item_type => (effect_mappers::identity());
                     TypeRef {
                         referent: TypeIdent::Builtin {
                             rust_type_name: "Option".to_string(),
@@ -432,7 +472,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::Mapped { value_type } => {
                 let value_type: EffectContainer<TypeRef> = (*value_type).into();
                 combine_effects!(
-                    value_type;
+                    value_type => (effect_mappers::identity());
                     TypeRef {
                         referent: TypeIdent::Builtin {
                             rust_type_name: "HashMap".to_string(),
@@ -472,8 +512,8 @@ impl From<TypeRefIR> for EffectContainer<TypeRef> {
             .map(EffectContainer::from)
             .collect();
         combine_effects!(
-            referent,
-            type_params;
+            referent => (effect_mappers::identity()),
+            type_params => (effect_mappers::identity());
             TypeRef {
                 referent,
                 type_params,
@@ -496,7 +536,7 @@ impl From<FuncIR> for EffectContainer<TypeRef> {
         let f: EffectContainer<Func> = src.into();
 
         combine_effects!(
-            f;
+            f => (effect_mappers::identity());
             TypeRef {
                 referent: TypeIdent::Builtin {
                     rust_type_name: "Fn".to_string(),
@@ -619,7 +659,7 @@ impl From<Box<TypeInfoIR>> for EffectContainer<Box<FlattenedTypeInfo>> {
     fn from(src: Box<TypeInfoIR>) -> EffectContainer<Box<FlattenedTypeInfo>> {
         let ti = EffectContainer::from(*src);
         combine_effects!(
-            ti;
+            ti => (effect_mappers::identity());
             Box::new(ti)
         )
     }
@@ -646,7 +686,7 @@ impl From<UnionIR> for EffectContainer<Union> {
     fn from(src: UnionIR) -> EffectContainer<Union> {
         let types = src.types.into_iter().map(EffectContainer::from).collect();
         combine_effects!(
-            types;
+            types => (effect_mappers::identity());
             Union {
                 types,
             }
@@ -675,7 +715,7 @@ impl From<IntersectionIR> for EffectContainer<Intersection> {
     fn from(src: IntersectionIR) -> EffectContainer<Intersection> {
         let types = src.types.into_iter().map(EffectContainer::from).collect();
         combine_effects!(
-            types;
+            types => (effect_mappers::identity());
             Intersection {
                 types,
             }
@@ -719,9 +759,9 @@ impl From<FuncIR> for EffectContainer<Func> {
             .collect();
 
         combine_effects!(
-            params,
-            return_type,
-            type_params;
+            params => (effect_mappers::prepend_name("Params")),
+            return_type => (effect_mappers::prepend_name("Return")),
+            type_params => (effect_mappers::identity());
             Func {
                 type_params,
                 params,
@@ -753,7 +793,7 @@ impl From<ParamIR> for EffectContainer<Param> {
         let type_info = src.type_info.into();
 
         combine_effects!(
-            type_info;
+            type_info => (effect_mappers::prepend_name(src.name.clone() + "Param"));
             Param {
                 name: src.name,
                 type_info,
@@ -784,7 +824,7 @@ impl From<CtorIR> for EffectContainer<Ctor> {
     fn from(src: CtorIR) -> EffectContainer<Ctor> {
         let params = src.params.into_iter().map(EffectContainer::from).collect();
         combine_effects!(
-            params;
+            params => (effect_mappers::identity());
             Ctor {
                 params,
             }
@@ -820,8 +860,8 @@ impl From<ClassIR> for EffectContainer<Class> {
             .map(|(n, m)| (n, m.into()))
             .collect();
         combine_effects!(
-            members,
-            super_class;
+            members => (effect_mappers::identity()),
+            super_class => (effect_mappers::identity());
             Class {
                 members,
                 super_class,
@@ -927,7 +967,7 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
     types.into_iter().flat_map(|t| {
         let info = t.info.into();
         let ft = combine_effects!(
-            info;
+            info => (effect_mappers::prepend_name(&t.name.to_name()));
             FlatType {
                 name: t.name.into(),
                 is_exported: t.is_exported,
