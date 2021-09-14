@@ -44,19 +44,6 @@ impl TypeName {
             TypeIdent::DefaultExport() => "default",
         }
     }
-
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> TypeInfo {
-        types_by_name_by_file
-            .get(&self.file)
-            .unwrap_or_else(|| panic!("can't find file for type name {:?}", self))
-            .get(&self.name)
-            .unwrap_or_else(|| panic!("can't resolve type ref to concrete type {:?}", self))
-            .resolve_to_concrete_type(types_by_name_by_file, type_params)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,39 +67,6 @@ pub struct Func {
 }
 
 impl Func {
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> TypeInfo {
-        let Func {
-            params,
-            type_params: fn_type_params,
-            return_type,
-        } = self;
-        let tps = {
-            let mut tps = type_params.clone();
-            tps.extend(fn_type_params.clone().into_iter());
-            tps
-        };
-        TypeInfo::Func(Func {
-            type_params: fn_type_params.clone(),
-            params: params
-                .iter()
-                .map(|p| Param {
-                    name: p.name.to_string(),
-                    is_variadic: p.is_variadic,
-                    type_info: p
-                        .type_info
-                        .resolve_to_concrete_type(types_by_name_by_file, &tps),
-                })
-                .collect(),
-            return_type: Box::new(
-                return_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
-            ),
-        })
-    }
-
     pub fn is_variadic(&self) -> bool {
         self.params
             .last()
@@ -150,20 +104,6 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> Self {
-        Indexer {
-            readonly: self.readonly,
-            type_info: Box::new(
-                self.type_info
-                    .resolve_to_concrete_type(types_by_name_by_file, type_params),
-            ),
-        }
-    }
-
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -183,17 +123,6 @@ impl Indexer {
 pub struct TypeRef {
     pub referent: TypeName,
     pub type_params: Vec<TypeInfo>,
-}
-
-impl TypeRef {
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> TypeInfo {
-        self.referent
-            .resolve_to_concrete_type(types_by_name_by_file, type_params)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,120 +333,6 @@ impl TypeInfo {
         None
     }
 
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> TypeInfo {
-        match self {
-            Self::Interface(Interface {
-                indexer,
-                extends,
-                fields,
-            }) => Self::Interface(Interface {
-                indexer: indexer
-                    .as_ref()
-                    .map(|i| i.resolve_to_concrete_type(types_by_name_by_file, type_params)),
-                extends: extends
-                    .iter()
-                    .map(|e| {
-                        if let BaseClass::Unresolved(tn) = e {
-                            BaseClass::Resolved(
-                                tn.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                            )
-                        } else {
-                            e.clone()
-                        }
-                    })
-                    .collect(),
-                fields: fields
-                    .iter()
-                    .map(|(n, t)| {
-                        (
-                            n.to_string(),
-                            t.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                        )
-                    })
-                    .collect(),
-            }),
-            Self::Ref(type_ref) => {
-                type_ref.resolve_to_concrete_type(types_by_name_by_file, type_params)
-            }
-            Self::Alias(Alias { target }) => {
-                target.resolve_to_concrete_type(types_by_name_by_file, type_params)
-            }
-            Self::Array { item_type } => Self::Array {
-                item_type: Box::new(
-                    item_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
-            },
-            Self::Optional { item_type } => Self::Optional {
-                item_type: Box::new(
-                    item_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
-            },
-            Self::Union(Union { types }) => Self::Union(Union {
-                types: types
-                    .iter()
-                    .map(|t| t.resolve_to_concrete_type(types_by_name_by_file, type_params))
-                    .collect(),
-            }),
-            Self::Intersection(Intersection { types }) => Self::Intersection(Intersection {
-                types: types
-                    .iter()
-                    .map(|t| t.resolve_to_concrete_type(types_by_name_by_file, type_params))
-                    .collect(),
-            }),
-            Self::Mapped { value_type } => Self::Mapped {
-                value_type: Box::new(
-                    value_type.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
-            },
-            Self::Func(f) => f.resolve_to_concrete_type(types_by_name_by_file, type_params),
-            Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
-                params: params
-                    .iter()
-                    .map(|p| Param {
-                        name: p.name.to_string(),
-                        is_variadic: p.is_variadic,
-                        type_info: p
-                            .type_info
-                            .resolve_to_concrete_type(types_by_name_by_file, type_params),
-                    })
-                    .collect(),
-            }),
-            Self::Class(Class {
-                members,
-                super_class,
-            }) => Self::Class(Class {
-                super_class: super_class.clone(),
-                members: members.clone(),
-            }),
-            Self::Var { type_info } => Self::Var {
-                type_info: Box::new(
-                    type_info.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                ),
-            },
-            Self::Enum(_) => self.clone(),
-            Self::PrimitiveAny(PrimitiveAny()) => self.clone(),
-            Self::PrimitiveNumber(PrimitiveNumber()) => self.clone(),
-            Self::PrimitiveObject(PrimitiveObject()) => self.clone(),
-            Self::PrimitiveBoolean(PrimitiveBoolean()) => self.clone(),
-            Self::PrimitiveBigInt(PrimitiveBigInt()) => self.clone(),
-            Self::PrimitiveString(PrimitiveString()) => self.clone(),
-            Self::PrimitiveSymbol(PrimitiveSymbol()) => self.clone(),
-            Self::PrimitiveVoid(PrimitiveVoid()) => self.clone(),
-            Self::PrimitiveUndefined(PrimitiveUndefined()) => self.clone(),
-            Self::PrimitiveNull(PrimitiveNull()) => self.clone(),
-            Self::LitNumber(_) => self.clone(),
-            Self::LitString(_) => self.clone(),
-            Self::LitBoolean(_) => self.clone(),
-            Self::BuiltinDate(BuiltinDate()) => self.clone(),
-            Self::BuiltinPromise(_) => self.clone(),
-            Self::NamespaceImport { .. } => self.clone(),
-        }
-    }
-
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -535,10 +350,9 @@ impl TypeInfo {
                 extends: extends
                     .iter()
                     .map(|e| {
+                        // TODO: no reason to have BaseClass - just use a ref
                         if let BaseClass::Unresolved(tn) = e {
-                            BaseClass::Resolved(
-                                tn.resolve_to_concrete_type(types_by_name_by_file, type_params),
-                            )
+                            BaseClass::Resolved(TypeInfo::Ref(tn.clone()))
                         } else {
                             e.clone()
                         }
@@ -699,15 +513,6 @@ pub struct Type {
 }
 
 impl Type {
-    fn resolve_to_concrete_type(
-        &self,
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
-    ) -> TypeInfo {
-        self.info
-            .resolve_to_concrete_type(types_by_name_by_file, type_params)
-    }
-
     pub fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,

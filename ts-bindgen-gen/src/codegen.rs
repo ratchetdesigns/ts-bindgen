@@ -256,9 +256,9 @@ mod mod_def_tests {
     }
 }
 
-fn map_to_ident<F: Fn(String) -> String>(s: &str, map: F) -> proc_macro2::Ident {
+fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> proc_macro2::Ident {
     // make sure we have valid characters
-    let mut chars = s.chars();
+    let mut chars = s.as_ref().chars();
     let first: String = chars
         .by_ref()
         .take(1)
@@ -282,7 +282,8 @@ fn map_to_ident<F: Fn(String) -> String>(s: &str, map: F) -> proc_macro2::Ident 
         .collect();
 
     // now, make sure we have a valid rust identifier (no keyword collissions)
-    let mut full_ident = map(first + &rest);
+    let reconstructed = first + &rest;
+    let mut full_ident = map(&reconstructed);
     while parse_syn_str::<syn::Ident>(&full_ident).is_err() {
         full_ident += "_";
     }
@@ -290,21 +291,24 @@ fn map_to_ident<F: Fn(String) -> String>(s: &str, map: F) -> proc_macro2::Ident 
     format_ident!("{}", &full_ident)
 }
 
-fn to_ident(s: &str) -> proc_macro2::Ident {
-    map_to_ident(s, &identity)
+fn to_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
+    map_to_ident(s, ToString::to_string)
 }
 
-fn to_camel_case_ident(s: &str) -> proc_macro2::Ident {
+fn to_camel_case_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
     map_to_ident(s, |s| s.to_camel_case())
 }
 
-fn to_ns_name(ns: &str) -> proc_macro2::Ident {
-    map_to_ident(ns.trim_end_matches(".d.ts").trim_end_matches(".ts"), |s| {
-        s.to_snake_case()
-    })
+fn to_ns_name<T: AsRef<str>>(ns: T) -> proc_macro2::Ident {
+    map_to_ident(
+        ns.as_ref()
+            .trim_end_matches(".d.ts")
+            .trim_end_matches(".ts"),
+        |s| s.to_snake_case(),
+    )
 }
 
-fn to_snake_case_ident(s: &str) -> proc_macro2::Ident {
+fn to_snake_case_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
     map_to_ident(s, |s| s.to_snake_case())
 }
 
@@ -369,6 +373,7 @@ impl ToTokens for ModDef {
         let mod_name = &self.name;
         let types = &self.types;
         let flat_types: Vec<_> = flatten_types(types.clone()).collect();
+        println!("HERE {:?}", &flat_types);
         let children = &self.children;
 
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
@@ -442,11 +447,12 @@ fn get_recursive_fields(
     fields
         .iter()
         .map(|(n, t)| (n.clone(), t.clone()))
-        .chain(
+        // TODO: need to recursively expand base class fields
+        /*.chain(
             extends
                 .iter()
                 .flat_map(|base| get_recursive_fields(base).into_iter()),
-        )
+        )*/
         .collect()
 }
 
@@ -522,7 +528,7 @@ impl ToTokens for FlatType {
         let our_toks = match &self.info {
             FlattenedTypeInfo::Interface(iface) => {
                 let Interface { indexer, .. } = iface;
-                let extended_fields = get_recursive_fields(iface);
+                let extended_fields = &iface.fields; //TODO: get_recursive_fields(iface);
 
                 let mut field_toks = extended_fields
                     .iter()
@@ -557,7 +563,7 @@ impl ToTokens for FlatType {
                     }
                 }
             }
-            /*FlattenedTypeInfo::Enum(Enum { members }) => {
+            FlattenedTypeInfo::Enum(Enum { members }) => {
                 quote! {
                     #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -574,17 +580,24 @@ impl ToTokens for FlatType {
                     use #use_path as #name;
                 }
             }
-            FlattenedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
-            TypeInfo::Array {
-                item_type: Box<TypeInfo>,
-            },
-            TypeInfo::Optional {
-                item_type: Box<TypeInfo>,
-            },
-            TypeInfo::Union {
-                types: Vec<TypeInfo>,
-            },
-            TypeInfo::Intersection {
+            //FlattenedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
+            //FlattenedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
+            //FlattenedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
+            FlattenedTypeInfo::Union(Union { types }) => {
+                let members = types.iter().enumerate().map(|(i, t)| {
+                    let case = to_camel_case_ident(format!("Case{}", i));
+                    quote! {
+                        #case(#t)
+                    }
+                });
+
+                quote! {
+                    enum #name {
+                        #(#types),*
+                    }
+                }
+            }
+            /*TypeInfo::Intersection {
                 types: Vec<TypeInfo>,
             },
             TypeInfo::Mapped {
@@ -859,7 +872,7 @@ impl ToTokens for TypeRef {
             if self.type_params.is_empty() {
                 quote! { #name }
             } else {
-                let type_params = self.type_params.iter().map(|p| quote! { p });
+                let type_params = self.type_params.iter().map(|p| quote! { #p });
                 quote! { #name<#(#type_params),*> }
             }
         };

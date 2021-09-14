@@ -219,7 +219,7 @@ impl ApplyNames for FlattenedTypeInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub indexer: Option<Indexer>,
-    pub extends: Vec<Interface>,
+    pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
 }
 
@@ -482,20 +482,11 @@ impl From<TypeRefIR> for EffectContainer<TypeRef> {
     }
 }
 
-impl From<BaseClassIR> for EffectContainer<Interface> {
-    fn from(src: BaseClassIR) -> EffectContainer<Interface> {
+impl From<BaseClassIR> for EffectContainer<TypeRef> {
+    fn from(src: BaseClassIR) -> EffectContainer<TypeRef> {
         match src {
             BaseClassIR::Resolved(ti) => ti.into(),
             BaseClassIR::Unresolved(_) => panic!("expected only resolved base classes"),
-        }
-    }
-}
-
-impl From<TypeInfoIR> for EffectContainer<Interface> {
-    fn from(src: TypeInfoIR) -> EffectContainer<Interface> {
-        match src {
-            TypeInfoIR::Interface(i) => i.into(),
-            _ => panic!("expected an interface"),
         }
     }
 }
