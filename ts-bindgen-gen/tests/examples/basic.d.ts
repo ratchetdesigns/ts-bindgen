@@ -1,12 +1,13 @@
-declare type Mapping = {
-    [k1: string]: {
-        [k2: string]: any;
-    };
-};
+import { Common } from "./common";
 
 export declare type A = string;
 
 export declare type B = A[];
+
+export declare enum MyEnum {
+  A = "A",
+  B = "B",
+}
 
 export interface Abc {
   hello: string;
@@ -16,6 +17,7 @@ export interface Abc {
   readonly environment: {
       [key: string]: string;
   };
+  other: Common;
 }
 
 export interface Def extends Abc {
