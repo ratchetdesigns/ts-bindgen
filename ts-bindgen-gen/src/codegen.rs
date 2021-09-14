@@ -7,7 +7,7 @@ use crate::ir::{
     TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
 };
 use heck::{CamelCase, SnakeCase};
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use unicode_xid::UnicodeXID;
 
 #[derive(Debug, Clone)]
 struct MutModDef {
-    name: proc_macro2::Ident,
+    name: Ident,
     types: Vec<TypeIR>,
     children: Vec<Rc<RefCell<MutModDef>>>,
 }
@@ -42,11 +42,7 @@ impl MutModDef {
         }
     }
 
-    fn add_child_mod(
-        &mut self,
-        mod_name: proc_macro2::Ident,
-        types: Vec<TypeIR>,
-    ) -> Rc<RefCell<MutModDef>> {
+    fn add_child_mod(&mut self, mod_name: Ident, types: Vec<TypeIR>) -> Rc<RefCell<MutModDef>> {
         if let Some(child) = self.children.iter().find(|c| c.borrow().name == mod_name) {
             let child = child.clone();
             child.borrow_mut().types.extend(types);
@@ -65,17 +61,17 @@ impl MutModDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
-    name: proc_macro2::Ident,
+    name: Ident,
     types: Vec<TypeIR>,
     children: Vec<ModDef>,
 }
 
 trait ToModPathIter {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>>;
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>>;
 }
 
 impl ToModPathIter for Path {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
         Box::new(
             self.canonicalize()
                 .expect("canonicalize failed")
@@ -96,7 +92,7 @@ impl ToModPathIter for Path {
 }
 
 impl ToModPathIter for TypeIdentIR {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
         if let TypeIdentIR::QualifiedName(names) = &self {
             Box::new(
                 (&names[..names.len() - 1])
@@ -111,7 +107,7 @@ impl ToModPathIter for TypeIdentIR {
 }
 
 impl ToModPathIter for TypeIdent {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
         match self {
             TypeIdent::QualifiedName { file, name_parts } => Box::new(
                 file.to_mod_path_iter().chain(
@@ -128,7 +124,7 @@ impl ToModPathIter for TypeIdent {
 }
 
 impl ToModPathIter for TypeRef {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = proc_macro2::Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
         self.referent.to_mod_path_iter()
     }
 }
@@ -149,7 +145,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
                 // over [a, b, c].
-                let mod_path = path.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>();
+                let mod_path = path.to_mod_path_iter().collect::<Vec<Ident>>();
                 let last_idx = mod_path.len() - 1;
 
                 mod_path
@@ -169,10 +165,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                     .iter()
                     .filter_map(|(name, typ)| {
                         if let TypeIdentIR::QualifiedName { .. } = name {
-                            Some((
-                                name.to_mod_path_iter().collect::<Vec<proc_macro2::Ident>>(),
-                                typ,
-                            ))
+                            Some((name.to_mod_path_iter().collect::<Vec<Ident>>(), typ))
                         } else {
                             None
                         }
@@ -256,7 +249,7 @@ mod mod_def_tests {
     }
 }
 
-fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> proc_macro2::Ident {
+fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident {
     // make sure we have valid characters
     let mut chars = s.as_ref().chars();
     let first: String = chars
@@ -291,15 +284,15 @@ fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> proc_macr
     format_ident!("{}", &full_ident)
 }
 
-fn to_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
+fn to_ident<T: AsRef<str>>(s: T) -> Ident {
     map_to_ident(s, ToString::to_string)
 }
 
-fn to_camel_case_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
+fn to_camel_case_ident<T: AsRef<str>>(s: T) -> Ident {
     map_to_ident(s, |s| s.to_camel_case())
 }
 
-fn to_ns_name<T: AsRef<str>>(ns: T) -> proc_macro2::Ident {
+fn to_ns_name<T: AsRef<str>>(ns: T) -> Ident {
     map_to_ident(
         ns.as_ref()
             .trim_end_matches(".d.ts")
@@ -308,7 +301,7 @@ fn to_ns_name<T: AsRef<str>>(ns: T) -> proc_macro2::Ident {
     )
 }
 
-fn to_snake_case_ident<T: AsRef<str>>(s: T) -> proc_macro2::Ident {
+fn to_snake_case_ident<T: AsRef<str>>(s: T) -> Ident {
     map_to_ident(s, |s| s.to_snake_case())
 }
 
@@ -431,7 +424,7 @@ where
     }
 }
 
-fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> proc_macro2::Ident {
+fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Ident {
     while taken(&desired) {
         desired += "_";
     }
@@ -500,21 +493,22 @@ impl<'a> ToTokens for NamedFunc<'a> {
 }
 
 trait Named {
-    fn to_name(&self) -> &str;
+    fn to_name(&self) -> (&str, Ident);
 }
 
 impl Named for TypeIdent {
-    fn to_name(&self) -> &str {
+    fn to_name(&self) -> (&str, Ident) {
         match self {
-            TypeIdent::Builtin { rust_type_name } => rust_type_name,
+            TypeIdent::Builtin { rust_type_name } => (rust_type_name, to_ident(rust_type_name)),
             TypeIdent::GeneratedName { .. } => {
                 panic!("expected all generated names to be resolved")
             }
-            TypeIdent::LocalName(n) => n,
-            TypeIdent::Name { file, name } => name,
-            TypeIdent::DefaultExport(_) => "default",
+            TypeIdent::LocalName(n) => (n, to_camel_case_ident(n)),
+            TypeIdent::Name { file, name } => (name, to_camel_case_ident(name)),
+            TypeIdent::DefaultExport(_) => panic!("didn't expect default exports"),
             TypeIdent::QualifiedName { name_parts, .. } => {
-                name_parts.last().expect("bad qualified name")
+                let n = name_parts.last().expect("bad qualified name");
+                (n, to_camel_case_ident(n))
             }
         }
     }
@@ -522,8 +516,7 @@ impl Named for TypeIdent {
 
 impl ToTokens for FlatType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let js_name = self.name.to_name();
-        let name = to_camel_case_ident(js_name);
+        let (js_name, name) = self.name.to_name();
 
         let our_toks = match &self.info {
             FlattenedTypeInfo::Interface(iface) => {
@@ -584,16 +577,25 @@ impl ToTokens for FlatType {
             //FlattenedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
             //FlattenedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
             FlattenedTypeInfo::Union(Union { types }) => {
-                let members = types.iter().enumerate().map(|(i, t)| {
-                    let case = to_camel_case_ident(format!("Case{}", i));
+                let members = types.iter().map(|t| {
+                    let t_str = quote! { #t }
+                        .to_string()
+                        .replace("<", "Of")
+                        .replace(">", "")
+                        .replace("&", "")
+                        .replace("[", "")
+                        .replace("]", "");
+                    let case = to_camel_case_ident(format!("{}Case", t_str));
                     quote! {
                         #case(#t)
                     }
                 });
 
                 quote! {
-                    enum #name {
-                        #(#types),*
+                    #[wasm_bindgen]
+                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    pub enum #name {
+                        #(#members),*
                     }
                 }
             }
@@ -777,7 +779,7 @@ impl ToTokens for FlattenedTypeInfo {
                 referent,
                 type_params: _,
             }) => {
-                let local_name = to_camel_case_ident(referent.to_name());
+                let (_, local_name) = referent.to_name();
 
                 quote! {
                     #local_name
@@ -785,7 +787,7 @@ impl ToTokens for FlattenedTypeInfo {
             }
             FlattenedTypeInfo::Alias(Alias { target }) => {
                 // TODO: need to get the local name for the alias (stored on the Type right now)
-                let local_name = to_camel_case_ident(target.to_name());
+                let (_, local_name) = target.to_name();
 
                 quote! {
                     #local_name
@@ -868,7 +870,7 @@ impl ToTokens for FlattenedTypeInfo {
 impl ToTokens for TypeRef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = {
-            let name = to_ident(self.referent.to_name());
+            let (_, name) = self.referent.to_name();
             if self.type_params.is_empty() {
                 quote! { #name }
             } else {

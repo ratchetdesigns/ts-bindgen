@@ -610,7 +610,7 @@ macro_rules! builtin_const {
             pub fn [<builtin_$name:snake>]() -> TypeRef {
                 TypeRef {
                     referent: TypeIdent::Builtin {
-                        rust_type_name: String::from("$rust_type_name"),
+                        rust_type_name: String::from(stringify!($rust_type_name)),
                     },
                     type_params: Default::default(),
                 }
