@@ -354,9 +354,7 @@ impl From<IndexerIR> for EffectContainer<Indexer> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
-    Builtin {
-        rust_type_name: String,
-    },
+    Builtin(Builtin),
     GeneratedName {
         id: usize,
     },
@@ -448,9 +446,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                 combine_effects!(
                     item_type => (effect_mappers::identity());
                     TypeRef {
-                        referent: TypeIdent::Builtin {
-                            rust_type_name: "Vec".to_string(),
-                        },
+                        referent: TypeIdent::Builtin(Builtin::Array),
                         type_params: vec![item_type],
                     }
                 )
@@ -460,9 +456,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                 combine_effects!(
                     item_type => (effect_mappers::identity());
                     TypeRef {
-                        referent: TypeIdent::Builtin {
-                            rust_type_name: "Option".to_string(),
-                        },
+                        referent: TypeIdent::Builtin(Builtin::Optional),
                         type_params: vec![item_type],
                     }
                 )
@@ -474,14 +468,10 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                 combine_effects!(
                     value_type => (effect_mappers::identity());
                     TypeRef {
-                        referent: TypeIdent::Builtin {
-                            rust_type_name: "HashMap".to_string(),
-                        },
+                        referent: TypeIdent::Builtin(Builtin::Map),
                         type_params: vec![
                             TypeRef {
-                                referent: TypeIdent::Builtin {
-                                    rust_type_name: "String".to_string(),
-                                },
+                                referent: TypeIdent::Builtin(Builtin::PrimitiveString),
                                 type_params: Default::default(),
                             },
                             value_type,
@@ -538,16 +528,11 @@ impl From<FuncIR> for EffectContainer<TypeRef> {
         combine_effects!(
             f => (effect_mappers::identity());
             TypeRef {
-                referent: TypeIdent::Builtin {
-                    rust_type_name: "Fn".to_string(),
-                },
+                referent: TypeIdent::Builtin(Builtin::Fn),
                 type_params: f.params.into_iter().map(|p| {
                     if p.is_variadic {
                         TypeRef {
-                            referent: TypeIdent::Builtin {
-                                // TODO: how to really handle this?
-                                rust_type_name: "&[]".to_string(),
-                            },
+                            referent: TypeIdent::Builtin(Builtin::Variadic),
                             type_params: vec![p.type_info],
                         }
                     } else {
@@ -604,30 +589,16 @@ impl_effectful_conversion_from_nameable_type_to_type_ref!(
     IntersectionIR => Intersection,
 );
 
-macro_rules! builtin_const {
-    ($name:ident => $rust_type_name:ty) => {
-        paste! {
-            pub fn [<builtin_$name:snake>]() -> TypeRef {
-                TypeRef {
-                    referent: TypeIdent::Builtin {
-                        rust_type_name: String::from(stringify!($rust_type_name)),
-                    },
-                    type_params: Default::default(),
-                }
-            }
-        }
-    };
-}
-
 macro_rules! type_ref_from_prims {
     ($(,)*) => {};
-    ($prim:ident => $rust_type_name:ty, $($rest:tt)*) => {
-        builtin_const!($prim => $rust_type_name);
-
+    ($prim:ident => $builtin:ident, $($rest:tt)*) => {
         impl From<$prim> for EffectContainer<TypeRef> {
             fn from(_: $prim) -> EffectContainer<TypeRef> {
                 EffectContainer::new(
-                    paste! { [<builtin_$prim:snake>]() },
+                    TypeRef {
+                        referent: TypeIdent::Builtin(Builtin::$builtin),
+                        type_params: Default::default(),
+                    },
                     Default::default(),
                 )
             }
@@ -637,23 +608,47 @@ macro_rules! type_ref_from_prims {
     };
 }
 
-type_ref_from_prims! {
-    PrimitiveAny => JsValue,
-    PrimitiveNumber => f64,
-    PrimitiveObject => std::collections::HashMap<String, JsValue>,
-    PrimitiveBoolean => bool,
-    PrimitiveBigInt => u64,
-    PrimitiveString => String,
-    PrimitiveSymbol => (),
-    PrimitiveVoid => (),
-    PrimitiveUndefined => (),
-    PrimitiveNull => (),
-    BuiltinDate => js_sys::Date,
-    LitNumber => f64,
-    LitBoolean => bool,
-    LitString => String,
-    BuiltinPromise => js_sys::Promise,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Builtin {
+    PrimitiveAny,
+    PrimitiveNumber,
+    PrimitiveObject,
+    PrimitiveBoolean,
+    PrimitiveBigInt,
+    PrimitiveString,
+    PrimitiveSymbol,
+    PrimitiveVoid,
+    PrimitiveUndefined,
+    PrimitiveNull,
+    BuiltinDate,
+    LitNumber,
+    LitBoolean,
+    LitString,
+    BuiltinPromise,
+    Array,
+    Fn,
+    Map,
+    Optional,
+    Variadic,
 }
+
+type_ref_from_prims!(
+    PrimitiveAny => PrimitiveAny,
+    PrimitiveNumber => PrimitiveNumber,
+    PrimitiveObject => PrimitiveObject,
+    PrimitiveBoolean => PrimitiveBoolean,
+    PrimitiveBigInt => PrimitiveBigInt,
+    PrimitiveString => PrimitiveString,
+    PrimitiveSymbol => PrimitiveSymbol,
+    PrimitiveVoid => PrimitiveVoid,
+    PrimitiveUndefined => PrimitiveUndefined,
+    PrimitiveNull => PrimitiveNull,
+    BuiltinDate => BuiltinDate,
+    LitNumber => LitNumber,
+    LitBoolean => LitBoolean,
+    LitString => LitString,
+    BuiltinPromise => BuiltinPromise,
+);
 
 impl From<Box<TypeInfoIR>> for EffectContainer<Box<FlattenedTypeInfo>> {
     fn from(src: Box<TypeInfoIR>) -> EffectContainer<Box<FlattenedTypeInfo>> {

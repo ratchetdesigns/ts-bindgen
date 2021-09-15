@@ -1,6 +1,6 @@
 use crate::flattened_ir::{
-    flatten_types, Alias, Ctor, Enum, EnumMember, FlatType, FlattenedTypeInfo, Func, Indexer,
-    Interface, Intersection, NamespaceImport, Param, TypeIdent, TypeRef, Union,
+    flatten_types, Alias, Builtin, Ctor, Enum, EnumMember, FlatType, FlattenedTypeInfo, Func,
+    Indexer, Interface, Intersection, NamespaceImport, Param, TypeIdent, TypeRef, Union,
 };
 use crate::ir::{
     PrimitiveAny as PrimitiveAnyIR, Type as TypeIR, TypeIdent as TypeIdentIR,
@@ -20,22 +20,76 @@ use syn::{parse_str as parse_syn_str, Token};
 use unicode_xid::UnicodeXID;
 
 #[derive(Debug, Clone, PartialEq)]
-struct Identifier(Vec<Ident>);
+struct Identifier {
+    type_parts: Vec<Ident>,
+    type_params: Vec<Identifier>,
+}
+
+macro_rules! make_identifier {
+    ($type_part:ident) => {
+        Identifier::new_ident(format_ident!(stringify!($type_part)))
+    };
+    ($($type_parts:ident)::*) => {
+        Identifier {
+            type_parts: vec![$(format_ident!(stringify!($type_parts))),*],
+            type_params: Default::default(),
+        }
+    };
+    ($($type_parts:ident)::*<$($type_params:ident),+>) => {
+        Identifier {
+            type_parts: vec![$(format_ident!(stringify!($type_parts))),*],
+            type_params: vec![$(make_identifier!($type_params)),*],
+        }
+    };
+}
+
+impl Identifier {
+    fn new_ident(id: Ident) -> Identifier {
+        Identifier {
+            type_parts: vec![id],
+            type_params: Default::default(),
+        }
+    }
+}
 
 impl ToTokens for Identifier {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        toks.append_separated(self.0.iter(), <Token![::]>::default());
+        toks.append_separated(self.type_parts.iter(), <Token![::]>::default());
+        if !self.type_params.is_empty() {
+            toks.extend(iter::once("<".parse::<TokenStream2>().unwrap()));
+            let mut type_params = self.type_params.iter();
+            if let Some(tp) = type_params.next() {
+                tp.to_tokens(toks);
+            }
+            type_params.for_each(|tp| {
+                toks.extend(iter::once(",".parse::<TokenStream2>().unwrap()));
+                tp.to_tokens(toks);
+            });
+            toks.extend(iter::once(">".parse::<TokenStream2>().unwrap()));
+        }
     }
 }
 
 impl Display for Identifier {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        let mut idents = self.0.iter();
+        let mut idents = self.type_parts.iter();
         if let Some(id) = idents.next() {
             write!(f, "{}", id)?;
         }
         for i in idents {
             write!(f, "::{}", i)?;
+        }
+
+        if !self.type_params.is_empty() {
+            write!(f, "<")?;
+            let mut type_params = self.type_params.iter();
+            if let Some(tp) = type_params.next() {
+                write!(f, "{}", tp)?;
+            }
+            for tp in type_params {
+                write!(f, ", {}", tp)?;
+            }
+            write!(f, ">")?;
         }
 
         Ok(())
@@ -44,7 +98,7 @@ impl Display for Identifier {
 
 impl From<Ident> for Identifier {
     fn from(src: Ident) -> Identifier {
-        Identifier(vec![src])
+        Identifier::new_ident(src)
     }
 }
 
@@ -533,10 +587,46 @@ trait Named {
     fn to_name(&self) -> (&str, Identifier);
 }
 
+impl Named for Builtin {
+    fn to_name(&self) -> (&str, Identifier) {
+        match self {
+            Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue").into()),
+            Builtin::PrimitiveNumber => ("f64", to_ident("f64").into()),
+            Builtin::PrimitiveObject => (
+                "std::collections::HashMap<String, JsValue>",
+                make_identifier!(std::collections::HashMap<String, JsValue>),
+            ),
+            Builtin::PrimitiveBoolean => ("bool", to_ident("bool").into()),
+            Builtin::PrimitiveBigInt => ("u64", to_ident("u64").into()),
+            Builtin::PrimitiveString => ("String", to_ident("String").into()),
+            Builtin::PrimitiveSymbol => ("js_sys::Symbol", make_identifier!(js_sys::Symbol)),
+            // TODO
+            Builtin::PrimitiveVoid => ("()", to_ident("()").into()),
+            Builtin::PrimitiveUndefined => (
+                "ts_bindgen_rt::Undefined",
+                make_identifier!(ts_bindgen_rt::Undefined),
+            ),
+            Builtin::PrimitiveNull => {
+                ("ts_bindgen_rt::Null", make_identifier!(ts_bindgen_rt::Null))
+            }
+            Builtin::BuiltinDate => ("js_sys::Date", make_identifier!(js_sys::Date)),
+            Builtin::LitNumber => Builtin::PrimitiveNumber.to_name(),
+            Builtin::LitBoolean => Builtin::PrimitiveBoolean.to_name(),
+            Builtin::LitString => Builtin::PrimitiveString.to_name(),
+            Builtin::BuiltinPromise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
+            Builtin::Array => ("Vec", to_ident("Vec").into()),
+            Builtin::Fn => ("Fn", to_ident("Fn").into()),
+            Builtin::Map => ("HashMap", to_ident("HashMap").into()),
+            Builtin::Optional => ("Option", to_ident("Option").into()),
+            Builtin::Variadic => ("", to_ident("").into()),
+        }
+    }
+}
+
 impl Named for TypeIdent {
     fn to_name(&self) -> (&str, Identifier) {
         match self {
-            TypeIdent::Builtin { rust_type_name } => (rust_type_name, to_ident(rust_type_name)),
+            TypeIdent::Builtin(builtin) => builtin.to_name(),
             TypeIdent::GeneratedName { .. } => {
                 panic!("expected all generated names to be resolved")
             }
@@ -547,6 +637,37 @@ impl Named for TypeIdent {
                 let n = name_parts.last().expect("bad qualified name");
                 (n, to_camel_case_ident(n))
             }
+        }
+    }
+}
+
+trait ExtraFieldAttrs {
+    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>>;
+}
+
+impl ExtraFieldAttrs for TypeRef {
+    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
+        self.referent.extra_field_attrs()
+    }
+}
+
+impl ExtraFieldAttrs for TypeIdent {
+    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
+        if let TypeIdent::Builtin(b) = self {
+            b.extra_field_attrs()
+        } else {
+            Box::new(iter::empty())
+        }
+    }
+}
+
+impl ExtraFieldAttrs for Builtin {
+    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
+        match self {
+            Builtin::Optional => Box::new(iter::once(quote! {
+                skip_serializing_if = "Option::is_none"
+            })),
+            _ => Box::new(iter::empty()),
         }
     }
 }
@@ -564,8 +685,11 @@ impl ToTokens for FlatType {
                     .iter()
                     .map(|(js_field_name, typ)| {
                         let field_name = to_snake_case_ident(js_field_name);
+                        let extra_attrs = typ.extra_field_attrs();
+                        let attrs =
+                            iter::once(quote! { rename = #js_field_name }).chain(extra_attrs);
                         quote! {
-                            #[serde(rename = #js_field_name)]
+                            #[serde(#(#attrs),*)]
                             pub #field_name: #typ
                         }
                     })

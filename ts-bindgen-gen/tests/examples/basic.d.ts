@@ -21,7 +21,7 @@ export interface Abc {
 }
 
 export interface Def extends Abc {
-  another_field: boolean;
+  anotherField: boolean;
 }
 
 class MyClass {
