@@ -1,0 +1,9 @@
+[package]
+name = "ts-bindgen-rt"
+version = "0.1.0"
+description = "Generate a wasm-bindgen interface from a typescript interface."
+authors = ["Adam Berger <adam@ratchetdesigns.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[dependencies]

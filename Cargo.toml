@@ -3,4 +3,5 @@ members = [
   "ts-bindgen",
   "ts-bindgen-gen",
   "ts-bindgen-macro",
+  "ts-bindgen-rt",
 ]
