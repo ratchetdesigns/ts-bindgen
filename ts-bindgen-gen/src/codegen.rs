@@ -12,14 +12,45 @@ use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::{identity, From};
+use std::fmt::{Display, Formatter};
+use std::iter;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use syn::parse_str as parse_syn_str;
+use syn::{parse_str as parse_syn_str, Token};
 use unicode_xid::UnicodeXID;
+
+#[derive(Debug, Clone, PartialEq)]
+struct Identifier(Vec<Ident>);
+
+impl ToTokens for Identifier {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        toks.append_separated(self.0.iter(), <Token![::]>::default());
+    }
+}
+
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let mut idents = self.0.iter();
+        if let Some(id) = idents.next() {
+            write!(f, "{}", id)?;
+        }
+        for i in idents {
+            write!(f, "::{}", i)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl From<Ident> for Identifier {
+    fn from(src: Ident) -> Identifier {
+        Identifier(vec![src])
+    }
+}
 
 #[derive(Debug, Clone)]
 struct MutModDef {
-    name: Ident,
+    name: Identifier,
     types: Vec<TypeIR>,
     children: Vec<Rc<RefCell<MutModDef>>>,
 }
@@ -42,7 +73,11 @@ impl MutModDef {
         }
     }
 
-    fn add_child_mod(&mut self, mod_name: Ident, types: Vec<TypeIR>) -> Rc<RefCell<MutModDef>> {
+    fn add_child_mod(
+        &mut self,
+        mod_name: Identifier,
+        types: Vec<TypeIR>,
+    ) -> Rc<RefCell<MutModDef>> {
         if let Some(child) = self.children.iter().find(|c| c.borrow().name == mod_name) {
             let child = child.clone();
             child.borrow_mut().types.extend(types);
@@ -61,17 +96,17 @@ impl MutModDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
-    name: Ident,
+    name: Identifier,
     types: Vec<TypeIR>,
     children: Vec<ModDef>,
 }
 
 trait ToModPathIter {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>>;
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>>;
 }
 
 impl ToModPathIter for Path {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
         Box::new(
             self.canonicalize()
                 .expect("canonicalize failed")
@@ -92,7 +127,7 @@ impl ToModPathIter for Path {
 }
 
 impl ToModPathIter for TypeIdentIR {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
         if let TypeIdentIR::QualifiedName(names) = &self {
             Box::new(
                 (&names[..names.len() - 1])
@@ -107,7 +142,7 @@ impl ToModPathIter for TypeIdentIR {
 }
 
 impl ToModPathIter for TypeIdent {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
         match self {
             TypeIdent::QualifiedName { file, name_parts } => Box::new(
                 file.to_mod_path_iter().chain(
@@ -124,7 +159,7 @@ impl ToModPathIter for TypeIdent {
 }
 
 impl ToModPathIter for TypeRef {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Ident>> {
+    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
         self.referent.to_mod_path_iter()
     }
 }
@@ -145,7 +180,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
                 // over [a, b, c].
-                let mod_path = path.to_mod_path_iter().collect::<Vec<Ident>>();
+                let mod_path = path.to_mod_path_iter().collect::<Vec<Identifier>>();
                 let last_idx = mod_path.len() - 1;
 
                 mod_path
@@ -165,7 +200,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                     .iter()
                     .filter_map(|(name, typ)| {
                         if let TypeIdentIR::QualifiedName { .. } = name {
-                            Some((name.to_mod_path_iter().collect::<Vec<Ident>>(), typ))
+                            Some((name.to_mod_path_iter().collect::<Vec<Identifier>>(), typ))
                         } else {
                             None
                         }
@@ -249,7 +284,9 @@ mod mod_def_tests {
     }
 }
 
-fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident {
+fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Identifier {
+    // TODO: make these paths, not idents
+
     // make sure we have valid characters
     let mut chars = s.as_ref().chars();
     let first: String = chars
@@ -281,18 +318,18 @@ fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident {
         full_ident += "_";
     }
 
-    format_ident!("{}", &full_ident)
+    format_ident!("{}", &full_ident).into()
 }
 
-fn to_ident<T: AsRef<str>>(s: T) -> Ident {
+fn to_ident<T: AsRef<str>>(s: T) -> Identifier {
     map_to_ident(s, ToString::to_string)
 }
 
-fn to_camel_case_ident<T: AsRef<str>>(s: T) -> Ident {
+fn to_camel_case_ident<T: AsRef<str>>(s: T) -> Identifier {
     map_to_ident(s, |s| s.to_camel_case())
 }
 
-fn to_ns_name<T: AsRef<str>>(ns: T) -> Ident {
+fn to_ns_name<T: AsRef<str>>(ns: T) -> Identifier {
     map_to_ident(
         ns.as_ref()
             .trim_end_matches(".d.ts")
@@ -301,7 +338,7 @@ fn to_ns_name<T: AsRef<str>>(ns: T) -> Ident {
     )
 }
 
-fn to_snake_case_ident<T: AsRef<str>>(s: T) -> Ident {
+fn to_snake_case_ident<T: AsRef<str>>(s: T) -> Identifier {
     map_to_ident(s, |s| s.to_snake_case())
 }
 
@@ -416,7 +453,7 @@ where
 {
     fn to_ns_path(&self, current_mod: &T) -> TokenStream2 {
         let ns_len = current_mod.to_mod_path_iter().count();
-        let mut use_path = vec![format_ident!("super"); ns_len];
+        let mut use_path = vec![format_ident!("super").into(); ns_len];
         use_path.extend(self.to_mod_path_iter());
         quote! {
             #(#use_path)::*
@@ -424,7 +461,7 @@ where
     }
 }
 
-fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Ident {
+fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Identifier {
     while taken(&desired) {
         desired += "_";
     }
@@ -493,11 +530,11 @@ impl<'a> ToTokens for NamedFunc<'a> {
 }
 
 trait Named {
-    fn to_name(&self) -> (&str, Ident);
+    fn to_name(&self) -> (&str, Identifier);
 }
 
 impl Named for TypeIdent {
-    fn to_name(&self) -> (&str, Ident) {
+    fn to_name(&self) -> (&str, Identifier) {
         match self {
             TypeIdent::Builtin { rust_type_name } => (rust_type_name, to_ident(rust_type_name)),
             TypeIdent::GeneratedName { .. } => {
@@ -566,7 +603,6 @@ impl ToTokens for FlatType {
                 }
             }
             FlattenedTypeInfo::Alias(Alias { target }) => {
-                // we super::super our way up to root and then append the target namespace
                 let use_path = target.to_ns_path(&self.name);
 
                 quote! {
@@ -586,6 +622,7 @@ impl ToTokens for FlatType {
                         .replace("[", "")
                         .replace("]", "");
                     let case = to_camel_case_ident(format!("{}Case", t_str));
+
                     quote! {
                         #case(#t)
                     }
