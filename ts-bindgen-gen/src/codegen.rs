@@ -113,7 +113,7 @@ impl MutModDef {
     fn into_mod_def(self) -> ModDef {
         ModDef {
             name: self.name,
-            types: self.types,
+            types: flatten_types(self.types).collect(),
             children: self
                 .children
                 .into_iter()
@@ -151,7 +151,7 @@ impl MutModDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
     name: Identifier,
-    types: Vec<TypeIR>,
+    types: Vec<FlatType>,
     children: Vec<ModDef>,
 }
 
@@ -320,13 +320,16 @@ mod mod_def_tests {
                     types: Default::default(),
                     children: vec![ModDef {
                         name: to_ident("c"),
-                        types: vec![TypeIR {
-                            name: TypeNameIR {
+                        types: vec![FlatType {
+                            name: TypeIdent::Name {
                                 file: b_c,
-                                name: TypeIdentIR::Name("my_mod".to_string()),
+                                name: "my_mod".to_string(),
                             },
                             is_exported: true,
-                            info: TypeInfoIR::PrimitiveAny(PrimitiveAnyIR {})
+                            info: FlattenedTypeInfo::Ref(TypeRef {
+                                referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                                type_params: Default::default(),
+                            })
                         }],
                         children: Default::default(),
                     }]
@@ -456,8 +459,6 @@ impl ToTokens for ModDef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let mod_name = &self.name;
         let types = &self.types;
-        let flat_types: Vec<_> = flatten_types(types.clone()).collect();
-        println!("HERE {:?}", &flat_types);
         let children = &self.children;
 
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
@@ -467,7 +468,7 @@ impl ToTokens for ModDef {
             pub mod #mod_name {
                 use wasm_bindgen::prelude::*;
 
-                #(#flat_types)*
+                #(#types)*
 
                 #(#children)*
             }
@@ -664,6 +665,10 @@ impl ExtraFieldAttrs for TypeIdent {
 impl ExtraFieldAttrs for Builtin {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
         match self {
+            // TODO: figure out how to represent undefined for Builtin::PrimitiveObject
+            Builtin::PrimitiveUndefined => Box::new(iter::once(quote! {
+                skip_serializing
+            })),
             Builtin::Optional => Box::new(iter::once(quote! {
                 skip_serializing_if = "Option::is_none"
             })),
@@ -680,7 +685,9 @@ impl IsUninhabited for FlattenedTypeInfo {
     fn is_uninhabited(&self) -> bool {
         match self {
             FlattenedTypeInfo::Ref(r) => r.is_uninhabited(),
-            FlattenedTypeInfo::Union(Union { types }) => types.iter().all(IsUninhabited::is_uninhabited),
+            FlattenedTypeInfo::Union(Union { types }) => {
+                types.iter().all(IsUninhabited::is_uninhabited)
+            }
             _ => false,
         }
     }
