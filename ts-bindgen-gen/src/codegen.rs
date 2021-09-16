@@ -162,6 +162,7 @@ impl Named for Builtin {
         match self {
             Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue").into()),
             Builtin::PrimitiveNumber => ("f64", to_ident("f64").into()),
+            // TODO: make a wrapper in rt to allow objects to be null or undefined
             Builtin::PrimitiveObject => (
                 "std::collections::HashMap<String, JsValue>",
                 make_identifier!(std::collections::HashMap<String, JsValue>),
@@ -240,6 +241,9 @@ impl ExtraFieldAttrs for Builtin {
             })),
             Builtin::Optional => Box::new(iter::once(quote! {
                 skip_serializing_if = "Option::is_none"
+            })),
+            Builtin::PrimitiveAny => Box::new(iter::once(quote! {
+                skip_serializing_if = "JsValue::is_undefined"
             })),
             _ => Box::new(iter::empty()),
         }
