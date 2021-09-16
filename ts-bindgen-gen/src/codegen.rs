@@ -672,6 +672,31 @@ impl ExtraFieldAttrs for Builtin {
     }
 }
 
+trait IsUninhabited {
+    fn is_uninhabited(&self) -> bool;
+}
+
+impl IsUninhabited for FlattenedTypeInfo {
+    fn is_uninhabited(&self) -> bool {
+        match self {
+            FlattenedTypeInfo::Ref(r) => r.is_uninhabited(),
+            FlattenedTypeInfo::Union(Union { types }) => types.iter().all(IsUninhabited::is_uninhabited),
+            _ => false,
+        }
+    }
+}
+
+impl IsUninhabited for TypeRef {
+    fn is_uninhabited(&self) -> bool {
+        match self.referent {
+            TypeIdent::Builtin(Builtin::PrimitiveNull) => true,
+            TypeIdent::Builtin(Builtin::PrimitiveUndefined) => true,
+            TypeIdent::Builtin(Builtin::PrimitiveVoid) => true,
+            _ => false,
+        }
+    }
+}
+
 impl ToTokens for FlatType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -747,8 +772,14 @@ impl ToTokens for FlatType {
                         .replace("]", "");
                     let case = to_camel_case_ident(format!("{}Case", t_str));
 
-                    quote! {
-                        #case(#t)
+                    if t.is_uninhabited() {
+                        quote! {
+                            #case
+                        }
+                    } else {
+                        quote! {
+                            #case(#t)
+                        }
                     }
                 });
 
