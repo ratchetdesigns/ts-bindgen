@@ -1,5 +1,6 @@
 mod codegen;
 mod flattened_ir;
+mod identifier;
 mod ir;
 mod module_resolution;
 mod parse;
