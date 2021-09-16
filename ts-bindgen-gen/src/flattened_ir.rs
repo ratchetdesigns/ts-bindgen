@@ -9,7 +9,6 @@ use crate::ir::{
     TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR, Union as UnionIR,
 };
 use enum_to_enum::{FromEnum, WithEffects};
-use paste::paste;
 use std::collections::HashMap;
 use std::iter::{Extend, FromIterator};
 use std::path::PathBuf;
@@ -274,7 +273,7 @@ macro_rules! combine_effects {
 }
 
 mod effect_mappers {
-    use super::{Effect, EffectContainer};
+    use super::Effect;
     use heck::TitleCase;
 
     pub fn prepend_name<T: AsRef<str>>(prefix: T) -> impl Fn(Effect) -> Effect {

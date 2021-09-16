@@ -2,6 +2,7 @@ mod codegen;
 mod flattened_ir;
 mod identifier;
 mod ir;
+mod mod_def;
 mod module_resolution;
 mod parse;
 
