@@ -450,14 +450,7 @@ impl IndexerExt for TsIndexSignature {
     }
 
     fn value_type(&self) -> Option<&TsType> {
-        if self.params.len() != 1 {
-            panic!("indexing signatures should only have 1 param");
-        }
-
-        match self.params.first().unwrap() {
-            TsFnParam::Ident(ident) => ident.type_ann.as_ref().map(|t| &*t.type_ann),
-            _ => panic!("we only support ident indexers"),
-        }
+        self.type_ann.as_ref().map(|ta| ta.type_ann.as_ref())
     }
 }
 

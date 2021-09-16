@@ -10,6 +10,7 @@ export declare enum MyEnum {
 }
 
 export interface Abc {
+  [a: string]: number;
   hello: string;
   opt?: B;
   isect: string & 'abc';
