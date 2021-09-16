@@ -130,6 +130,14 @@ pub fn to_snake_case_ident<T: AsRef<str>>(s: T) -> Identifier {
     map_to_ident(s, |s| s.to_snake_case())
 }
 
+pub fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Identifier {
+    while taken(&desired) {
+        desired += "_";
+    }
+
+    to_ident(&desired)
+}
+
 #[cfg(test)]
 mod ident_tests {
     use super::*;

@@ -3,7 +3,8 @@ use crate::flattened_ir::{
     Intersection, NamespaceImport, Param, TypeIdent, TypeRef, Union,
 };
 use crate::identifier::{
-    make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, Identifier,
+    make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
+    Identifier,
 };
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
@@ -90,14 +91,6 @@ where
             #(#use_path)::*
         }
     }
-}
-
-fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Identifier {
-    while taken(&desired) {
-        desired += "_";
-    }
-
-    to_ident(&desired)
 }
 
 fn get_recursive_fields(
