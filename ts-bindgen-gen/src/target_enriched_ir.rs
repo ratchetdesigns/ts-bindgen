@@ -6,12 +6,14 @@ use crate::flattened_ir::{
     TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
 pub use crate::flattened_ir::{NamespaceImport, TypeIdent};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 type SourceTypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, FlatType>>;
 type TypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>;
+type WrappedTypesByIdentByPath = Rc<RefCell<TypesByIdentByPath>>;
 
 macro_rules! from_field {
     ($value:ident, $types_by_ident_by_path:ident, $field:ident, .) => {
@@ -146,7 +148,7 @@ pub struct TargetEnrichedType {
     name: TypeIdent,
     is_exported: bool,
     info: TargetEnrichedTypeInfo,
-    types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -302,7 +304,7 @@ impl From<WithContext<FlattenedMember>> for Member {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -314,7 +316,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -327,7 +329,7 @@ pub struct Param {
     pub name: String,
     pub type_info: TypeRef,
     pub is_variadic: bool,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -342,7 +344,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -355,7 +357,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
     pub types: Vec<TargetEnrichedTypeInfo>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -366,7 +368,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intersection {
     pub types: Vec<TargetEnrichedTypeInfo>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -377,7 +379,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeIdent,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -388,7 +390,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub members: Vec<EnumMember>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -400,7 +402,7 @@ from_struct!(
 pub struct EnumMember {
     pub id: String,
     pub value: Option<String>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -413,7 +415,7 @@ from_struct!(
 pub struct Indexer {
     pub readonly: bool,
     pub value_type: TypeRef,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -427,7 +429,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -441,7 +443,7 @@ from_struct!(
 pub struct TypeRef {
     pub referent: TypeIdent,
     pub type_params: Vec<TypeRef>,
-    pub types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(
@@ -453,7 +455,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq)]
 struct WithContext<T> {
     value: T,
-    types_by_ident_by_path: Rc<TypesByIdentByPath>,
+    types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 impl From<WithContext<NamespaceImport>> for NamespaceImport {
@@ -462,8 +464,13 @@ impl From<WithContext<NamespaceImport>> for NamespaceImport {
     }
 }
 
-pub fn target_enrich(types_by_ident_by_path: SourceTypesByIdentByPath) -> Rc<TypesByIdentByPath> {
-    let mut enriched: Rc<TypesByIdentByPath> = Rc::new(Default::default());
+// TODO: really don't want to expose the RefCell to the world here but I can't figure out a way to
+// hide it. I would love to return an Rc<impl AsRef<TypesByIdentByPath>> but I don't think that's
+// doable.
+pub fn target_enrich(
+    types_by_ident_by_path: SourceTypesByIdentByPath,
+) -> WrappedTypesByIdentByPath {
+    let enriched = Rc::new(RefCell::new(Default::default()));
 
     types_by_ident_by_path
         .into_iter()
@@ -482,9 +489,7 @@ pub fn target_enrich(types_by_ident_by_path: SourceTypesByIdentByPath) -> Rc<Typ
                 })
                 .collect();
 
-            Rc::get_mut(&mut enriched)
-                .unwrap()
-                .insert(path, types_by_ident);
+            enriched.borrow_mut().insert(path, types_by_ident);
         });
 
     enriched
