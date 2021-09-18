@@ -16,46 +16,46 @@ type TypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType
 type WrappedTypesByIdentByPath = Rc<RefCell<TypesByIdentByPath>>;
 
 macro_rules! from_field {
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, .) => {
+    ($value:ident, $ctx:ident, $field:ident, .) => {
         WithContext {
             value: $value.$field,
-            types_by_ident_by_path: Rc::clone(&$types_by_ident_by_path),
+            context: $ctx.clone(),
         }
         .into()
     };
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, nc) => {
+    ($value:ident, $ctx:ident, $field:ident, nc) => {
         $value.$field.into()
     };
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, box) => {
+    ($value:ident, $ctx:ident, $field:ident, box) => {
         Box::new(
             WithContext {
                 value: (*$value.$field),
-                types_by_ident_by_path: Rc::clone(&$types_by_ident_by_path),
+                context: $ctx.clone(),
             }
             .into(),
         )
     };
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, []) => {
+    ($value:ident, $ctx:ident, $field:ident, []) => {
         $value
             .$field
             .into_iter()
             .map(|value| WithContext {
                 value,
-                types_by_ident_by_path: Rc::clone(&$types_by_ident_by_path),
+                context: $ctx.clone(),
             })
             .map(Into::into)
             .collect()
     };
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, Option) => {
+    ($value:ident, $ctx:ident, $field:ident, Option) => {
         $value
             .$field
             .map(|value| WithContext {
                 value,
-                types_by_ident_by_path: Rc::clone(&$types_by_ident_by_path),
+                context: $ctx.clone(),
             })
             .map(Into::into)
     };
-    ($value:ident, $types_by_ident_by_path:ident, $field:ident, {}) => {
+    ($value:ident, $ctx:ident, $field:ident, {}) => {
         $value
             .$field
             .into_iter()
@@ -64,7 +64,7 @@ macro_rules! from_field {
                     k.into(),
                     WithContext {
                         value: v,
-                        types_by_ident_by_path: Rc::clone(&$types_by_ident_by_path),
+                        context: $ctx.clone(),
                     }
                     .into(),
                 )
@@ -133,10 +133,10 @@ macro_rules! from_struct {
         impl From<WithContext<$src>> for $dest {
             fn from(src: WithContext<$src>) -> $dest {
                 let value = src.value;
-                let types_by_ident_by_path = Rc::clone(&src.types_by_ident_by_path);
+                let ctx = &src.context;
                 $dest {
-                    types_by_ident_by_path: Rc::clone(&types_by_ident_by_path),
-                    $($field: from_field!(value, types_by_ident_by_path, $field, $field_type)),*
+                    context: ctx.clone(),
+                    $($field: from_field!(value, ctx, $field, $field_type)),*
                 }
             }
         }
@@ -148,7 +148,7 @@ pub struct TargetEnrichedType {
     pub name: TypeIdent,
     pub is_exported: bool,
     pub info: TargetEnrichedTypeInfo,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -189,11 +189,11 @@ macro_rules! case_conv {
         $src::$variant($x)
     };
 
-    ($dest:ident :: $variant:ident, $x:ident, $types_by_ident_by_path:ident) => {
+    ($dest:ident :: $variant:ident, $x:ident, $ctx:ident) => {
         $dest::$variant(
             WithContext {
                 value: $x,
-                types_by_ident_by_path: $types_by_ident_by_path,
+                context: $ctx,
             }
             .into(),
         )
@@ -203,12 +203,12 @@ macro_rules! case_conv {
         $src::$variant { $field: $x }
     };
 
-    ($field:ident => $dest:ident :: $variant:ident, $x:ident, $types_by_ident_by_path:ident) => {
+    ($field:ident => $dest:ident :: $variant:ident, $x:ident, $ctx:ident) => {
         $dest::$variant {
             $field: Box::new(
                 WithContext {
                     value: *$x,
-                    types_by_ident_by_path: $types_by_ident_by_path,
+                    context: $ctx,
                 }
                 .into(),
             ),
@@ -219,57 +219,51 @@ macro_rules! case_conv {
 impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
     fn from(src: WithContext<FlattenedTypeInfo>) -> TargetEnrichedTypeInfo {
         let value = src.value;
-        let types_by_ident_by_path = src.types_by_ident_by_path;
+        let ctx = src.context;
 
         match value {
             case_conv!(match FlattenedTypeInfo::Interface, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Interface, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Interface, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Enum, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Enum, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Enum, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Alias, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Alias, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Alias, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Ref, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Ref, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Ref, x, ctx)
             }
             case_conv!(match item_type => FlattenedTypeInfo::Array, x) => {
-                case_conv!(item_type => TargetEnrichedTypeInfo::Array, x, types_by_ident_by_path)
+                case_conv!(item_type => TargetEnrichedTypeInfo::Array, x, ctx)
             }
             case_conv!(match item_type => FlattenedTypeInfo::Optional, x) => {
-                case_conv!(item_type => TargetEnrichedTypeInfo::Optional, x, types_by_ident_by_path)
+                case_conv!(item_type => TargetEnrichedTypeInfo::Optional, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Union, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Union, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Union, x, ctx)
             }
-            case_conv!(match FlattenedTypeInfo::Intersection, x) => case_conv!(
-                TargetEnrichedTypeInfo::Intersection,
-                x,
-                types_by_ident_by_path
-            ),
+            case_conv!(match FlattenedTypeInfo::Intersection, x) => {
+                case_conv!(TargetEnrichedTypeInfo::Intersection, x, ctx)
+            }
             case_conv!(match value_type => FlattenedTypeInfo::Mapped, x) => {
-                case_conv!(value_type => TargetEnrichedTypeInfo::Mapped, x, types_by_ident_by_path)
+                case_conv!(value_type => TargetEnrichedTypeInfo::Mapped, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Func, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Func, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Func, x, ctx)
             }
-            case_conv!(match FlattenedTypeInfo::Constructor, x) => case_conv!(
-                TargetEnrichedTypeInfo::Constructor,
-                x,
-                types_by_ident_by_path
-            ),
+            case_conv!(match FlattenedTypeInfo::Constructor, x) => {
+                case_conv!(TargetEnrichedTypeInfo::Constructor, x, ctx)
+            }
             case_conv!(match FlattenedTypeInfo::Class, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Class, x, types_by_ident_by_path)
+                case_conv!(TargetEnrichedTypeInfo::Class, x, ctx)
             }
             case_conv!(match type_info => FlattenedTypeInfo::Var, x) => {
-                case_conv!(type_info => TargetEnrichedTypeInfo::Var, x, types_by_ident_by_path)
+                case_conv!(type_info => TargetEnrichedTypeInfo::Var, x, ctx)
             }
-            case_conv!(match FlattenedTypeInfo::NamespaceImport, x) => case_conv!(
-                TargetEnrichedTypeInfo::NamespaceImport,
-                x,
-                types_by_ident_by_path
-            ),
+            case_conv!(match FlattenedTypeInfo::NamespaceImport, x) => {
+                case_conv!(TargetEnrichedTypeInfo::NamespaceImport, x, ctx)
+            }
         }
     }
 }
@@ -284,17 +278,17 @@ pub enum Member {
 impl From<WithContext<FlattenedMember>> for Member {
     fn from(src: WithContext<FlattenedMember>) -> Member {
         let value = src.value;
-        let types_by_ident_by_path = src.types_by_ident_by_path;
+        let ctx = src.context;
 
         match value {
             case_conv!(match FlattenedMember::Constructor, x) => {
-                case_conv!(Member::Constructor, x, types_by_ident_by_path)
+                case_conv!(Member::Constructor, x, ctx)
             }
             case_conv!(match FlattenedMember::Method, x) => {
-                case_conv!(Member::Method, x, types_by_ident_by_path)
+                case_conv!(Member::Method, x, ctx)
             }
             case_conv!(match FlattenedMember::Property, x) => {
-                case_conv!(Member::Property, x, types_by_ident_by_path)
+                case_conv!(Member::Property, x, ctx)
             }
         }
     }
@@ -304,7 +298,7 @@ impl From<WithContext<FlattenedMember>> for Member {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -316,7 +310,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -329,7 +323,7 @@ pub struct Param {
     pub name: String,
     pub type_info: TypeRef,
     pub is_variadic: bool,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -344,7 +338,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -357,7 +351,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
     pub types: Vec<TargetEnrichedTypeInfo>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -368,7 +362,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intersection {
     pub types: Vec<TargetEnrichedTypeInfo>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -379,7 +373,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeIdent,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -390,7 +384,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub members: Vec<EnumMember>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -402,7 +396,7 @@ from_struct!(
 pub struct EnumMember {
     pub id: String,
     pub value: Option<String>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -415,7 +409,7 @@ from_struct!(
 pub struct Indexer {
     pub readonly: bool,
     pub value_type: TypeRef,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -429,7 +423,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -443,7 +437,7 @@ from_struct!(
 pub struct TypeRef {
     pub referent: TypeIdent,
     pub type_params: Vec<TypeRef>,
-    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub context: Context,
 }
 
 from_struct!(
@@ -452,10 +446,16 @@ from_struct!(
     type_params => [],
 );
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Context {
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub path: PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct WithContext<T> {
     value: T,
-    types_by_ident_by_path: WrappedTypesByIdentByPath,
+    context: Context,
 }
 
 impl From<WithContext<NamespaceImport>> for NamespaceImport {
@@ -480,7 +480,10 @@ pub fn target_enrich(
                         id,
                         WithContext {
                             value: typ,
-                            types_by_ident_by_path: Rc::clone(&enriched),
+                            context: Context {
+                                types_by_ident_by_path: Rc::clone(&enriched),
+                                path: path.clone(),
+                            },
                         }
                         .into(),
                     )
