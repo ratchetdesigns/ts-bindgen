@@ -5,6 +5,7 @@ mod ir;
 mod mod_def;
 mod module_resolution;
 mod parse;
+mod target_enriched_ir;
 
 // TODO: aliases should point to modules
 // TODO: when generating code, use include_str! to make the compiler think we have a dependency on
