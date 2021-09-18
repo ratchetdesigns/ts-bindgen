@@ -470,11 +470,9 @@ impl From<WithContext<NamespaceImport>> for NamespaceImport {
 pub fn target_enrich(
     types_by_ident_by_path: SourceTypesByIdentByPath,
 ) -> WrappedTypesByIdentByPath {
-    let enriched = Rc::new(RefCell::new(Default::default()));
-
-    types_by_ident_by_path
-        .into_iter()
-        .for_each(|(path, types_by_ident)| {
+    types_by_ident_by_path.into_iter().fold(
+        Rc::new(RefCell::new(Default::default())),
+        |enriched, (path, types_by_ident)| {
             let types_by_ident = types_by_ident
                 .into_iter()
                 .map(|(id, typ)| {
@@ -490,7 +488,7 @@ pub fn target_enrich(
                 .collect();
 
             enriched.borrow_mut().insert(path, types_by_ident);
-        });
-
-    enriched
+            enriched
+        },
+    )
 }
