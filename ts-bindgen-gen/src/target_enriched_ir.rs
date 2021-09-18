@@ -5,7 +5,7 @@ use crate::flattened_ir::{
     Intersection as FlattenedIntersection, Member as FlattenedMember, Param as FlattenedParam,
     TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
-pub use crate::flattened_ir::{NamespaceImport, TypeIdent};
+pub use crate::flattened_ir::{Builtin, NamespaceImport, TypeIdent};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -145,10 +145,10 @@ macro_rules! from_struct {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetEnrichedType {
-    name: TypeIdent,
-    is_exported: bool,
-    info: TargetEnrichedTypeInfo,
-    types_by_ident_by_path: WrappedTypesByIdentByPath,
+    pub name: TypeIdent,
+    pub is_exported: bool,
+    pub info: TargetEnrichedTypeInfo,
+    pub types_by_ident_by_path: WrappedTypesByIdentByPath,
 }
 
 from_struct!(

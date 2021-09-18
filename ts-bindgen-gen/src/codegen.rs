@@ -1,13 +1,13 @@
-use crate::flattened_ir::{
-    Alias, Builtin, Enum, EnumMember, FlatType, FlattenedTypeInfo, Func, Indexer, Interface,
-    Intersection, NamespaceImport, Param, TypeIdent, TypeRef, Union,
-};
 use crate::identifier::{
     make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
     Identifier,
 };
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
+use crate::target_enriched_ir::{
+    Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
+    Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
+};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::collections::HashMap;
@@ -219,6 +219,8 @@ trait ExtraFieldAttrs {
 impl ExtraFieldAttrs for TypeRef {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
         self.referent.extra_field_attrs()
+        // TODO: combine with extra_field_attrs from the resolved Type (e.g. if the resolved type
+        // is a union, add a skip_serializing_if = "<UnionName>::should_skip_serializing")
     }
 }
 
@@ -254,11 +256,11 @@ trait IsUninhabited {
     fn is_uninhabited(&self) -> bool;
 }
 
-impl IsUninhabited for FlattenedTypeInfo {
+impl IsUninhabited for TargetEnrichedTypeInfo {
     fn is_uninhabited(&self) -> bool {
         match self {
-            FlattenedTypeInfo::Ref(r) => r.is_uninhabited(),
-            FlattenedTypeInfo::Union(Union { types }) => {
+            TargetEnrichedTypeInfo::Ref(r) => r.is_uninhabited(),
+            TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
                 types.iter().all(IsUninhabited::is_uninhabited)
             }
             _ => false,
@@ -277,12 +279,12 @@ impl IsUninhabited for TypeRef {
     }
 }
 
-impl ToTokens for FlatType {
+impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
 
         let our_toks = match &self.info {
-            FlattenedTypeInfo::Interface(iface) => {
+            TargetEnrichedTypeInfo::Interface(iface) => {
                 let Interface { indexer, .. } = iface;
                 let extended_fields = &iface.fields; //TODO: get_recursive_fields(iface);
 
@@ -303,6 +305,7 @@ impl ToTokens for FlatType {
                 if let Some(Indexer {
                     readonly: _,
                     value_type,
+                    ..
                 }) = &indexer
                 {
                     let extra_fields_name = to_unique_ident("extra_fields".to_string(), &|x| {
@@ -322,7 +325,7 @@ impl ToTokens for FlatType {
                     }
                 }
             }
-            FlattenedTypeInfo::Enum(Enum { members }) => {
+            TargetEnrichedTypeInfo::Enum(Enum { members, .. }) => {
                 quote! {
                     #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -331,17 +334,17 @@ impl ToTokens for FlatType {
                     }
                 }
             }
-            FlattenedTypeInfo::Alias(Alias { target }) => {
+            TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
                 let use_path = target.to_ns_path(&self.name);
 
                 quote! {
                     use #use_path as #name;
                 }
             }
-            //FlattenedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
-            //FlattenedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
-            //FlattenedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
-            FlattenedTypeInfo::Union(Union { types }) => {
+            //TargetEnrichedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
+            //TargetEnrichedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
+            //TargetEnrichedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
+            TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
                 let members = types.iter().map(|t| {
                     let t_str = quote! { #t }
                         .to_string()
@@ -484,7 +487,7 @@ impl ToTokens for FlatType {
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },*/
-            FlattenedTypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
+            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
                     let vis = format_ident!("pub");
@@ -498,7 +501,7 @@ impl ToTokens for FlatType {
                     #vis use #ns as #name;
                 }
             }
-            FlattenedTypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
+            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
                     let vis = format_ident!("pub");
@@ -512,7 +515,7 @@ impl ToTokens for FlatType {
                     #vis use #ns::#default_export as #name;
                 }
             }
-            FlattenedTypeInfo::NamespaceImport(NamespaceImport::Named {
+            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Named {
                 src,
                 name: item_name,
             }) => {
@@ -538,18 +541,19 @@ impl ToTokens for FlatType {
     }
 }
 
-impl ToTokens for FlattenedTypeInfo {
+impl ToTokens for TargetEnrichedTypeInfo {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = match &self {
-            FlattenedTypeInfo::Interface(_) => {
+            TargetEnrichedTypeInfo::Interface(_) => {
                 panic!("interface in type info");
             }
-            FlattenedTypeInfo::Enum(_) => {
+            TargetEnrichedTypeInfo::Enum(_) => {
                 panic!("enum in type info");
             }
-            FlattenedTypeInfo::Ref(TypeRef {
+            TargetEnrichedTypeInfo::Ref(TypeRef {
                 referent,
                 type_params: _,
+                ..
             }) => {
                 let (_, local_name) = referent.to_name();
 
@@ -557,7 +561,7 @@ impl ToTokens for FlattenedTypeInfo {
                     #local_name
                 }
             }
-            FlattenedTypeInfo::Alias(Alias { target }) => {
+            TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
                 // TODO: need to get the local name for the alias (stored on the Type right now)
                 let (_, local_name) = target.to_name();
 
@@ -565,33 +569,34 @@ impl ToTokens for FlattenedTypeInfo {
                     #local_name
                 }
             }
-            FlattenedTypeInfo::Array { item_type } => {
+            TargetEnrichedTypeInfo::Array { item_type, .. } => {
                 quote! {
                     Vec<#item_type>
                 }
             }
-            FlattenedTypeInfo::Optional { item_type } => {
+            TargetEnrichedTypeInfo::Optional { item_type, .. } => {
                 quote! {
                     Option<#item_type>
                 }
             }
-            FlattenedTypeInfo::Union(Union { types: _ }) => {
+            TargetEnrichedTypeInfo::Union(Union { types: _, .. }) => {
                 // TODO
                 quote! {}
             }
-            FlattenedTypeInfo::Intersection(Intersection { types: _ }) => {
+            TargetEnrichedTypeInfo::Intersection(Intersection { types: _, .. }) => {
                 // TODO
                 quote! {}
             }
-            FlattenedTypeInfo::Mapped { value_type } => {
+            TargetEnrichedTypeInfo::Mapped { value_type, .. } => {
                 quote! {
                     std::collections::HashMap<String, #value_type>
                 }
             }
-            FlattenedTypeInfo::Func(Func {
+            TargetEnrichedTypeInfo::Func(Func {
                 params,
                 type_params: _,
                 return_type,
+                ..
             }) => {
                 let param_toks: Vec<TokenStream2> = params
                     .iter()
@@ -615,21 +620,21 @@ impl ToTokens for FlattenedTypeInfo {
                 }
             }
             /*
-            FlattenedTypeInfo::Constructor {
+            TargetEnrichedTypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
             },
-            FlattenedTypeInfo::Class(Class {
+            TargetEnrichedTypeInfo::Class(Class {
                 members: HashMap<String, Member>,
             }),
-            FlattenedTypeInfo::Var {
+            TargetEnrichedTypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },
-            FlattenedTypeInfo::GenericType {
+            TargetEnrichedTypeInfo::GenericType {
                 name: String,
                 constraint: Box<TypeInfo>,
             },*/
-            FlattenedTypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
+            TargetEnrichedTypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
             _ => {
                 quote! {}
             }

@@ -1,6 +1,5 @@
-use crate::flattened_ir::{flatten_types, FlatType, TypeIdent, TypeRef};
 use crate::identifier::{to_ns_name, to_snake_case_ident, Identifier};
-use crate::ir::{Type as TypeIR, TypeIdent as TypeIdentIR};
+use crate::target_enriched_ir::{TargetEnrichedType, TypeIdent, TypeRef};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -9,7 +8,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 struct MutModDef {
     name: Identifier,
-    types: Vec<TypeIR>,
+    types: Vec<TargetEnrichedType>,
     children: Vec<Rc<RefCell<MutModDef>>>,
 }
 
@@ -17,7 +16,7 @@ impl MutModDef {
     fn into_mod_def(self) -> ModDef {
         ModDef {
             name: self.name,
-            types: flatten_types(self.types).collect(),
+            types: self.types,
             children: self
                 .children
                 .into_iter()
@@ -34,7 +33,7 @@ impl MutModDef {
     fn add_child_mod(
         &mut self,
         mod_name: Identifier,
-        types: Vec<TypeIR>,
+        types: Vec<TargetEnrichedType>,
     ) -> Rc<RefCell<MutModDef>> {
         if let Some(child) = self.children.iter().find(|c| c.borrow().name == mod_name) {
             let child = child.clone();
@@ -55,7 +54,7 @@ impl MutModDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
     pub name: Identifier,
-    pub types: Vec<FlatType>,
+    pub types: Vec<TargetEnrichedType>,
     pub children: Vec<ModDef>,
 }
 
@@ -84,21 +83,6 @@ impl ToModPathIter for Path {
     }
 }
 
-impl ToModPathIter for TypeIdentIR {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
-        if let TypeIdentIR::QualifiedName(names) = &self {
-            Box::new(
-                (&names[..names.len() - 1])
-                    .to_vec()
-                    .into_iter()
-                    .map(|n| to_snake_case_ident(&n)),
-            )
-        } else {
-            Box::new(vec![].into_iter())
-        }
-    }
-}
-
 impl ToModPathIter for TypeIdent {
     fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
         match self {
@@ -123,8 +107,10 @@ impl ToModPathIter for TypeRef {
 }
 
 // TODO: maybe don't make "index" namespaces and put their types in the parent
-impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
-    fn from(types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>) -> Self {
+impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef {
+    fn from(
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>,
+    ) -> Self {
         let root = Rc::new(RefCell::new(MutModDef {
             name: to_ns_name("root"),
             types: Default::default(),
@@ -147,7 +133,10 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                     .fold(root.clone(), move |parent, (i, mod_name)| {
                         let mut parent = parent.borrow_mut();
                         let types = if i == last_idx {
-                            types_by_name.values().cloned().collect::<Vec<TypeIR>>()
+                            types_by_name
+                                .values()
+                                .cloned()
+                                .collect::<Vec<TargetEnrichedType>>()
                         } else {
                             Default::default()
                         };
@@ -157,7 +146,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
                 types_by_name
                     .iter()
                     .filter_map(|(name, typ)| {
-                        if let TypeIdentIR::QualifiedName { .. } = name {
+                        if let TypeIdent::QualifiedName { .. } = name {
                             Some((name.to_mod_path_iter().collect::<Vec<Identifier>>(), typ))
                         } else {
                             None
@@ -184,6 +173,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>> for ModDef {
     }
 }
 
+/*
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
@@ -195,7 +185,7 @@ mod mod_def_tests {
 
     #[test]
     fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
-        let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>> = HashMap::new();
+        let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>> = HashMap::new();
         let b_c = PathBuf::from("/tmp/a/node_modules/b/c");
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -205,11 +195,11 @@ mod mod_def_tests {
         tbnbf.insert(b_c.clone(), {
             let mut tbn = HashMap::new();
             tbn.insert(
-                TypeIdentIR::Name("my_mod".to_string()),
-                TypeIR {
+                TypeIdent::Name("my_mod".to_string()),
+                TargetEnrichedType {
                     name: TypeNameIR {
                         file: b_c.clone(),
-                        name: TypeIdentIR::Name("my_mod".to_string()),
+                        name: TypeIdent::Name("my_mod".to_string()),
                     },
                     is_exported: true,
                     info: TypeInfoIR::PrimitiveAny(PrimitiveAnyIR {}),
@@ -248,4 +238,4 @@ mod mod_def_tests {
 
         Ok(())
     }
-}
+}*/

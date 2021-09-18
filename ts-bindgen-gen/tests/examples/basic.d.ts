@@ -19,6 +19,7 @@ export interface Abc {
       [key: string]: string;
   };
   other: Common;
+  any: any;
 }
 
 export interface Def extends Abc {
