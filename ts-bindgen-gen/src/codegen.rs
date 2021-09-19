@@ -5,13 +5,15 @@ use crate::identifier::{
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
-    Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
-    Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
+    Alias, Builtin, Context, Enum, EnumMember, Func, Indexer, Interface, Intersection,
+    NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::iter;
+use std::path::{Path, PathBuf};
 use syn::Token;
 
 impl ToTokens for Identifier {
@@ -101,12 +103,18 @@ fn get_recursive_fields(
     fields
         .iter()
         .map(|(n, t)| (n.clone(), t.clone()))
-        // TODO: need to recursively expand base class fields
-        /*.chain(
-            extends
-                .iter()
-                .flat_map(|base| get_recursive_fields(base).into_iter()),
-        )*/
+        .chain(extends.iter().flat_map(|base| {
+            let resolved_type = base.resolve_target_type();
+            let base = resolved_type
+                .as_ref()
+                .and_then(TypesByIdentByPathCell::get_type_info)
+                .expect("cannot resolve base type for interface");
+            if let TargetEnrichedTypeInfo::Interface(i) = base {
+                get_recursive_fields(i).into_iter()
+            } else {
+                panic!("expected an interface as the base type for an interface");
+            }
+        }))
         .collect()
 }
 
@@ -252,6 +260,134 @@ impl ExtraFieldAttrs for Builtin {
     }
 }
 
+// TODO: we only need this silly container because we get a Ref rather than a & because we had to
+// leave types_by_ident_by_path as an Rc<RefCell<...>> instead of just an Rc<..>
+enum TypesByIdentByPathCell<'a> {
+    // TODO: I want a &'a PathBuf but that gets tricky to look up in the map for some reason
+    Lookup(
+        Ref<'a, HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>>,
+        PathBuf,
+        TypeIdent,
+    ),
+    Direct(&'a TargetEnrichedTypeInfo),
+    Owned(TargetEnrichedTypeInfo),
+}
+
+impl<'a> TypesByIdentByPathCell<'a> {
+    fn get_type_info(&'a self) -> Option<&'a TargetEnrichedTypeInfo> {
+        match self {
+            TypesByIdentByPathCell::Direct(t) => Some(t),
+            TypesByIdentByPathCell::Owned(t) => Some(&t),
+            TypesByIdentByPathCell::Lookup(r, path, n) => r
+                .get(path)
+                .and_then(|t_by_n| t_by_n.get(&n))
+                .map(|t| &t.info),
+        }
+    }
+}
+
+trait ResolveTargetType {
+    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell>;
+}
+
+impl ResolveTargetType for TargetEnrichedType {
+    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+        self.info.resolve_target_type()
+    }
+}
+
+impl ResolveTargetType for TypeRef {
+    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+        match &self.referent {
+            TypeIdent::LocalName(n) => Some(TypesByIdentByPathCell::Lookup(
+                RefCell::borrow(&self.context.types_by_ident_by_path),
+                self.context.path.clone(),
+                // TODO: this is weird. we should not need clones here and we should not
+                // have the option of looking up a Builtin
+                TypeIdent::Name {
+                    file: self.context.path.clone(),
+                    name: n.clone(),
+                },
+            )),
+            TypeIdent::Name { file, name } => Some(TypesByIdentByPathCell::Lookup(
+                RefCell::borrow(&self.context.types_by_ident_by_path),
+                file.clone(),
+                TypeIdent::Name {
+                    file: file.clone(),
+                    name: name.clone(),
+                },
+            )),
+            TypeIdent::DefaultExport(path) => Some(TypesByIdentByPathCell::Lookup(
+                RefCell::borrow(&self.context.types_by_ident_by_path),
+                path.clone(),
+                TypeIdent::DefaultExport(path.clone()),
+            )),
+            TypeIdent::QualifiedName { file, name_parts } => {
+                let mut final_file = file.clone();
+                let mut final_name = None;
+                let types_by_ident_by_path = RefCell::borrow(&self.context.types_by_ident_by_path);
+
+                for n in name_parts {
+                    let t = types_by_ident_by_path.get(file).and_then(|t_by_n| {
+                        t_by_n.get(&TypeIdent::Name {
+                            file: final_file.clone(),
+                            name: n.clone(),
+                        })
+                    });
+                    if let Some(ty) = t {
+                        let resolved_type = ty.resolve_target_type();
+                        // TODO: silly to clone on every iteration but i need to figure out how
+                        // to get resolved_type to live long enough to just pass along the ref
+                        if let Some(target_type) =
+                            resolved_type.as_ref().and_then(|tt| tt.get_type_info())
+                        {
+                            final_file = match target_type {
+                                TargetEnrichedTypeInfo::Interface(i) => i.context.path.clone(),
+                                TargetEnrichedTypeInfo::Enum(e) => e.context.path.clone(),
+                                TargetEnrichedTypeInfo::Alias(a) => a.context.path.clone(),
+                                TargetEnrichedTypeInfo::Ref(r) => r.context.path.clone(),
+                                TargetEnrichedTypeInfo::Union(u) => u.context.path.clone(),
+                                TargetEnrichedTypeInfo::Intersection(i) => i.context.path.clone(),
+                                TargetEnrichedTypeInfo::Func(f) => f.context.path.clone(),
+                                TargetEnrichedTypeInfo::Constructor(c) => c.context.path.clone(),
+                                TargetEnrichedTypeInfo::Class(c) => c.context.path.clone(),
+                                _ => final_file,
+                            };
+                            final_name = Some(&ty.name);
+                        } else {
+                            panic!("bad qualfiied name lookup");
+                        }
+                    } else {
+                        panic!("bad qualified name lookup");
+                    }
+                }
+
+                final_name.and_then(|final_name| {
+                    let final_name = final_name.clone();
+
+                    Some(TypesByIdentByPathCell::Lookup(
+                        RefCell::borrow(&self.context.types_by_ident_by_path),
+                        final_file,
+                        final_name,
+                    ))
+                })
+            }
+            _ => Some(TypesByIdentByPathCell::Owned(TargetEnrichedTypeInfo::Ref(
+                self.clone(),
+            ))),
+        }
+    }
+}
+
+impl ResolveTargetType for TargetEnrichedTypeInfo {
+    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+        match self {
+            TargetEnrichedTypeInfo::Ref(r) => r.resolve_target_type(),
+            _ => Some(TypesByIdentByPathCell::Direct(self)),
+        }
+    }
+}
+
 trait IsUninhabited {
     fn is_uninhabited(&self) -> bool;
 }
@@ -286,7 +422,7 @@ impl ToTokens for TargetEnrichedType {
         let our_toks = match &self.info {
             TargetEnrichedTypeInfo::Interface(iface) => {
                 let Interface { indexer, .. } = iface;
-                let extended_fields = &iface.fields; //TODO: get_recursive_fields(iface);
+                let extended_fields = get_recursive_fields(iface);
 
                 let mut field_toks = extended_fields
                     .iter()

@@ -9,6 +9,14 @@ export declare enum MyEnum {
   B = "B",
 }
 
+export interface Base {
+  baseField: number;
+}
+
+export interface Derived extends Base {
+  derivedField: string;
+}
+
 export interface Abc {
   [a: string]: number;
   hello: string;
