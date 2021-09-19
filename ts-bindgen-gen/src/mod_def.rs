@@ -173,36 +173,47 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
     }
 }
 
-/*
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
-    use crate::flattened_ir::{Builtin, FlattenedTypeInfo};
     use crate::identifier::to_ident;
-    use crate::ir::{
-        PrimitiveAny as PrimitiveAnyIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
-    };
+    use crate::target_enriched_ir::{Builtin, Context, TargetEnrichedTypeInfo};
+    use std::cell::RefCell;
+    use std::fs::{DirBuilder, File};
+    use std::rc::Rc;
 
     #[test]
     fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
         let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>> = HashMap::new();
         let b_c = PathBuf::from("/tmp/a/node_modules/b/c");
-        std::fs::DirBuilder::new()
+        DirBuilder::new()
             .recursive(true)
             .create(b_c.parent().unwrap())?;
-        std::fs::File::create(&b_c)?;
+        let context = Context {
+            types_by_ident_by_path: Rc::new(RefCell::new(Default::default())),
+            path: b_c.clone(),
+        };
+        File::create(&b_c)?;
 
         tbnbf.insert(b_c.clone(), {
             let mut tbn = HashMap::new();
             tbn.insert(
-                TypeIdent::Name("my_mod".to_string()),
+                TypeIdent::Name {
+                    file: b_c.clone(),
+                    name: "my_mod".to_string(),
+                },
                 TargetEnrichedType {
-                    name: TypeNameIR {
+                    name: TypeIdent::Name {
                         file: b_c.clone(),
-                        name: TypeIdent::Name("my_mod".to_string()),
+                        name: "my_mod".to_string(),
                     },
                     is_exported: true,
-                    info: TypeInfoIR::PrimitiveAny(PrimitiveAnyIR {}),
+                    info: TargetEnrichedTypeInfo::Ref(TypeRef {
+                        referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                        type_params: Default::default(),
+                        context: context.clone(),
+                    }),
+                    context: context.clone(),
                 },
             );
             tbn
@@ -219,16 +230,18 @@ mod mod_def_tests {
                     types: Default::default(),
                     children: vec![ModDef {
                         name: to_ident("c"),
-                        types: vec![FlatType {
+                        types: vec![TargetEnrichedType {
                             name: TypeIdent::Name {
                                 file: b_c,
                                 name: "my_mod".to_string(),
                             },
                             is_exported: true,
-                            info: FlattenedTypeInfo::Ref(TypeRef {
+                            info: TargetEnrichedTypeInfo::Ref(TypeRef {
                                 referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
                                 type_params: Default::default(),
-                            })
+                                context: context.clone(),
+                            }),
+                            context: context.clone(),
                         }],
                         children: Default::default(),
                     }]
@@ -238,4 +251,4 @@ mod mod_def_tests {
 
         Ok(())
     }
-}*/
+}
