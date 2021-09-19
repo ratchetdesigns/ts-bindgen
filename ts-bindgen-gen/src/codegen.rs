@@ -5,15 +5,15 @@ use crate::identifier::{
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
-    Alias, Builtin, Context, Enum, EnumMember, Func, Indexer, Interface, Intersection,
-    NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
+    Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
+    Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::iter;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use syn::Token;
 
 impl ToTokens for Identifier {
@@ -210,7 +210,7 @@ impl Named for TypeIdent {
                 panic!("expected all generated names to be resolved")
             }
             TypeIdent::LocalName(n) => (n, to_camel_case_ident(n)),
-            TypeIdent::Name { file, name } => (name, to_camel_case_ident(name)),
+            TypeIdent::Name { file: _, name } => (name, to_camel_case_ident(name)),
             TypeIdent::DefaultExport(_) => panic!("didn't expect default exports"),
             TypeIdent::QualifiedName { name_parts, .. } => {
                 let n = name_parts.last().expect("bad qualified name");
@@ -244,7 +244,7 @@ impl ExtraFieldAttrs for TypeRef {
 impl ExtraFieldAttrs for TargetEnrichedTypeInfo {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
         match self {
-            TargetEnrichedTypeInfo::Union(u) => Box::new(iter::once(quote! {
+            TargetEnrichedTypeInfo::Union(_) => Box::new(iter::once(quote! {
                 skip_serializing_if = "ts_bindgen_rt::ShouldSkipSerializing::should_skip_serializing"
             })),
             _ => Box::new(iter::empty()),
