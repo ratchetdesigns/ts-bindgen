@@ -22,7 +22,7 @@ export interface Abc {
   hello: string;
   opt?: B;
   isect: string & 'abc';
-  union: string | number | null;
+  union: string | number | null | undefined;
   readonly environment: {
       [key: string]: string;
   };

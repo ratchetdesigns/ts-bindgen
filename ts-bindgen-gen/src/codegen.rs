@@ -179,7 +179,7 @@ impl Named for Builtin {
             Builtin::PrimitiveBigInt => ("u64", to_ident("u64").into()),
             Builtin::PrimitiveString => ("String", to_ident("String").into()),
             Builtin::PrimitiveSymbol => ("js_sys::Symbol", make_identifier!(js_sys::Symbol)),
-            // TODO
+            // TODO: is this correct?
             Builtin::PrimitiveVoid => ("()", to_ident("()").into()),
             Builtin::PrimitiveUndefined => (
                 "ts_bindgen_rt::Undefined",
@@ -226,9 +226,29 @@ trait ExtraFieldAttrs {
 
 impl ExtraFieldAttrs for TypeRef {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
-        self.referent.extra_field_attrs()
-        // TODO: combine with extra_field_attrs from the resolved Type (e.g. if the resolved type
-        // is a union, add a skip_serializing_if = "<UnionName>::should_skip_serializing")
+        let resolved_type = self.resolve_target_type();
+        let resolved_extra_attrs = resolved_type
+            .as_ref()
+            .and_then(TypesByIdentByPathCell::get_type_info)
+            .map(|ti| ti.extra_field_attrs())
+            .unwrap_or_else(|| Box::new(iter::empty()));
+
+        Box::new(
+            self.referent
+                .extra_field_attrs()
+                .chain(resolved_extra_attrs),
+        )
+    }
+}
+
+impl ExtraFieldAttrs for TargetEnrichedTypeInfo {
+    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
+        match self {
+            TargetEnrichedTypeInfo::Union(u) => Box::new(iter::once(quote! {
+                skip_serializing_if = "ts_bindgen_rt::ShouldSkipSerializing::should_skip_serializing"
+            })),
+            _ => Box::new(iter::empty()),
+        }
     }
 }
 
@@ -273,6 +293,22 @@ enum TypesByIdentByPathCell<'a> {
     Owned(TargetEnrichedTypeInfo),
 }
 
+impl std::fmt::Debug for TypesByIdentByPathCell<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypesByIdentByPathCell::Lookup(_, f1, f2) => f
+                .debug_struct("TypesByIdentByPathCell")
+                .field("1", f1)
+                .field("2", f2)
+                .finish(),
+            _ => f
+                .debug_struct("TypesByIdentByPathCell")
+                .field("elided", &true)
+                .finish(),
+        }
+    }
+}
+
 impl<'a> TypesByIdentByPathCell<'a> {
     fn get_type_info(&'a self) -> Option<&'a TargetEnrichedTypeInfo> {
         match self {
@@ -304,10 +340,11 @@ impl ResolveTargetType for TypeRef {
                 self.context.path.clone(),
                 // TODO: this is weird. we should not need clones here and we should not
                 // have the option of looking up a Builtin
-                TypeIdent::Name {
-                    file: self.context.path.clone(),
-                    name: n.clone(),
-                },
+                // TODO: specifically,
+                // 1. convert all TypeIdent::Name-s into TypeIdent::LocalName-s
+                //    (correctness issue)
+                // 2. get rid of GeneratedName in our ir pipeline
+                TypeIdent::LocalName(n.clone()),
             )),
             TypeIdent::Name { file, name } => Some(TypesByIdentByPathCell::Lookup(
                 RefCell::borrow(&self.context.types_by_ident_by_path),
@@ -415,6 +452,17 @@ impl IsUninhabited for TypeRef {
     }
 }
 
+fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
+    let t_str = quote! { #typ }
+        .to_string()
+        .replace("<", "Of")
+        .replace(">", "")
+        .replace("&", "")
+        .replace("[", "")
+        .replace("]", "");
+    to_camel_case_ident(format!("{}Case", t_str))
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -482,14 +530,7 @@ impl ToTokens for TargetEnrichedType {
             //TargetEnrichedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
             TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
                 let members = types.iter().map(|t| {
-                    let t_str = quote! { #t }
-                        .to_string()
-                        .replace("<", "Of")
-                        .replace(">", "")
-                        .replace("&", "")
-                        .replace("[", "")
-                        .replace("]", "");
-                    let case = to_camel_case_ident(format!("{}Case", t_str));
+                    let case = type_to_union_case_name(t);
 
                     if t.is_uninhabited() {
                         quote! {
@@ -502,11 +543,46 @@ impl ToTokens for TargetEnrichedType {
                     }
                 });
 
+                let (undefined_members, not_undefined_members): (Vec<_>, Vec<_>) =
+                    types.iter().partition(|t| match t {
+                        TargetEnrichedTypeInfo::Ref(t)
+                            if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
+                        {
+                            true
+                        }
+                        _ => false,
+                    });
+                let undefined_member_cases = undefined_members.iter().map(|t| {
+                    let case = type_to_union_case_name(t);
+                    quote! {
+                        #name::#case => true,
+                    }
+                });
+
+                let skip_serializing_cases = if not_undefined_members.is_empty() {
+                    quote! { _ => true }
+                } else if undefined_members.is_empty() {
+                    quote! { _ => false }
+                } else {
+                    quote! {
+                        #(#undefined_member_cases),*
+                        _ => false,
+                    }
+                };
+
                 quote! {
                     #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     pub enum #name {
                         #(#members),*
+                    }
+
+                    impl ts_bindgen_rt::ShouldSkipSerializing for #name {
+                        fn should_skip_serializing(&self) -> bool {
+                            match self {
+                                #skip_serializing_cases
+                            }
+                        }
                     }
                 }
             }
