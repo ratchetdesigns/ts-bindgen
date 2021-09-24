@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::fs::File;
 use std::io::Result;
+use std::iter;
 use std::path::{Path, PathBuf};
 
 pub fn typings_module_resolver(import_path: &Path, pkg: &Value) -> Result<PathBuf> {
@@ -61,8 +62,8 @@ fn path_with_ext_appended(path: &Path, ext: &str) -> PathBuf {
 
 fn get_file_with_any_ext(path: &Path) -> Result<PathBuf> {
     let exts = vec!["d.ts", "ts", "tsx", "js", "jsx", "json"];
-    exts.iter()
-        .map(|ext| path_with_ext_appended(path, ext))
+    iter::once(path.to_path_buf())
+        .chain(exts.iter().map(|ext| path_with_ext_appended(path, ext)))
         .find(|path_with_ext| path_with_ext.is_file())
         .ok_or_else(|| {
             std::io::Error::new(
