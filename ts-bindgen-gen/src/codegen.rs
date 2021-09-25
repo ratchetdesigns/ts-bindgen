@@ -40,12 +40,20 @@ impl ToTokens for ModDef {
         let types = &self.types;
         let children = &self.children;
 
+        let imports = if types.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                use wasm_bindgen::prelude::*;
+            }
+        };
+
         // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
         // able to refer to it in future use clauses. just need to get the nesting level here
         let our_toks = quote! {
             #[cfg(target_arch = "wasm32")]
             pub mod #mod_name {
-                use wasm_bindgen::prelude::*;
+                #imports
 
                 #(#types)*
 
