@@ -13,7 +13,7 @@ use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::iter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use syn::Token;
 
 impl ToTokens for Identifier {
@@ -162,7 +162,7 @@ impl<'a> ToTokens for NamedFunc<'a> {
         let return_type = &self.func.return_type;
 
         let our_toks = quote! {
-            fn #fn_name(#(#param_toks),*) -> #return_type;
+            pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue>;
         };
 
         toks.extend(our_toks);
@@ -203,7 +203,10 @@ impl Named for Builtin {
             Builtin::BuiltinPromise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
             Builtin::Array => ("Vec", to_ident("Vec").into()),
             Builtin::Fn => ("Fn", to_ident("Fn").into()),
-            Builtin::Map => ("std::collections::HashMap", make_identifier!(std::collections::HashMap)),
+            Builtin::Map => (
+                "std::collections::HashMap",
+                make_identifier!(std::collections::HashMap),
+            ),
             Builtin::Optional => ("Option", to_ident("Option").into()),
             Builtin::Variadic => ("", to_ident("").into()),
         }
@@ -471,6 +474,31 @@ fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
     to_camel_case_ident(format!("{}Case", t_str))
 }
 
+fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
+    let mut best: Option<PathBuf> = None;
+    let mut current_path: Option<PathBuf> = None;
+    let path = path.as_ref();
+    for component in path.components() {
+        let p = current_path
+            .map(|cp| cp.join(component))
+            .unwrap_or_else(|| (component.as_ref() as &Path).to_path_buf());
+        if p.is_dir() {
+            if p.join("Cargo.toml").exists() {
+                best = Some(p.clone());
+            }
+        }
+        current_path = Some(p);
+    }
+
+    best.map(|p| path.components().skip(p.components().count()).collect())
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+fn trim_after_dot<'a>(s: &'a str) -> &'a str {
+    let idx = s.find('.');
+    &s[0..idx.unwrap_or_else(|| s.len())]
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -593,6 +621,30 @@ impl ToTokens for TargetEnrichedType {
                     }
                 }
             }
+            TargetEnrichedTypeInfo::Func(func) => {
+                let path = &func.context.path;
+                let path = path_relative_to_cargo_toml(path.with_file_name(
+                    trim_after_dot(&*path.file_name().unwrap().to_string_lossy()).to_string()
+                        + ".js",
+                ));
+                let path = path.to_string_lossy();
+                let attrs = {
+                    let mut attrs = vec![quote! { js_name = #js_name, catch }];
+                    if func.is_variadic() {
+                        attrs.push(quote! { variadic });
+                    }
+                    attrs
+                };
+                let func = NamedFunc { js_name, func };
+
+                quote! {
+                    #[wasm_bindgen(module=#path)]
+                    extern "C" {
+                        #[wasm_bindgen(#(#attrs),*)]
+                        #func
+                    }
+                }
+            }
             /*TypeInfo::Intersection {
                 types: Vec<TypeInfo>,
             },
@@ -608,25 +660,6 @@ impl ToTokens for TargetEnrichedType {
             TypeInfo::LitBoolean {
                 b: bool,
             },
-            TypeInfo::Func(func) => {
-                let js_name = self.name.to_name();
-                let attrs = {
-                    let mut attrs = vec![quote! { js_name = #js_name }];
-                    if func.is_variadic() {
-                        attrs.push(quote! { variadic });
-                    }
-                    attrs
-                };
-                let func = NamedFunc { js_name, func };
-
-                quote! {
-                    #[wasm_bindgen]
-                    extern "C" {
-                        #[wasm_bindgen(#(#attrs),*)]
-                        #func
-                    }
-                }
-            }
             TypeInfo::Constructor {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,

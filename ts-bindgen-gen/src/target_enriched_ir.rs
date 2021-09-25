@@ -341,6 +341,12 @@ pub struct Func {
     pub context: Context,
 }
 
+impl Func {
+    pub fn is_variadic(&self) -> bool {
+        self.params.iter().any(|p| p.is_variadic)
+    }
+}
+
 from_struct!(
     FlattenedFunc => Func;
     type_params => {},
