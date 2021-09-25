@@ -579,7 +579,6 @@ impl ToTokens for TargetEnrichedType {
                 };
 
                 quote! {
-                    #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     pub enum #name {
                         #(#members),*
