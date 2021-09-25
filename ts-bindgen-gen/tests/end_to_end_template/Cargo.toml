@@ -1,5 +1,5 @@
 [package]
-name = "ts-bindgen-gen-test"
+name = "ts-bindgen-gen-end-to-end-test"
 version = "0.1.0"
 edition = "2018"
 
