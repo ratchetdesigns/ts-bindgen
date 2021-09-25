@@ -203,7 +203,7 @@ impl Named for Builtin {
             Builtin::BuiltinPromise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
             Builtin::Array => ("Vec", to_ident("Vec").into()),
             Builtin::Fn => ("Fn", to_ident("Fn").into()),
-            Builtin::Map => ("HashMap", to_ident("HashMap").into()),
+            Builtin::Map => ("std::collections::HashMap", make_identifier!(std::collections::HashMap)),
             Builtin::Optional => ("Option", to_ident("Option").into()),
             Builtin::Variadic => ("", to_ident("").into()),
         }
