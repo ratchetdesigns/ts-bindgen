@@ -1,9 +1,9 @@
 use crate::ir::{
-    BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection, LitBoolean,
-    LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny, PrimitiveBigInt,
-    PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
-    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent, TypeInfo, TypeName,
-    TypeRef, Union,
+    Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
+    LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
+    PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
+    PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
+    TypeInfo, TypeName, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -1055,7 +1055,9 @@ impl TsTypes {
         Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
-            info: type_info,
+            info: TypeInfo::Alias(Alias {
+                target: Box::new(type_info),
+            }),
         }
     }
 

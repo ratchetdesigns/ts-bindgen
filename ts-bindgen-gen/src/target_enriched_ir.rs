@@ -393,13 +393,13 @@ from_struct!(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
-    pub target: TypeIdent,
+    pub target: TypeRef,
     pub context: Context,
 }
 
 from_struct!(
     FlattenedAlias => Alias;
-    target => nc,
+    target => .,
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]

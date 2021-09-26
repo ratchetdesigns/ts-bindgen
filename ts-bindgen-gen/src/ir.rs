@@ -164,7 +164,7 @@ pub struct Enum {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
-    pub target: TypeName,
+    pub target: Box<TypeInfo>,
 }
 
 macro_rules! make_primitives {
@@ -402,9 +402,7 @@ impl TypeInfo {
                     None
                 })
                 .expect("can't resolve alias"),
-            Self::Alias(Alias { target }) => Self::Alias(Alias {
-                target: target.clone(),
-            }),
+            Self::Alias(a) => Self::Alias(a.clone()),
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },

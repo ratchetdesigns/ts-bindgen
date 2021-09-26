@@ -624,6 +624,12 @@ fn trim_after_dot<'a>(s: &'a str) -> &'a str {
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
+        let vis = if self.is_exported {
+            let vis = format_ident!("pub");
+            quote! { #vis }
+        } else {
+            quote! {}
+        };
 
         let our_toks = match &self.info {
             TargetEnrichedTypeInfo::Interface(iface) => {
@@ -677,10 +683,8 @@ impl ToTokens for TargetEnrichedType {
                 }
             }
             TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
-                let use_path = target.to_ns_path(&self.name);
-
                 quote! {
-                    use #use_path as #name;
+                    #vis type #name = #target;
                 }
             }
             //TargetEnrichedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
@@ -872,12 +876,6 @@ impl ToTokens for TargetEnrichedType {
             },*/
             TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
-                let vis = if self.is_exported {
-                    let vis = format_ident!("pub");
-                    quote! { #vis }
-                } else {
-                    quote! {}
-                };
                 let name = to_snake_case_ident(js_name);
 
                 quote! {
@@ -939,18 +937,13 @@ impl ToTokens for TargetEnrichedTypeInfo {
                 ..
             }) => {
                 let (_, local_name) = referent.to_name();
-
                 quote! {
                     #local_name
                 }
             }
             TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
-                // TODO: need to get the local name for the alias (stored on the Type right now)
-                let (_, local_name) = target.to_name();
-
-                quote! {
-                    #local_name
-                }
+                // TODO: we should get the name of the alias, not the ponited-to name
+                quote! { #target }
             }
             TargetEnrichedTypeInfo::Array { item_type, .. } => {
                 quote! {
@@ -963,7 +956,6 @@ impl ToTokens for TargetEnrichedTypeInfo {
                 }
             }
             TargetEnrichedTypeInfo::Union(Union { types: _, .. }) => {
-                // TODO
                 quote! {}
             }
             TargetEnrichedTypeInfo::Intersection(Intersection { types: _, .. }) => {
@@ -999,7 +991,7 @@ impl ToTokens for TargetEnrichedTypeInfo {
                     .collect();
 
                 quote! {
-                    &Closure<dyn Fn(#(#param_toks),*) -> #return_type>
+                    fn(#(#param_toks),*) -> #return_type
                 }
             }
             /*
@@ -1031,7 +1023,19 @@ impl ToTokens for TypeRef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = {
             let (_, name) = self.referent.to_name();
-            if self.type_params.is_empty() {
+            if matches!(&self.referent, TypeIdent::Builtin(Builtin::Fn)) {
+                let params = self
+                    .type_params
+                    .iter()
+                    .map(|p| quote! { #p })
+                    .take(self.type_params.len() - 1);
+                let ret = self
+                    .type_params
+                    .last()
+                    .map(|p| quote! { #p })
+                    .unwrap_or_else(|| quote! {()});
+                quote! { #name(#(#params),*) -> #ret }
+            } else if self.type_params.is_empty() {
                 quote! { #name }
             } else {
                 let type_params = self.type_params.iter().map(|p| quote! { #p });

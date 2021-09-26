@@ -954,20 +954,24 @@ impl From<EnumIR> for Enum {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
-    pub target: TypeIdent,
+    pub target: TypeRef,
 }
 
-impl From<AliasIR> for Alias {
-    fn from(src: AliasIR) -> Alias {
-        Alias {
-            target: src.target.into(),
-        }
+impl From<AliasIR> for EffectContainer<Alias> {
+    fn from(src: AliasIR) -> EffectContainer<Alias> {
+        let target: EffectContainer<_> = (*src.target).into();
+        combine_effects!(
+            target => (effect_mappers::prepend_name("Aliased"));
+            Alias { target }
+        )
     }
 }
 
 impl ApplyNames for Alias {
-    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
-        self
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Alias {
+            target: self.target.apply_names(names_by_id),
+        }
     }
 }
 
@@ -988,7 +992,6 @@ macro_rules! impl_effectless_conversion {
 
 impl_effectless_conversion!(
     NamespaceImport => NamespaceImport,
-    AliasIR => Alias,
     EnumIR => Enum,
     EnumMemberIR => EnumMember,
 );
