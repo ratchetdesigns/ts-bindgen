@@ -246,58 +246,44 @@ impl PropExt for ClassProp {
 }
 
 trait FnParamExt {
-    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param;
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param;
 }
 
 impl FnParamExt for TsFnParam {
-    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param {
         match self {
-            TsFnParam::Ident(ident) => Param {
-                name: ident.id.sym.to_string(),
-                is_variadic: false,
-                type_info: ident
-                    .type_ann
-                    .as_ref()
-                    .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
-            },
+            TsFnParam::Ident(ident) => ident.to_param(ts_path, i, ts_types),
+            TsFnParam::Object(obj) => obj.to_param(ts_path, i, ts_types),
+            TsFnParam::Rest(rest) => rest.to_param(ts_path, i, ts_types),
+            // TODO: handle array
             _ => panic!("we only support ident params for methods"),
         }
     }
 }
 
 impl FnParamExt for swc_ecma_ast::Param {
-    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
-        match &self.pat {
-            Pat::Ident(BindingIdent { id, type_ann }) => Param {
-                name: id.sym.to_string(),
-                is_variadic: false,
-                type_info: type_ann
-                    .as_ref()
-                    .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
-                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
-            },
-            Pat::Rest(RestPat { arg, type_ann, .. }) => match &**arg {
-                Pat::Ident(id_param) => Param {
-                    name: id_param.id.sym.to_string(),
-                    is_variadic: true,
-                    type_info: type_ann
-                        .as_ref()
-                        .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                        .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
-                },
-                _ => {
-                    println!("found rest param arg {:?}", &arg);
-                    panic!("we only handle idents in rest patterns");
-                }
-            },
-            _ => panic!("we only support ident params for methods"),
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param {
+        self.pat.to_param(ts_path, i, ts_types)
+    }
+}
+
+impl FnParamExt for Pat {
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param {
+        match self {
+            Pat::Ident(ident) => ident.to_param(ts_path, i, ts_types),
+            Pat::Object(obj) => obj.to_param(ts_path, i, ts_types),
+            Pat::Rest(rest) => rest.to_param(ts_path, i, ts_types),
+            // TODO: handle array
+            _ => {
+                println!("HERE {:?}", self);
+                panic!("we only support ident params for methods")
+            }
         }
     }
 }
 
 impl FnParamExt for BindingIdent {
-    fn to_param(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Param {
+    fn to_param(&self, ts_path: &Path, _i: usize, ts_types: &mut TsTypes) -> Param {
         Param {
             name: self.id.sym.to_string(),
             is_variadic: false,
@@ -305,6 +291,39 @@ impl FnParamExt for BindingIdent {
                 .type_ann
                 .as_ref()
                 .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
+        }
+    }
+}
+
+impl FnParamExt for ObjectPat {
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param {
+        Param {
+            name: format!("arg{}", i),
+            is_variadic: false,
+            type_info: self
+                .type_ann
+                .as_ref()
+                .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
+        }
+    }
+}
+
+impl FnParamExt for RestPat {
+    fn to_param(&self, ts_path: &Path, _i: usize, ts_types: &mut TsTypes) -> Param {
+        let name = match &*self.arg {
+            Pat::Ident(id_param) => id_param.id.sym.to_string(),
+            _ => "rest".to_string(),
+        };
+
+        Param {
+            name,
+            is_variadic: true,
+            type_info: self
+                .type_ann
+                .as_ref()
+                .map(|t| ts_types.process_type(ts_path, &t.type_ann))
                 .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
         }
     }
@@ -320,10 +339,11 @@ impl CtorExt for Constructor {
             params: self
                 .params
                 .iter()
-                .map(|p| match p {
-                    ParamOrTsParamProp::Param(p) => p.to_param(ts_path, ts_types),
+                .enumerate()
+                .map(|(i, p)| match p {
+                    ParamOrTsParamProp::Param(p) => p.to_param(ts_path, i, ts_types),
                     ParamOrTsParamProp::TsParamProp(tsp) => match &tsp.param {
-                        TsParamPropParam::Ident(id) => id.to_param(ts_path, ts_types),
+                        TsParamPropParam::Ident(id) => id.to_param(ts_path, i, ts_types),
                         TsParamPropParam::Assign(_a) => {
                             panic!("we don't handle assignment params yet")
                         }
@@ -362,7 +382,8 @@ impl FuncExt for TsMethodSignature {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
         self.params
             .iter()
-            .map(|param| param.to_param(ts_path, ts_types))
+            .enumerate()
+            .map(|(i, param)| param.to_param(ts_path, i, ts_types))
             .collect()
     }
 
@@ -379,7 +400,8 @@ impl FuncExt for TsFnType {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
         self.params
             .iter()
-            .map(|param| param.to_param(ts_path, ts_types))
+            .enumerate()
+            .map(|(i, param)| param.to_param(ts_path, i, ts_types))
             .collect()
     }
 
@@ -396,7 +418,8 @@ impl FuncExt for Function {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Vec<Param> {
         self.params
             .iter()
-            .map(|param| param.to_param(ts_path, ts_types))
+            .enumerate()
+            .map(|(i, param)| param.to_param(ts_path, i, ts_types))
             .collect()
     }
 
@@ -414,7 +437,8 @@ impl FuncExt for ClassMethod {
         self.function
             .params
             .iter()
-            .map(|param| param.to_param(ts_path, ts_types))
+            .enumerate()
+            .map(|(i, param)| param.to_param(ts_path, i, ts_types))
             .collect()
     }
 
@@ -756,6 +780,7 @@ impl TsTypes {
         ts_path: &Path,
         TsTypeLit { members, .. }: &TsTypeLit,
     ) -> TypeInfo {
+        // TODO: anonymous interfaces show up as a type lit
         if members.len() != 1 || !members.first().expect("no members").is_ts_index_signature() {
             panic!("Bad type lit, {:?}, in {:?}", members, ts_path);
         }
@@ -796,7 +821,11 @@ impl TsTypes {
     }
 
     fn process_params(&mut self, ts_path: &Path, params: &[TsFnParam]) -> Vec<Param> {
-        params.iter().map(|p| p.to_param(ts_path, self)).collect()
+        params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| p.to_param(ts_path, i, self))
+            .collect()
     }
 
     fn process_fn_type_params(
