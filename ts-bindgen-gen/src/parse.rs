@@ -324,6 +324,12 @@ impl FnParamExt for RestPat {
                 .type_ann
                 .as_ref()
                 .map(|t| ts_types.process_type(ts_path, &t.type_ann))
+                .map(|t| match t {
+                    // rest params should be arrays but, since we handle rest params (is_variadic) explicitly
+                    // later, we unpack the array now
+                    TypeInfo::Array { item_type } => *item_type,
+                    _ => t,
+                })
                 .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
         }
     }
