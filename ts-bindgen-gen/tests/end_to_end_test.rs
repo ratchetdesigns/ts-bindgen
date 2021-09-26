@@ -20,7 +20,8 @@ fn end_to_end() -> std::io::Result<()> {
     )?;
 
     let ts_index = target_dir.join("ts").join("index");
-    build_ts(&ts_index)?;
+    npm_ci(&target_dir)?;
+    build_ts(&target_dir, &ts_index)?;
     generate_ts_bindgen_file(&ts_index, target_dir.join("src").join("js_lib.rs"))?;
 
     run_cargo_test(target_dir)?;
@@ -42,7 +43,29 @@ fn make_symlink<Src: AsRef<Path>, Dest: AsRef<Path>>(src: Src, dest: Dest) -> st
     symlink(src, dest)
 }
 
-fn build_ts<T: AsRef<Path>>(ts_path: T) -> std::io::Result<()> {
+fn npm_ci<T: AsRef<Path>>(dir: T) -> std::io::Result<()> {
+    let status = Command::new("npm")
+        .arg("ci")
+        .current_dir(dir.as_ref())
+        .env_clear()
+        .env("HOME", env!("HOME"))
+        .env("PATH", env!("PATH"))
+        .env("USER", env!("USER"))
+        .env("HOSTNAME", env!("HOSTNAME"))
+        .spawn()?
+        .wait()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "npm install failed",
+        ))
+    }
+}
+
+fn build_ts<Dir: AsRef<Path>, Ts: AsRef<Path>>(dir: Dir, ts_path: Ts) -> std::io::Result<()> {
     let status = Command::new("npx")
         .arg("--yes")
         .arg("--package=typescript")
@@ -50,6 +73,7 @@ fn build_ts<T: AsRef<Path>>(ts_path: T) -> std::io::Result<()> {
         .arg("tsc")
         .arg("--declaration")
         .arg(ts_path.as_ref())
+        .current_dir(dir)
         .env_clear()
         .env("HOME", env!("HOME"))
         .env("PATH", env!("PATH"))

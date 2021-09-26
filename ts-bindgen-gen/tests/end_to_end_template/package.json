@@ -1,0 +1,20 @@
+{
+  "name": "end-to-end-test",
+  "version": "0.1.0",
+  "description": "ts-bindgen-gen end-to-end test",
+  "main": "ts/index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "cargo test"
+  },
+  "author": "adam@ratchetdesigns.com",
+  "license": "ISC",
+  "dependencies": {
+    "fast-check": "^2.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^16.10.1"
+  }
+}

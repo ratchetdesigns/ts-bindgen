@@ -1,6 +1,8 @@
-export declare type A = string;
+import fastcheck from 'fast-check';
 
-export declare enum MyEnum {
+export type A = string;
+
+export enum MyEnum {
   A = "A",
   B = "B",
 }
@@ -16,6 +18,7 @@ export interface Derived extends Base {
 export interface Abc {
   hello: string;
   union: string | number | null | undefined;
+  tup: [string, number];
   readonly environment: {
       [key: string]: string;
   };
@@ -25,6 +28,10 @@ export interface Def extends Abc {
   anotherField: boolean;
 }
 
-export function runTest(): number {
-  return 5;
+export type AnyType = A | MyEnum | Base | Derived | Abc | Def;
+
+export type BridgeTestFn = (AnyType) => AnyType;
+
+export function runTest(testFn: BridgeTestFn): boolean {
+  return testFn("hello") === "hello";
 }
