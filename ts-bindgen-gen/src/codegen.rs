@@ -126,11 +126,15 @@ fn get_recursive_fields(
         .collect()
 }
 
-impl ToTokens for Param {
+struct TransformedParam<'a, T: Fn(&TypeRef) -> TokenStream2>(&'a Param, T);
+
+impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let param_name = to_snake_case_ident(&self.name);
-        let typ = &self.type_info;
-        let full_type = if self.is_variadic {
+        let param = self.0;
+        let xform = &self.1;
+        let param_name = to_snake_case_ident(&param.name);
+        let typ = xform(&param.type_info);
+        let full_type = if param.is_variadic {
             quote! {
                 &[#typ]
             }
@@ -147,22 +151,102 @@ impl ToTokens for Param {
     }
 }
 
-struct NamedFunc<'a> {
+struct InternalFunc<'a> {
     func: &'a Func,
     js_name: &'a str,
 }
 
-impl<'a> ToTokens for NamedFunc<'a> {
+impl<'a> InternalFunc<'a> {
+    fn to_internal_rust_name(js_name: &str) -> Identifier {
+        to_snake_case_ident(format!("__tsb_{}", js_name))
+    }
+
+    fn to_serialized_type(typ: &TypeRef) -> TokenStream2 {
+        let serialization_type = typ.serialization_type();
+        match serialization_type {
+            SerializationType::Raw => quote! { #typ },
+            SerializationType::SerdeJson => quote! { JsValue },
+        }
+    }
+}
+
+impl<'a> ToTokens for InternalFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let fn_name = to_snake_case_ident(self.js_name);
+        let fn_name = Self::to_internal_rust_name(self.js_name);
 
-        let param_toks: Vec<TokenStream2> =
-            self.func.params.iter().map(|p| quote! { #p }).collect();
+        let param_toks: Vec<TokenStream2> = self
+            .func
+            .params
+            .iter()
+            .map(|p| {
+                let p = TransformedParam(p, InternalFunc::to_serialized_type);
+                quote! { #p }
+            })
+            .collect();
 
-        let return_type = &self.func.return_type;
+        let return_type = InternalFunc::to_serialized_type(&self.func.return_type);
 
         let our_toks = quote! {
             pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue>;
+        };
+
+        toks.extend(our_toks);
+    }
+}
+
+struct WrapperFunc<'a> {
+    func: &'a Func,
+    js_name: &'a str,
+}
+
+impl<'a> WrapperFunc<'a> {
+    fn to_rust_name(js_name: &str) -> Identifier {
+        to_snake_case_ident(js_name)
+    }
+}
+
+impl<'a> ToTokens for WrapperFunc<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let fn_name = Self::to_rust_name(self.js_name);
+
+        let param_toks: Vec<TokenStream2> = self
+            .func
+            .params
+            .iter()
+            .map(|p| {
+                let p = TransformedParam(p, |t| quote! { #t });
+                quote! { #p }
+            })
+            .collect();
+
+        let return_type = &self.func.return_type;
+
+        let internal_fn_name = InternalFunc::to_internal_rust_name(self.js_name);
+        let args: Vec<TokenStream2> = self
+            .func
+            .params
+            .iter()
+            .map(|p| {
+                let serialization_type = p.type_info.serialization_type();
+                let param_name = to_snake_case_ident(&p.name);
+                match serialization_type {
+                    SerializationType::Raw => quote! { #param_name },
+                    SerializationType::SerdeJson => quote! { JsValue::from_serde(&#param_name) },
+                }
+            })
+            .collect();
+        let unwrapper = {
+            let serialization_type = return_type.serialization_type();
+            match serialization_type {
+                SerializationType::Raw => quote! {},
+                SerializationType::SerdeJson => quote! { .into_serde().unwrap() },
+            }
+        };
+
+        let our_toks = quote! {
+            pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
+                #internal_fn_name(#(#args),*)#unwrapper
+            }
         };
 
         toks.extend(our_toks);
@@ -227,6 +311,44 @@ impl Named for TypeIdent {
                 let n = name_parts.last().expect("bad qualified name");
                 (n, to_camel_case_ident(n))
             }
+        }
+    }
+}
+
+enum SerializationType {
+    Raw,
+    SerdeJson,
+}
+
+trait SerializationTypeGetter {
+    fn serialization_type(&self) -> SerializationType;
+}
+
+impl SerializationTypeGetter for TypeRef {
+    fn serialization_type(&self) -> SerializationType {
+        let resolved_type = self.resolve_target_type();
+        resolved_type
+            .as_ref()
+            .and_then(TypesByIdentByPathCell::get_type_info)
+            .map(|ti| ti.serialization_type())
+            .unwrap()
+    }
+}
+
+impl SerializationTypeGetter for TargetEnrichedTypeInfo {
+    fn serialization_type(&self) -> SerializationType {
+        match self {
+            TargetEnrichedTypeInfo::Func(_) => SerializationType::Raw,
+            TargetEnrichedTypeInfo::Enum(_) => SerializationType::Raw,
+            TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
+            TargetEnrichedTypeInfo::Ref(t) => {
+                if let TypeIdent::Builtin(_) = &t.referent {
+                    SerializationType::Raw
+                } else {
+                    SerializationType::SerdeJson
+                }
+            }
+            _ => SerializationType::SerdeJson,
         }
     }
 }
@@ -622,8 +744,6 @@ impl ToTokens for TargetEnrichedType {
                 }
             }
             TargetEnrichedTypeInfo::Tuple(Tuple { types, .. }) => {
-                let type_count = types.len();
-
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     pub struct #name(#(pub #types),*);
@@ -643,14 +763,17 @@ impl ToTokens for TargetEnrichedType {
                     }
                     attrs
                 };
-                let func = NamedFunc { js_name, func };
+                let internal_func = InternalFunc { js_name, func };
+                let wrapper_func = WrapperFunc { js_name, func };
 
                 quote! {
                     #[wasm_bindgen(module=#path)]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
-                        #func
+                        #internal_func
                     }
+
+                    #wrapper_func
                 }
             }
             /*TypeInfo::Intersection {
@@ -702,7 +825,7 @@ impl ToTokens for TargetEnrichedType {
                             }
                         }
                         Member::Method(func) => {
-                            let f = NamedFunc {
+                            let f = InternalFunc {
                                 js_name: member_js_name,
                                 func,
                             };
