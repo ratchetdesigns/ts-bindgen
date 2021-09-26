@@ -3,7 +3,7 @@ use crate::flattened_ir::{
     EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
     Indexer as FlattenedIndexer, Interface as FlattenedInterface,
     Intersection as FlattenedIntersection, Member as FlattenedMember, Param as FlattenedParam,
-    TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
+    Tuple as FlattenedTuple, TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
 pub use crate::flattened_ir::{Builtin, NamespaceImport, TypeIdent};
 use std::cell::RefCell;
@@ -172,6 +172,7 @@ pub enum TargetEnrichedTypeInfo {
     },
     Union(Union),
     Intersection(Intersection),
+    Tuple(Tuple),
     Mapped {
         value_type: Box<TargetEnrichedTypeInfo>,
     },
@@ -242,6 +243,9 @@ impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
             }
             case_conv!(match FlattenedTypeInfo::Union, x) => {
                 case_conv!(TargetEnrichedTypeInfo::Union, x, ctx)
+            }
+            case_conv!(match FlattenedTypeInfo::Tuple, x) => {
+                case_conv!(TargetEnrichedTypeInfo::Tuple, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Intersection, x) => {
                 case_conv!(TargetEnrichedTypeInfo::Intersection, x, ctx)
@@ -362,6 +366,17 @@ pub struct Union {
 
 from_struct!(
     FlattenedUnion => Union;
+    types => [],
+);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tuple {
+    pub types: Vec<TargetEnrichedTypeInfo>,
+    pub context: Context,
+}
+
+from_struct!(
+    FlattenedTuple => Tuple;
     types => [],
 );
 

@@ -153,6 +153,11 @@ pub struct Union {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tuple {
+    pub types: Vec<TypeInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
     pub members: Vec<EnumMember>,
 }
@@ -230,6 +235,7 @@ pub enum TypeInfo {
     BuiltinPromise(BuiltinPromise),
     BuiltinDate(BuiltinDate),
     Array { item_type: Box<TypeInfo> },
+    Tuple(Tuple),
     Optional { item_type: Box<TypeInfo> },
     Union(Union),
     Intersection(Intersection),
@@ -412,6 +418,12 @@ impl TypeInfo {
                     .collect(),
             }),
             Self::Intersection(Intersection { types }) => Self::Intersection(Intersection {
+                types: types
+                    .iter()
+                    .map(|t| t.resolve_names(types_by_name_by_file, type_params))
+                    .collect(),
+            }),
+            Self::Tuple(Tuple { types }) => Self::Tuple(Tuple {
                 types: types
                     .iter()
                     .map(|t| t.resolve_names(types_by_name_by_file, type_params))

@@ -6,7 +6,7 @@ pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
     Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
-    Param, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union,
+    Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent, TypeRef, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -619,6 +619,14 @@ impl ToTokens for TargetEnrichedType {
                             }
                         }
                     }
+                }
+            }
+            TargetEnrichedTypeInfo::Tuple(Tuple { types, .. }) => {
+                let type_count = types.len();
+
+                quote! {
+                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    pub struct #name(#(pub #types),*);
                 }
             }
             TargetEnrichedTypeInfo::Func(func) => {

@@ -2,7 +2,7 @@ use crate::ir::{
     BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection, LitBoolean,
     LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny, PrimitiveBigInt,
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
-    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type, TypeIdent, TypeInfo, TypeName,
+    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent, TypeInfo, TypeName,
     TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
@@ -910,6 +910,19 @@ impl TsTypes {
         })
     }
 
+    fn process_tuple(
+        &mut self,
+        ts_path: &Path,
+        TsTupleType { elem_types, .. }: &TsTupleType,
+    ) -> TypeInfo {
+        TypeInfo::Tuple(Tuple {
+            types: elem_types
+                .iter()
+                .map(|t| self.process_type(ts_path, &t.ty))
+                .collect(),
+        })
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
@@ -934,7 +947,7 @@ impl TsTypes {
                 self.process_ctor_type(ts_path, ctor)
             }
             TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, pred),
-            // TODO: more cases
+            TsType::TsTupleType(tuple) => self.process_tuple(ts_path, tuple),
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Ref(TypeRef {

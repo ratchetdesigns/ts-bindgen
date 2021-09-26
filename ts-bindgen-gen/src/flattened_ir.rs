@@ -5,8 +5,9 @@ use crate::ir::{
     Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean,
     LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
-    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Type as TypeIR, TypeIdent as TypeIdentIR,
-    TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR, Union as UnionIR,
+    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
+    TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR,
+    Union as UnionIR,
 };
 use enum_to_enum::{FromEnum, WithEffects};
 use std::collections::HashMap;
@@ -130,6 +131,7 @@ impl<K: std::hash::Hash + Eq, V> FromIterator<(K, EffectContainer<V>)>
 pub enum NameableTypeInfo {
     Union(Union),
     Intersection(Intersection),
+    Tuple(Tuple),
 }
 
 impl From<NameableTypeInfo> for FlattenedTypeInfo {
@@ -137,6 +139,7 @@ impl From<NameableTypeInfo> for FlattenedTypeInfo {
         match src {
             NameableTypeInfo::Union(u) => FlattenedTypeInfo::Union(u),
             NameableTypeInfo::Intersection(i) => FlattenedTypeInfo::Intersection(i),
+            NameableTypeInfo::Tuple(t) => FlattenedTypeInfo::Tuple(t),
         }
     }
 }
@@ -172,6 +175,7 @@ pub enum FlattenedTypeInfo {
     Array {
         item_type: Box<FlattenedTypeInfo>,
     },
+    Tuple(Tuple),
     Optional {
         item_type: Box<FlattenedTypeInfo>,
     },
@@ -208,6 +212,7 @@ impl ApplyNames for FlattenedTypeInfo {
             FlattenedTypeInfo::Intersection(i) => {
                 FlattenedTypeInfo::Intersection(i.apply_names(names_by_id))
             }
+            FlattenedTypeInfo::Tuple(t) => FlattenedTypeInfo::Tuple(t.apply_names(names_by_id)),
             FlattenedTypeInfo::Mapped { value_type } => FlattenedTypeInfo::Mapped {
                 value_type: Box::new(value_type.apply_names(names_by_id)),
             },
@@ -450,6 +455,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                     }
                 )
             }
+            TypeInfoIR::Tuple(t) => t.into(),
             TypeInfoIR::Optional { item_type } => {
                 let item_type: EffectContainer<TypeRef> = (*item_type).into();
                 combine_effects!(
@@ -586,6 +592,7 @@ macro_rules! impl_effectful_conversion_from_nameable_type_to_type_ref {
 impl_effectful_conversion_from_nameable_type_to_type_ref!(
     UnionIR => Union,
     IntersectionIR => Intersection,
+    TupleIR => Tuple,
 );
 
 macro_rules! type_ref_from_prims {
@@ -711,6 +718,35 @@ impl From<IntersectionIR> for EffectContainer<Intersection> {
         combine_effects!(
             types => (effect_mappers::identity());
             Intersection {
+                types,
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tuple {
+    pub types: Vec<FlattenedTypeInfo>,
+}
+
+impl ApplyNames for Tuple {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        Tuple {
+            types: self
+                .types
+                .into_iter()
+                .map(|t| t.apply_names(names_by_id))
+                .collect(),
+        }
+    }
+}
+
+impl From<TupleIR> for EffectContainer<Tuple> {
+    fn from(src: TupleIR) -> EffectContainer<Tuple> {
+        let types = src.types.into_iter().map(EffectContainer::from).collect();
+        combine_effects!(
+            types => (effect_mappers::identity());
+            Tuple {
                 types,
             }
         )
