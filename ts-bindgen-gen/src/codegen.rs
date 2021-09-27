@@ -449,7 +449,7 @@ impl<'a> TypesByIdentByPathCell<'a> {
             TypesByIdentByPathCell::Owned(t) => Some(&t),
             TypesByIdentByPathCell::Lookup(r, path, n) => r
                 .get(path)
-                .and_then(|t_by_n| t_by_n.get(&n))
+                .and_then(|t_by_n| t_by_n.get(&n)) // TODO: try LocalName and Name interchangeably
                 .map(|t| &t.info),
         }
     }
@@ -874,7 +874,7 @@ impl ToTokens for TargetEnrichedType {
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },*/
-            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src }) => {
+            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src, .. }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let name = to_snake_case_ident(js_name);
 
@@ -882,7 +882,7 @@ impl ToTokens for TargetEnrichedType {
                     #vis use #ns as #name;
                 }
             }
-            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Default { src }) => {
+            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Default { src, .. }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
                     let vis = format_ident!("pub");
@@ -899,6 +899,7 @@ impl ToTokens for TargetEnrichedType {
             TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Named {
                 src,
                 name: item_name,
+                ..
             }) => {
                 let ns = src.as_path().to_ns_path(&self.name);
                 let vis = if self.is_exported {
@@ -1034,7 +1035,9 @@ impl ToTokens for TypeRef {
                     .last()
                     .map(|p| quote! { #p })
                     .unwrap_or_else(|| quote! {()});
-                quote! { #name(#(#params),*) -> #ret }
+                quote! {
+                    Closure<dyn #name(#(#params),*) -> #ret>
+                }
             } else if self.type_params.is_empty() {
                 quote! { #name }
             } else {

@@ -2,10 +2,11 @@ use crate::flattened_ir::{
     Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor, Enum as FlattenedEnum,
     EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
     Indexer as FlattenedIndexer, Interface as FlattenedInterface,
-    Intersection as FlattenedIntersection, Member as FlattenedMember, Param as FlattenedParam,
-    Tuple as FlattenedTuple, TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
+    Intersection as FlattenedIntersection, Member as FlattenedMember,
+    NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
+    TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
-pub use crate::flattened_ir::{Builtin, NamespaceImport, TypeIdent};
+pub use crate::flattened_ir::{Builtin, TypeIdent};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -468,6 +469,37 @@ from_struct!(
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamespaceImport {
+    Default {
+        src: PathBuf,
+        context: Context,
+    },
+    All {
+        src: PathBuf,
+        context: Context,
+    },
+    Named {
+        src: PathBuf,
+        name: String,
+        context: Context,
+    },
+}
+
+impl From<WithContext<FlattenedNamespaceImport>> for NamespaceImport {
+    fn from(src: WithContext<FlattenedNamespaceImport>) -> NamespaceImport {
+        let value = src.value;
+        let context = src.context.clone();
+        match value {
+            FlattenedNamespaceImport::Default { src } => NamespaceImport::Default { src, context },
+            FlattenedNamespaceImport::All { src } => NamespaceImport::All { src, context },
+            FlattenedNamespaceImport::Named { src, name } => {
+                NamespaceImport::Named { src, name, context }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
     pub types_by_ident_by_path: WrappedTypesByIdentByPath,
     pub path: PathBuf,
@@ -477,12 +509,6 @@ pub struct Context {
 struct WithContext<T> {
     value: T,
     context: Context,
-}
-
-impl From<WithContext<NamespaceImport>> for NamespaceImport {
-    fn from(src: WithContext<NamespaceImport>) -> NamespaceImport {
-        src.value
-    }
 }
 
 // TODO: really don't want to expose the RefCell to the world here but I can't figure out a way to
