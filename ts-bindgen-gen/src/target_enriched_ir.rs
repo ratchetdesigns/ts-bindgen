@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 type SourceTypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, FlatType>>;
-type TypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>;
+pub type TypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>;
 type WrappedTypesByIdentByPath = Rc<RefCell<TypesByIdentByPath>>;
 
 macro_rules! from_field {

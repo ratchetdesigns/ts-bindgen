@@ -6,15 +6,28 @@ pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
     Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
-    Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent, TypeRef, Union,
+    Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent, TypeRef,
+    TypesByIdentByPath, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::iter;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use syn::Token;
+
+macro_rules! if_requires_resolution {
+    ($matcher:ident, $id:ident then $then:tt else $else:tt) => {
+        match $matcher {
+            TargetEnrichedTypeInfo::Ref($id) => $then,
+            TargetEnrichedTypeInfo::NamespaceImport($id) => $then,
+            TargetEnrichedTypeInfo::Alias($id) => $then,
+            _ => $else,
+        }
+    };
+}
 
 impl ToTokens for Identifier {
     fn to_tokens(&self, toks: &mut TokenStream2) {
@@ -112,13 +125,11 @@ fn get_recursive_fields(
         .iter()
         .map(|(n, t)| (n.clone(), t.clone()))
         .chain(extends.iter().flat_map(|base| {
-            let resolved_type = base.resolve_target_type();
-            let base = resolved_type
-                .as_ref()
-                .and_then(TypesByIdentByPathCell::get_type_info)
+            let resolved_type = base
+                .resolve_target_type()
                 .expect("cannot resolve base type for interface");
-            if let TargetEnrichedTypeInfo::Interface(i) = base {
-                get_recursive_fields(i).into_iter()
+            if let TargetEnrichedTypeInfo::Interface(i) = resolved_type {
+                get_recursive_fields(&i).into_iter()
             } else {
                 panic!("expected an interface as the base type for an interface");
             }
@@ -165,6 +176,7 @@ impl<'a> InternalFunc<'a> {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
+            SerializationType::Ref => quote! { &#typ },
             SerializationType::SerdeJson => quote! { JsValue },
         }
     }
@@ -203,6 +215,14 @@ impl<'a> WrapperFunc<'a> {
     fn to_rust_name(js_name: &str) -> Identifier {
         to_snake_case_ident(js_name)
     }
+
+    fn to_serialized_type(typ: &TypeRef) -> TokenStream2 {
+        let serialization_type = typ.serialization_type();
+        match serialization_type {
+            SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
+            SerializationType::Ref => quote! { &#typ },
+        }
+    }
 }
 
 impl<'a> ToTokens for WrapperFunc<'a> {
@@ -214,7 +234,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
             .params
             .iter()
             .map(|p| {
-                let p = TransformedParam(p, |t| quote! { #t });
+                let p = TransformedParam(p, WrapperFunc::to_serialized_type);
                 quote! { #p }
             })
             .collect();
@@ -230,7 +250,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                 let serialization_type = p.type_info.serialization_type();
                 let param_name = to_snake_case_ident(&p.name);
                 match serialization_type {
-                    SerializationType::Raw => quote! { #param_name },
+                    SerializationType::Raw | SerializationType::Ref => quote! { #param_name },
                     SerializationType::SerdeJson => quote! { JsValue::from_serde(&#param_name) },
                 }
             })
@@ -238,14 +258,14 @@ impl<'a> ToTokens for WrapperFunc<'a> {
         let unwrapper = {
             let serialization_type = return_type.serialization_type();
             match serialization_type {
-                SerializationType::Raw => quote! {},
+                SerializationType::Raw | SerializationType::Ref => quote! {},
                 SerializationType::SerdeJson => quote! { .into_serde().unwrap() },
             }
         };
 
         let our_toks = quote! {
             pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
-                #internal_fn_name(#(#args),*)#unwrapper
+                Ok(#internal_fn_name(#(#args),*)?#unwrapper)
             }
         };
 
@@ -315,9 +335,11 @@ impl Named for TypeIdent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SerializationType {
     Raw,
     SerdeJson,
+    Ref,
 }
 
 trait SerializationTypeGetter {
@@ -327,27 +349,21 @@ trait SerializationTypeGetter {
 impl SerializationTypeGetter for TypeRef {
     fn serialization_type(&self) -> SerializationType {
         let resolved_type = self.resolve_target_type();
-        resolved_type
-            .as_ref()
-            .and_then(TypesByIdentByPathCell::get_type_info)
-            .map(|ti| ti.serialization_type())
-            .unwrap()
+        resolved_type.map(|ti| ti.serialization_type()).unwrap()
     }
 }
 
 impl SerializationTypeGetter for TargetEnrichedTypeInfo {
     fn serialization_type(&self) -> SerializationType {
         match self {
-            TargetEnrichedTypeInfo::Func(_) => SerializationType::Raw,
+            TargetEnrichedTypeInfo::Func(_) => SerializationType::Ref,
             TargetEnrichedTypeInfo::Enum(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
-            TargetEnrichedTypeInfo::Ref(t) => {
-                if let TypeIdent::Builtin(_) = &t.referent {
-                    SerializationType::Raw
-                } else {
-                    SerializationType::SerdeJson
-                }
-            }
+            TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
+                TypeIdent::Builtin(Builtin::Fn) => SerializationType::Ref,
+                TypeIdent::Builtin(_) => SerializationType::Raw,
+                _ => SerializationType::SerdeJson,
+            },
             _ => SerializationType::SerdeJson,
         }
     }
@@ -361,8 +377,6 @@ impl ExtraFieldAttrs for TypeRef {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
         let resolved_type = self.resolve_target_type();
         let resolved_extra_attrs = resolved_type
-            .as_ref()
-            .and_then(TypesByIdentByPathCell::get_type_info)
             .map(|ti| ti.extra_field_attrs())
             .unwrap_or_else(|| Box::new(iter::empty()));
 
@@ -413,85 +427,51 @@ impl ExtraFieldAttrs for Builtin {
     }
 }
 
-// TODO: we only need this silly container because we get a Ref rather than a & because we had to
-// leave types_by_ident_by_path as an Rc<RefCell<...>> instead of just an Rc<..>
-enum TypesByIdentByPathCell<'a> {
-    // TODO: I want a &'a PathBuf but that gets tricky to look up in the map for some reason
-    Lookup(
-        Ref<'a, HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>>,
-        PathBuf,
-        TypeIdent,
-    ),
-    Direct(&'a TargetEnrichedTypeInfo),
-    Owned(TargetEnrichedTypeInfo),
-}
-
-impl std::fmt::Debug for TypesByIdentByPathCell<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypesByIdentByPathCell::Lookup(_, f1, f2) => f
-                .debug_struct("TypesByIdentByPathCell")
-                .field("1", f1)
-                .field("2", f2)
-                .finish(),
-            _ => f
-                .debug_struct("TypesByIdentByPathCell")
-                .field("elided", &true)
-                .finish(),
-        }
-    }
-}
-
-impl<'a> TypesByIdentByPathCell<'a> {
-    fn get_type_info(&'a self) -> Option<&'a TargetEnrichedTypeInfo> {
-        match self {
-            TypesByIdentByPathCell::Direct(t) => Some(t),
-            TypesByIdentByPathCell::Owned(t) => Some(&t),
-            TypesByIdentByPathCell::Lookup(r, path, n) => r
-                .get(path)
-                .and_then(|t_by_n| t_by_n.get(&n)) // TODO: try LocalName and Name interchangeably
-                .map(|t| &t.info),
-        }
-    }
-}
-
 trait ResolveTargetType {
-    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell>;
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo>;
 }
 
 impl ResolveTargetType for TargetEnrichedType {
-    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         self.info.resolve_target_type()
     }
 }
 
+fn resolve_type(
+    types_by_ident_by_path: &Rc<RefCell<TypesByIdentByPath>>,
+    path: &PathBuf,
+    id: &TypeIdent,
+) -> Option<TargetEnrichedTypeInfo> {
+    // TODO: need to look for TypeIdent::Name or TypeIdent::Local interchangeably
+    let ti = RefCell::borrow(types_by_ident_by_path)
+        .get(path)
+        .and_then(|t_by_id| t_by_id.get(id))
+        .map(|t| t.info.clone());
+    match ti {
+        None => return None,
+        Some(t) => if_requires_resolution!(
+            t,
+            x
+            then (x.resolve_target_type())
+            else (Some(t))
+        ),
+    }
+}
+
 impl ResolveTargetType for TypeRef {
-    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         match &self.referent {
-            TypeIdent::LocalName(n) => Some(TypesByIdentByPathCell::Lookup(
-                RefCell::borrow(&self.context.types_by_ident_by_path),
-                self.context.path.clone(),
-                // TODO: this is weird. we should not need clones here and we should not
-                // have the option of looking up a Builtin
-                // TODO: specifically,
-                // 1. convert all TypeIdent::Name-s into TypeIdent::LocalName-s
-                //    (correctness issue)
-                // 2. get rid of GeneratedName in our ir pipeline
-                TypeIdent::LocalName(n.clone()),
-            )),
-            TypeIdent::Name { file, name } => Some(TypesByIdentByPathCell::Lookup(
-                RefCell::borrow(&self.context.types_by_ident_by_path),
-                file.clone(),
-                TypeIdent::Name {
-                    file: file.clone(),
-                    name: name.clone(),
-                },
-            )),
-            TypeIdent::DefaultExport(path) => Some(TypesByIdentByPathCell::Lookup(
-                RefCell::borrow(&self.context.types_by_ident_by_path),
-                path.clone(),
-                TypeIdent::DefaultExport(path.clone()),
-            )),
+            TypeIdent::LocalName(_) => resolve_type(
+                &self.context.types_by_ident_by_path,
+                &self.context.path,
+                &self.referent,
+            ),
+            TypeIdent::Name { file, name: _ } => {
+                resolve_type(&self.context.types_by_ident_by_path, &file, &self.referent)
+            }
+            TypeIdent::DefaultExport(path) => {
+                resolve_type(&self.context.types_by_ident_by_path, &path, &self.referent)
+            }
             TypeIdent::QualifiedName { file, name_parts } => {
                 let mut final_file = file.clone();
                 let mut final_name = None;
@@ -505,12 +485,9 @@ impl ResolveTargetType for TypeRef {
                         })
                     });
                     if let Some(ty) = t {
-                        let resolved_type = ty.resolve_target_type();
-                        // TODO: silly to clone on every iteration but i need to figure out how
-                        // to get resolved_type to live long enough to just pass along the ref
-                        if let Some(target_type) =
-                            resolved_type.as_ref().and_then(|tt| tt.get_type_info())
-                        {
+                        if let Some(target_type) = ty.resolve_target_type() {
+                            // TODO: silly to clone on every iteration but i need to figure out how
+                            // to get resolved_type to live long enough to just pass along the ref
                             final_file = match target_type {
                                 TargetEnrichedTypeInfo::Interface(i) => i.context.path.clone(),
                                 TargetEnrichedTypeInfo::Enum(e) => e.context.path.clone(),
@@ -533,28 +510,56 @@ impl ResolveTargetType for TypeRef {
                 }
 
                 final_name.and_then(|final_name| {
-                    let final_name = final_name.clone();
-
-                    Some(TypesByIdentByPathCell::Lookup(
-                        RefCell::borrow(&self.context.types_by_ident_by_path),
-                        final_file,
+                    resolve_type(
+                        &self.context.types_by_ident_by_path,
+                        &final_file,
                         final_name,
-                    ))
+                    )
                 })
             }
-            _ => Some(TypesByIdentByPathCell::Owned(TargetEnrichedTypeInfo::Ref(
-                self.clone(),
-            ))),
+            _ => Some(TargetEnrichedTypeInfo::Ref(self.clone())),
         }
     }
 }
 
-impl ResolveTargetType for TargetEnrichedTypeInfo {
-    fn resolve_target_type(&self) -> Option<TypesByIdentByPathCell> {
+impl ResolveTargetType for NamespaceImport {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         match self {
-            TargetEnrichedTypeInfo::Ref(r) => r.resolve_target_type(),
-            _ => Some(TypesByIdentByPathCell::Direct(self)),
+            NamespaceImport::Default { src, context } => resolve_type(
+                &context.types_by_ident_by_path,
+                src,
+                &TypeIdent::DefaultExport(src.clone()),
+            ),
+            NamespaceImport::Named { src, name, context } => resolve_type(
+                &context.types_by_ident_by_path,
+                src,
+                &TypeIdent::Name {
+                    file: src.clone(),
+                    name: name.clone(),
+                },
+            ),
+            NamespaceImport::All { src: _, context: _ } => {
+                // TODO
+                unimplemented!()
+            }
         }
+    }
+}
+
+impl ResolveTargetType for Alias {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
+        self.target.resolve_target_type()
+    }
+}
+
+impl ResolveTargetType for TargetEnrichedTypeInfo {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
+        if_requires_resolution!(
+            self,
+            x
+            then (x.resolve_target_type())
+            else (Some(self.clone()))
+        )
     }
 }
 
