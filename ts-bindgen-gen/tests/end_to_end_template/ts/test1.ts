@@ -30,7 +30,7 @@ export interface Def extends Abc {
 
 export type AnyType = A | MyEnum | Base | Derived | Abc | Def;
 
-export type BridgeTestFn = (AnyType) => AnyType;
+export type BridgeTestFn = (input: AnyType) => AnyType;
 
 export function runTest(testFn: BridgeTestFn): boolean {
   return testFn("hello") === "hello";
