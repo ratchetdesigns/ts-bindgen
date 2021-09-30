@@ -178,6 +178,31 @@ impl<'a> InternalFunc<'a> {
             SerializationType::Raw => quote! { #typ },
             SerializationType::Ref => quote! { &#typ },
             SerializationType::SerdeJson => quote! { JsValue },
+            SerializationType::Fn => {
+                let target = typ.resolve_target_type();
+                match target {
+                    Some(TargetEnrichedTypeInfo::Ref(typ))
+                        if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) =>
+                    {
+                        let params = typ
+                            .type_params
+                            .iter()
+                            .map(InternalFunc::to_serialized_type)
+                            .take(typ.type_params.len() - 1);
+                        let ret = typ
+                            .type_params
+                            .last()
+                            .map(InternalFunc::to_serialized_type)
+                            .unwrap_or_else(|| quote! { () });
+                        quote! {
+                            &Closure<dyn Fn(#(#params),*) -> #ret>
+                        }
+                    }
+                    _ => {
+                        unreachable!();
+                    }
+                }
+            }
         }
     }
 }
@@ -220,7 +245,7 @@ impl<'a> WrapperFunc<'a> {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
-            SerializationType::Ref => quote! { &#typ },
+            SerializationType::Ref | SerializationType::Fn => quote! { &#typ },
         }
     }
 }
@@ -252,6 +277,12 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                 match serialization_type {
                     SerializationType::Raw | SerializationType::Ref => quote! { #param_name },
                     SerializationType::SerdeJson => quote! { JsValue::from_serde(&#param_name) },
+                    SerializationType::Fn => {
+                        // TODO!
+                        quote! {
+                            #param_name
+                        }
+                    }
                 }
             })
             .collect();
@@ -260,6 +291,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
             match serialization_type {
                 SerializationType::Raw | SerializationType::Ref => quote! {},
                 SerializationType::SerdeJson => quote! { .into_serde().unwrap() },
+                SerializationType::Fn => quote! { .into_serde().unwrap() },
             }
         };
 
@@ -340,6 +372,7 @@ enum SerializationType {
     Raw,
     SerdeJson,
     Ref,
+    Fn,
 }
 
 trait SerializationTypeGetter {
@@ -356,11 +389,11 @@ impl SerializationTypeGetter for TypeRef {
 impl SerializationTypeGetter for TargetEnrichedTypeInfo {
     fn serialization_type(&self) -> SerializationType {
         match self {
-            TargetEnrichedTypeInfo::Func(_) => SerializationType::Ref,
+            TargetEnrichedTypeInfo::Func(_) => SerializationType::Fn,
             TargetEnrichedTypeInfo::Enum(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
-                TypeIdent::Builtin(Builtin::Fn) => SerializationType::Ref,
+                TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,
                 TypeIdent::Builtin(_) => SerializationType::Raw,
                 _ => SerializationType::SerdeJson,
             },
