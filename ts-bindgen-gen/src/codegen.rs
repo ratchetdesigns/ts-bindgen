@@ -181,6 +181,7 @@ impl<'a> InternalFunc<'a> {
             SerializationType::Fn => {
                 let target = typ.resolve_target_type();
                 match target {
+                    // TODO: lots of similar code
                     Some(TargetEnrichedTypeInfo::Ref(typ))
                         if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) =>
                     {
@@ -241,6 +242,10 @@ impl<'a> WrapperFunc<'a> {
         to_snake_case_ident(js_name)
     }
 
+    fn to_local_fn_name(name: &str) -> Identifier {
+        to_snake_case_ident(format!("__tsb_local_{}", name))
+    }
+
     fn to_serialized_type(typ: &TypeRef) -> TokenStream2 {
         let serialization_type = typ.serialization_type();
         match serialization_type {
@@ -278,10 +283,8 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                     SerializationType::Raw | SerializationType::Ref => quote! { #param_name },
                     SerializationType::SerdeJson => quote! { JsValue::from_serde(&#param_name) },
                     SerializationType::Fn => {
-                        // TODO!
-                        quote! {
-                            #param_name
-                        }
+                        let local_fn_name = Self::to_local_fn_name(&p.name);
+                        quote! { &#local_fn_name }
                     }
                 }
             })
@@ -291,12 +294,94 @@ impl<'a> ToTokens for WrapperFunc<'a> {
             match serialization_type {
                 SerializationType::Raw | SerializationType::Ref => quote! {},
                 SerializationType::SerdeJson => quote! { .into_serde().unwrap() },
-                SerializationType::Fn => quote! { .into_serde().unwrap() },
+                SerializationType::Fn => {
+                    // TODO - should be a js_sys::Function that we wrap
+                    quote! { .into_serde().unwrap() }
+                }
             }
         };
+        let wrapper_fns = self.func.params.iter()
+            .filter_map(|p| p.type_info.resolve_target_type().map(|t| (p, t)))
+            .filter(|(_p, t)| t.serialization_type() == SerializationType::Fn)
+            .filter_map(|(p, t)| {
+                // TODO: lots of similar code
+                let orig_name = to_snake_case_ident(&p.name);
+                let name = Self::to_local_fn_name(&p.name);
+                match t {
+                    TargetEnrichedTypeInfo::Ref(typ) if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) => {
+                        let params = typ
+                            .type_params
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| {
+                                let typ = InternalFunc::to_serialized_type(t);
+                                let n = to_snake_case_ident(format!("arg{}", i));
+                                quote! { #n: #typ }
+                            })
+                            .take(typ.type_params.len() - 1);
+                        let param_types = typ
+                            .type_params
+                            .iter()
+                            .map(|t| {
+                                let typ = InternalFunc::to_serialized_type(t);
+                                quote! { #typ }
+                            })
+                            .take(typ.type_params.len() - 1);
+                        let ret = typ
+                            .type_params
+                            .last()
+                            .map(InternalFunc::to_serialized_type)
+                            .unwrap_or_else(|| quote! { () });
+                        let args = typ
+                            .type_params
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| {
+                                let n = to_snake_case_ident(format!("arg{}", i));
+                                let serialization_type = t.serialization_type();
+                                match serialization_type {
+                                    SerializationType::Raw | SerializationType::Ref => quote! { #n },
+                                    SerializationType::SerdeJson => quote! { #n.into_serde().map_err(ts_bindgen_rt::Error::from)? },
+                                    SerializationType::Fn => {
+                                        // TODO: we're not recursive yet
+                                        unimplemented!();
+                                    }
+                                }
+                            })
+                            .take(typ.type_params.len() - 1);
+                        let ret_type = typ.type_params.last()
+                            .map(SerializationTypeGetter::serialization_type)
+                            .unwrap_or_else(|| SerializationType::Raw);
+                        let full_ret = quote! {
+                            std::result::Result<#ret, JsValue>
+                        };
+                        let box_fn_type = quote! {
+                            Box<dyn Fn(#(#param_types),*) -> #ret>
+                        };
+                        let invocation = if ret_type == SerializationType::SerdeJson {
+                            quote! {
+                                Ok(JsValue::from_serde(&#orig_name(#(#args),*)).map_err(ts_bindgen_rt::Error::from)?)
+                            }
+                        } else {
+                            quote! {
+                                #orig_name(#(#args),*)
+                            }
+                        };
+                        Some(quote! {
+                            let #name = Closure::wrap(Box::new(
+                                |#(#params),*| -> #full_ret {
+                                    #invocation
+                                }
+                            ) as #box_fn_type);
+                        })
+                    },
+                    _ => None,
+                }
+            });
 
         let our_toks = quote! {
             pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
+                #(#wrapper_fns);*
                 Ok(#internal_fn_name(#(#args),*)?#unwrapper)
             }
         };
@@ -1074,7 +1159,7 @@ impl ToTokens for TypeRef {
                     .map(|p| quote! { #p })
                     .unwrap_or_else(|| quote! {()});
                 quote! {
-                    Closure<dyn #name(#(#params),*) -> #ret>
+                    Box<dyn #name(#(#params),*) -> Result<#ret, JsValue>>
                 }
             } else if self.type_params.is_empty() {
                 quote! { #name }
