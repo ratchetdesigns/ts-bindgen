@@ -196,7 +196,7 @@ impl<'a> InternalFunc<'a> {
                             .map(InternalFunc::to_serialized_type)
                             .unwrap_or_else(|| quote! { () });
                         quote! {
-                            &Closure<dyn Fn(#(#params),*) -> #ret>
+                            &Closure<dyn Fn(#(#params),*) -> std::result::Result<#ret, JsValue>>
                         }
                     }
                     _ => {
@@ -356,11 +356,11 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                             std::result::Result<#ret, JsValue>
                         };
                         let box_fn_type = quote! {
-                            Box<dyn Fn(#(#param_types),*) -> #ret>
+                            Box<dyn Fn(#(#param_types),*) -> #full_ret>
                         };
                         let invocation = if ret_type == SerializationType::SerdeJson {
                             quote! {
-                                Ok(JsValue::from_serde(&#orig_name(#(#args),*)).map_err(ts_bindgen_rt::Error::from)?)
+                                Ok(JsValue::from_serde(&#orig_name(#(#args),*)?).map_err(ts_bindgen_rt::Error::from)?)
                             }
                         } else {
                             quote! {
