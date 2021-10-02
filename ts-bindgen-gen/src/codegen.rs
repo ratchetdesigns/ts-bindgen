@@ -250,7 +250,8 @@ impl<'a> WrapperFunc<'a> {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
-            SerializationType::Ref | SerializationType::Fn => quote! { &#typ },
+            SerializationType::Ref => quote! { &#typ },
+            SerializationType::Fn => quote! { &'static #typ },
         }
     }
 }
