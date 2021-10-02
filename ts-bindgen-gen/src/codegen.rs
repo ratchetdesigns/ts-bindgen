@@ -802,6 +802,7 @@ impl ToTokens for TargetEnrichedType {
                 quote! {
                     #[wasm_bindgen]
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[serde(untagged)]
                     pub enum #name {
                         #(#members),*
                     }
@@ -859,6 +860,7 @@ impl ToTokens for TargetEnrichedType {
 
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[serde(untagged)]
                     pub enum #name {
                         #(#members),*
                     }

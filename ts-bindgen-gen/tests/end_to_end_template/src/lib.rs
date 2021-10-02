@@ -9,6 +9,6 @@ pub fn cloner(t: AnyType) -> Result<AnyType, JsValue> {
 }
 
 pub fn run_end_to_end_test() -> Result<(), wasm_bindgen::JsValue>{
-    assert_eq!(run_test(&cloner, &[1f64])? as u64, 5u64);
+    assert!(run_test(&cloner, &[1f64])?);
     Ok(())
 }
