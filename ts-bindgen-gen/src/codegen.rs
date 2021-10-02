@@ -382,6 +382,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
             });
 
         let our_toks = quote! {
+            #[allow(dead_code)]
             pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
                 #(#wrapper_fns);*
                 Ok(#internal_fn_name(#(#args),*)?#unwrapper)
