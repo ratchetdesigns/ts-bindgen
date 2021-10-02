@@ -361,7 +361,8 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                         };
                         let invocation = if ret_type == SerializationType::SerdeJson {
                             quote! {
-                                Ok(JsValue::from_serde(&#orig_name(#(#args),*)?).map_err(ts_bindgen_rt::Error::from)?)
+                                let result = #orig_name(#(#args),*)?;
+                                Ok(JsValue::from_serde(&result).map_err(ts_bindgen_rt::Error::from)?)
                             }
                         } else {
                             quote! {
@@ -370,7 +371,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                         };
                         Some(quote! {
                             let #name = Closure::wrap(Box::new(
-                                |#(#params),*| -> #full_ret {
+                                move |#(#params),*| -> #full_ret {
                                     #invocation
                                 }
                             ) as #box_fn_type);
@@ -1160,7 +1161,7 @@ impl ToTokens for TypeRef {
                     .map(|p| quote! { #p })
                     .unwrap_or_else(|| quote! {()});
                 quote! {
-                    Box<dyn #name(#(#params),*) -> Result<#ret, JsValue>>
+                    dyn #name(#(#params),*) -> Result<#ret, JsValue>
                 }
             } else if self.type_params.is_empty() {
                 quote! { #name }
