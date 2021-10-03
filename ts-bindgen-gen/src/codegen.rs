@@ -945,7 +945,7 @@ impl ToTokens for TargetEnrichedType {
 
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-                    #[serde(untagged, deny_unknown_fields)]
+                    #[serde(untagged)]
                     pub enum #name {
                         #(#members),*
                     }
