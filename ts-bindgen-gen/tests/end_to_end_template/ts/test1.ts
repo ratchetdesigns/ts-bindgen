@@ -1,4 +1,5 @@
 import fastcheck from 'fast-check';
+import * as util from 'util';
 
 export type A = string;
 
@@ -33,5 +34,12 @@ export type AnyType = A | MyEnum | Base | Derived | Abc | Def;
 export type BridgeTestFn = (input: AnyType) => AnyType;
 
 export function runTest(testFn: BridgeTestFn): boolean {
-  return testFn("hello") === "hello";
+  const base = { baseField: 7 };
+  const derived = { baseField: 3, derivedField: "potato" };
+  return testFn("hello") === "hello"
+    && testFn(MyEnum.A) === "A"
+    && util.isDeepStrictEqual(testFn(base), base)
+    && testFn(base) !== base
+    && util.isDeepStrictEqual(testFn(derived), derived)
+    && testFn(derived) !== derived;
 }

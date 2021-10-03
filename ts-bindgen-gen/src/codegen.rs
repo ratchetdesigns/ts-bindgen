@@ -747,6 +747,82 @@ fn trim_after_dot<'a>(s: &'a str) -> &'a str {
     &s[0..idx.unwrap_or_else(|| s.len())]
 }
 
+fn get_field_count<T: FieldCountGetter>(t: &T) -> usize {
+    t.get_field_count()
+}
+
+trait FieldCountGetter {
+    fn get_field_count(&self) -> usize;
+}
+
+impl FieldCountGetter for TargetEnrichedType {
+    fn get_field_count(&self) -> usize {
+        self.info.get_field_count()
+    }
+}
+
+impl FieldCountGetter for TargetEnrichedTypeInfo {
+    fn get_field_count(&self) -> usize {
+        match self {
+            TargetEnrichedTypeInfo::Interface(i) => {
+                if i.indexer.is_some() {
+                    usize::MAX
+                } else {
+                    i.fields.len()
+                }
+            }
+            TargetEnrichedTypeInfo::Enum(e) => e.members.len(),
+            TargetEnrichedTypeInfo::Alias(a) => a
+                .resolve_target_type()
+                .as_ref()
+                .map(get_field_count)
+                .unwrap_or(usize::MIN),
+            TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
+                TypeIdent::Builtin(_) => usize::MIN,
+                TypeIdent::GeneratedName { .. } => unreachable!(),
+                _ => r
+                    .resolve_target_type()
+                    .as_ref()
+                    .map(get_field_count)
+                    .unwrap_or(usize::MIN),
+            },
+            TargetEnrichedTypeInfo::Array { .. } => usize::MIN,
+            TargetEnrichedTypeInfo::Optional { item_type } => item_type.get_field_count(),
+            TargetEnrichedTypeInfo::Union(u) => u
+                .types
+                .iter()
+                .map(get_field_count)
+                .max()
+                .unwrap_or(usize::MIN),
+            TargetEnrichedTypeInfo::Intersection(i) => i
+                .types
+                .iter()
+                .map(get_field_count)
+                .min()
+                .unwrap_or(usize::MIN),
+            TargetEnrichedTypeInfo::Tuple(t) => t.types.len(),
+            TargetEnrichedTypeInfo::Mapped { .. } => usize::MAX,
+            TargetEnrichedTypeInfo::Func(_) => usize::MIN,
+            TargetEnrichedTypeInfo::Constructor(_) => usize::MIN,
+            TargetEnrichedTypeInfo::Class(c) => {
+                c.members.len()
+                    + c.super_class
+                        .as_ref()
+                        .and_then(|s| s.resolve_target_type())
+                        .as_ref()
+                        .map(|t| t.get_field_count())
+                        .unwrap_or(0)
+            }
+            TargetEnrichedTypeInfo::Var { .. } => usize::MIN,
+            TargetEnrichedTypeInfo::NamespaceImport(n) => n
+                .resolve_target_type()
+                .as_ref()
+                .map(get_field_count)
+                .unwrap_or(usize::MIN),
+        }
+    }
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -818,7 +894,15 @@ impl ToTokens for TargetEnrichedType {
             //TargetEnrichedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
             //TargetEnrichedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
             TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
-                let members = types.iter().map(|t| {
+                // members must be sorted in order of decreasing number of fields to ensure that we
+                // deserialize unions into the "larger" variant in case of overlaps
+                let members = {
+                    let mut members = types.clone();
+                    members.sort_by_key(get_field_count);
+                    members.reverse();
+                    members
+                };
+                let members = members.iter().map(|t| {
                     let case = type_to_union_case_name(t);
 
                     if t.is_uninhabited() {
@@ -861,7 +945,7 @@ impl ToTokens for TargetEnrichedType {
 
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-                    #[serde(untagged)]
+                    #[serde(untagged, deny_unknown_fields)]
                     pub enum #name {
                         #(#members),*
                     }
