@@ -512,9 +512,19 @@ impl ExtraFieldAttrs for TypeRef {
 impl ExtraFieldAttrs for TargetEnrichedTypeInfo {
     fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
         match self {
-            TargetEnrichedTypeInfo::Union(_) => Box::new(iter::once(quote! {
-                skip_serializing_if = "ts_bindgen_rt::ShouldSkipSerializing::should_skip_serializing"
-            })),
+            TargetEnrichedTypeInfo::Union(u) => {
+                let first = iter::once(quote! {
+                    skip_serializing_if = "ts_bindgen_rt::ShouldSkipSerializing::should_skip_serializing"
+                });
+
+                if u.has_undefined_member() {
+                    Box::new(first.chain(iter::once(quote! {
+                        default
+                    })))
+                } else {
+                    Box::new(first)
+                }
+            }
             _ => Box::new(iter::empty()),
         }
     }
@@ -763,9 +773,13 @@ impl FieldCountGetter for TargetEnrichedType {
 
 impl FieldCountGetter for TargetEnrichedTypeInfo {
     fn get_field_count(&self) -> usize {
+        // we return the field count for things that have fields and, other than that, ensure that
+        // undefined will always have the lowest field count
+        let min = usize::MIN;
         match self {
             TargetEnrichedTypeInfo::Interface(i) => {
                 if i.indexer.is_some() {
+                    // TODO: is this what we want????
                     usize::MAX
                 } else {
                     i.fields.len()
@@ -776,34 +790,29 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
                 .resolve_target_type()
                 .as_ref()
                 .map(get_field_count)
-                .unwrap_or(usize::MIN),
+                .unwrap_or(min),
             TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
-                TypeIdent::Builtin(_) => usize::MIN,
+                TypeIdent::Builtin(Builtin::PrimitiveUndefined) => min,
+                TypeIdent::Builtin(_) => min,
                 TypeIdent::GeneratedName { .. } => unreachable!(),
                 _ => r
                     .resolve_target_type()
                     .as_ref()
                     .map(get_field_count)
-                    .unwrap_or(usize::MIN),
+                    .unwrap_or(min),
             },
-            TargetEnrichedTypeInfo::Array { .. } => usize::MIN,
+            TargetEnrichedTypeInfo::Array { .. } => min,
             TargetEnrichedTypeInfo::Optional { item_type } => item_type.get_field_count(),
-            TargetEnrichedTypeInfo::Union(u) => u
-                .types
-                .iter()
-                .map(get_field_count)
-                .max()
-                .unwrap_or(usize::MIN),
-            TargetEnrichedTypeInfo::Intersection(i) => i
-                .types
-                .iter()
-                .map(get_field_count)
-                .min()
-                .unwrap_or(usize::MIN),
+            TargetEnrichedTypeInfo::Union(u) => {
+                u.types.iter().map(get_field_count).max().unwrap_or(min)
+            }
+            TargetEnrichedTypeInfo::Intersection(i) => {
+                i.types.iter().map(get_field_count).min().unwrap_or(min)
+            }
             TargetEnrichedTypeInfo::Tuple(t) => t.types.len(),
             TargetEnrichedTypeInfo::Mapped { .. } => usize::MAX,
-            TargetEnrichedTypeInfo::Func(_) => usize::MIN,
-            TargetEnrichedTypeInfo::Constructor(_) => usize::MIN,
+            TargetEnrichedTypeInfo::Func(_) => min,
+            TargetEnrichedTypeInfo::Constructor(_) => min,
             TargetEnrichedTypeInfo::Class(c) => {
                 c.members.len()
                     + c.super_class
@@ -813,13 +822,38 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
                         .map(|t| t.get_field_count())
                         .unwrap_or(0)
             }
-            TargetEnrichedTypeInfo::Var { .. } => usize::MIN,
+            TargetEnrichedTypeInfo::Var { .. } => min,
             TargetEnrichedTypeInfo::NamespaceImport(n) => n
                 .resolve_target_type()
                 .as_ref()
                 .map(get_field_count)
-                .unwrap_or(usize::MIN),
+                .unwrap_or(min),
         }
+    }
+}
+
+trait MemberContainer {
+    fn undefined_and_standard_members(
+        &self,
+    ) -> (Vec<&TargetEnrichedTypeInfo>, Vec<&TargetEnrichedTypeInfo>);
+
+    fn has_undefined_member(&self) -> bool {
+        !self.undefined_and_standard_members().0.is_empty()
+    }
+}
+
+impl MemberContainer for Union {
+    fn undefined_and_standard_members(
+        &self,
+    ) -> (Vec<&TargetEnrichedTypeInfo>, Vec<&TargetEnrichedTypeInfo>) {
+        self.types.iter().partition(|t| match t {
+            TargetEnrichedTypeInfo::Ref(t)
+                if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
+            {
+                true
+            }
+            _ => false,
+        })
     }
 }
 
@@ -893,38 +927,38 @@ impl ToTokens for TargetEnrichedType {
             //TargetEnrichedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
             //TargetEnrichedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
             //TargetEnrichedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
-            TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
+            TargetEnrichedTypeInfo::Union(u) => {
+                let (undefined_members, mut not_undefined_members) =
+                    u.undefined_and_standard_members();
+
                 // members must be sorted in order of decreasing number of fields to ensure that we
                 // deserialize unions into the "larger" variant in case of overlaps
-                let members = {
-                    let mut members = types.clone();
-                    members.sort_by_key(get_field_count);
-                    members.reverse();
-                    members
-                };
-                let members = members.iter().map(|t| {
-                    let case = type_to_union_case_name(t);
+                not_undefined_members.sort_by_key(|m| get_field_count(*m));
+                not_undefined_members.reverse();
+                let member_cases = not_undefined_members
+                    .iter()
+                    .map(|t| {
+                        let case = type_to_union_case_name(t);
 
-                    if t.is_uninhabited() {
+                        if t.is_uninhabited() {
+                            quote! {
+                                #case
+                            }
+                        } else {
+                            quote! {
+                                #case(#t)
+                            }
+                        }
+                    })
+                    .chain(undefined_members.iter().map(|t| {
+                        let case = type_to_union_case_name(t);
+
                         quote! {
+                            #[serde(skip)]
                             #case
                         }
-                    } else {
-                        quote! {
-                            #case(#t)
-                        }
-                    }
-                });
+                    }));
 
-                let (undefined_members, not_undefined_members): (Vec<_>, Vec<_>) =
-                    types.iter().partition(|t| match t {
-                        TargetEnrichedTypeInfo::Ref(t)
-                            if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
-                        {
-                            true
-                        }
-                        _ => false,
-                    });
                 let undefined_member_cases = undefined_members.iter().map(|t| {
                     let case = type_to_union_case_name(t);
                     quote! {
@@ -942,13 +976,28 @@ impl ToTokens for TargetEnrichedType {
                         _ => false,
                     }
                 };
+                let default_impl = undefined_members
+                    .first()
+                    .map(|undefined_member| {
+                        let default_field = type_to_union_case_name(undefined_member);
+                        quote! {
+                            impl std::default::Default for #name {
+                                fn default() -> Self {
+                                    #name::#default_field
+                                }
+                            }
+                        }
+                    })
+                    .unwrap_or_else(|| quote! {});
 
                 quote! {
                     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #name {
-                        #(#members),*
+                        #(#member_cases),*
                     }
+
+                    #default_impl
 
                     impl ts_bindgen_rt::ShouldSkipSerializing for #name {
                         fn should_skip_serializing(&self) -> bool {
