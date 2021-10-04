@@ -282,7 +282,13 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                 let param_name = to_snake_case_ident(&p.name);
                 match serialization_type {
                     SerializationType::Raw | SerializationType::Ref => quote! { #param_name },
-                    SerializationType::SerdeJson => quote! { JsValue::from_serde(&#param_name) },
+                    SerializationType::SerdeJson => {
+                        if p.type_info.is_potentially_undefined() {
+                            quote! { ts_bindgen_rt::from_serde_or_undefined(&#param_name) }
+                        } else {
+                            quote! { JsValue::from_serde(&#param_name) }
+                        }
+                    }
                     SerializationType::Fn => {
                         let local_fn_name = Self::to_local_fn_name(&p.name);
                         quote! { &#local_fn_name }
@@ -294,7 +300,13 @@ impl<'a> ToTokens for WrapperFunc<'a> {
             let serialization_type = return_type.serialization_type();
             match serialization_type {
                 SerializationType::Raw | SerializationType::Ref => quote! {},
-                SerializationType::SerdeJson => quote! { .into_serde().unwrap() },
+                SerializationType::SerdeJson => {
+                    if return_type.is_potentially_undefined() {
+                        quote! { .into_serde_or_default().unwrap() }
+                    } else {
+                        quote! { .into_serde().unwrap() }
+                    }
+                }
                 SerializationType::Fn => {
                     // TODO - should be a js_sys::Function that we wrap
                     quote! { .into_serde().unwrap() }
@@ -342,7 +354,14 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                                 let serialization_type = t.serialization_type();
                                 match serialization_type {
                                     SerializationType::Raw | SerializationType::Ref => quote! { #n },
-                                    SerializationType::SerdeJson => quote! { #n.into_serde().map_err(ts_bindgen_rt::Error::from)? },
+                                    SerializationType::SerdeJson => {
+                                        let into_serde = if t.is_potentially_undefined() {
+                                            quote! { into_serde_or_default() }
+                                        } else {
+                                            quote! { into_serde() }
+                                        };
+                                        quote! { #n.#into_serde.map_err(ts_bindgen_rt::Error::from)? }
+                                    },
                                     SerializationType::Fn => {
                                         // TODO: we're not recursive yet
                                         unimplemented!();
@@ -360,9 +379,14 @@ impl<'a> ToTokens for WrapperFunc<'a> {
                             Box<dyn Fn(#(#param_types),*) -> #full_ret>
                         };
                         let invocation = if ret_type == SerializationType::SerdeJson {
+                            let res_handler = if typ.type_params.last().map(is_potentially_undefined).unwrap_or(false) {
+                                quote! { ts_bindgen_rt::from_serde_or_undefined }
+                            } else {
+                                quote! { JsValue::from_serde }
+                            };
                             quote! {
                                 let result = #orig_name(#(#args),*)?;
-                                Ok(JsValue::from_serde(&result).map_err(ts_bindgen_rt::Error::from)?)
+                                Ok(#res_handler(&result).map_err(ts_bindgen_rt::Error::from)?)
                             }
                         } else {
                             quote! {
@@ -384,6 +408,9 @@ impl<'a> ToTokens for WrapperFunc<'a> {
         let our_toks = quote! {
             #[allow(dead_code)]
             pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
+                #[allow(unused_imports)]
+                use ts_bindgen_rt::IntoSerdeOrDefault;
+
                 #(#wrapper_fns);*
                 Ok(#internal_fn_name(#(#args),*)?#unwrapper)
             }
@@ -857,6 +884,78 @@ impl MemberContainer for Union {
     }
 }
 
+fn is_potentially_undefined<T: UndefinedHandler>(t: &T) -> bool {
+    t.is_potentially_undefined()
+}
+
+trait UndefinedHandler {
+    /// Is self potentially undefined if the type were living on its own.
+    /// That is, we ignore the possibility of an optional field of this type being undefined
+    /// because that is a property of the field and not the type.
+    fn is_potentially_undefined(&self) -> bool;
+}
+
+impl UndefinedHandler for Union {
+    fn is_potentially_undefined(&self) -> bool {
+        let (und, std) = self.undefined_and_standard_members();
+        let has_direct_undefined_member = !und.is_empty();
+        has_direct_undefined_member || std.iter().any(|t| t.is_potentially_undefined())
+    }
+}
+
+impl UndefinedHandler for TypeRef {
+    fn is_potentially_undefined(&self) -> bool {
+        self.resolve_target_type()
+            .as_ref()
+            .map(is_potentially_undefined)
+            .unwrap_or(false)
+    }
+}
+
+impl UndefinedHandler for TargetEnrichedTypeInfo {
+    fn is_potentially_undefined(&self) -> bool {
+        match self {
+            TargetEnrichedTypeInfo::Interface(_) => false,
+            TargetEnrichedTypeInfo::Enum(_) => false,
+            TargetEnrichedTypeInfo::Alias(a) => a
+                .resolve_target_type()
+                .as_ref()
+                .map(is_potentially_undefined)
+                .unwrap_or(false),
+            TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
+                TypeIdent::Builtin(
+                    Builtin::PrimitiveUndefined
+                    | Builtin::PrimitiveAny
+                    | Builtin::PrimitiveObject
+                    | Builtin::PrimitiveVoid,
+                ) => true,
+                TypeIdent::Builtin(_) => false,
+                TypeIdent::GeneratedName { .. } => unreachable!(),
+                _ => r
+                    .resolve_target_type()
+                    .as_ref()
+                    .map(is_potentially_undefined)
+                    .unwrap_or(false),
+            },
+            TargetEnrichedTypeInfo::Array { .. } => false,
+            TargetEnrichedTypeInfo::Optional { .. } => true,
+            TargetEnrichedTypeInfo::Union(u) => u.is_potentially_undefined(),
+            TargetEnrichedTypeInfo::Intersection(i) => i.types.iter().any(is_potentially_undefined),
+            TargetEnrichedTypeInfo::Tuple(_) => false,
+            TargetEnrichedTypeInfo::Mapped { .. } => false,
+            TargetEnrichedTypeInfo::Func(_) => false,
+            TargetEnrichedTypeInfo::Constructor(_) => false,
+            TargetEnrichedTypeInfo::Class(_) => false,
+            TargetEnrichedTypeInfo::Var { .. } => false,
+            TargetEnrichedTypeInfo::NamespaceImport(n) => n
+                .resolve_target_type()
+                .as_ref()
+                .map(is_potentially_undefined)
+                .unwrap_or(false),
+        }
+    }
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -959,31 +1058,42 @@ impl ToTokens for TargetEnrichedType {
                         }
                     }));
 
-                let undefined_member_cases = undefined_members.iter().map(|t| {
-                    let case = type_to_union_case_name(t);
-                    quote! {
-                        #name::#case => true,
-                    }
-                });
+                let skip_serializing_cases = undefined_members
+                    .iter()
+                    .chain(not_undefined_members.iter())
+                    .filter(|t| t.is_potentially_undefined())
+                    .map(|undefined_member| {
+                        let case = type_to_union_case_name(undefined_member);
+                        if undefined_member.is_uninhabited() {
+                            quote! {
+                                #name::#case => true
+                            }
+                        } else {
+                            quote! {
+                                #name::#case(x) => x.should_skip_serializing()
+                            }
+                        }
+                    })
+                    .chain(iter::once(quote! {
+                        _ => false
+                    }));
 
-                let skip_serializing_cases = if not_undefined_members.is_empty() {
-                    quote! { _ => true }
-                } else if undefined_members.is_empty() {
-                    quote! { _ => false }
-                } else {
-                    quote! {
-                        #(#undefined_member_cases),*
-                        _ => false,
-                    }
-                };
                 let default_impl = undefined_members
-                    .first()
+                    .iter()
+                    .chain(not_undefined_members.iter())
+                    .filter(|t| t.is_potentially_undefined())
+                    .next()
                     .map(|undefined_member| {
                         let default_field = type_to_union_case_name(undefined_member);
+                        let default_ctor = if undefined_member.is_uninhabited() {
+                            quote! { #default_field }
+                        } else {
+                            quote! { #default_field(std::default::Default::default()) }
+                        };
                         quote! {
                             impl std::default::Default for #name {
                                 fn default() -> Self {
-                                    #name::#default_field
+                                    #name::#default_ctor
                                 }
                             }
                         }
@@ -1002,7 +1112,7 @@ impl ToTokens for TargetEnrichedType {
                     impl ts_bindgen_rt::ShouldSkipSerializing for #name {
                         fn should_skip_serializing(&self) -> bool {
                             match self {
-                                #skip_serializing_cases
+                                #(#skip_serializing_cases),*
                             }
                         }
                     }
