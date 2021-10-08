@@ -29,6 +29,63 @@ macro_rules! if_requires_resolution {
     };
 }
 
+macro_rules! trait_impl_for_type_info {
+    (match $matcher:ident,
+     $invoker:path | $default:tt,
+     $($case:pat => $res:expr),* $(,)?) => {
+        match $matcher {
+            $($case => $res),*,
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::Alias(a) => a
+                .resolve_target_type()
+                .as_ref()
+                .map($invoker)
+                .unwrap_or($default),
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
+                TypeIdent::GeneratedName { .. } => unreachable!(),
+                _ => r
+                    .resolve_target_type()
+                    .as_ref()
+                    .map($invoker)
+                    .unwrap_or($default),
+            },
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::Optional { item_type } => $invoker(item_type.as_ref()),
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::Array { item_type } => $invoker(item_type.as_ref()),
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::Mapped { value_type } => $invoker(value_type.as_ref()),
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::NamespaceImport(n) => n
+                .resolve_target_type()
+                .as_ref()
+                .map($invoker)
+                .unwrap_or($default),
+        }
+    };
+    (match $matcher:ident,
+     $invoker:path | $default:tt,
+     aggregate with $agg:ident,
+     $($case:pat => $res:expr),* $(,)?) => {
+        trait_impl_for_type_info!(
+            match $matcher,
+            $invoker | $default,
+            TargetEnrichedTypeInfo::Interface(i) => i.fields.values()
+                .map(ResolveTargetType::resolve_target_type)
+                .chain(iter::once(
+                    i.indexer.as_ref()
+                        .and_then(|i| i.value_type.resolve_target_type())
+                ))
+                .$agg(|t| t.as_ref().map($invoker).unwrap_or($default)),
+            TargetEnrichedTypeInfo::Union(Union { types, .. }) => types.iter().$agg($invoker),
+            TargetEnrichedTypeInfo::Intersection(Intersection { types, .. }) => types.iter().$agg($invoker),
+            TargetEnrichedTypeInfo::Tuple(Tuple { types, .. }) => types.iter().$agg($invoker),
+            $($case => $res),*
+        )
+    };
+}
+
 impl ToTokens for Identifier {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         toks.append_separated(self.type_parts.iter(), <Token![::]>::default());
@@ -803,7 +860,9 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
         // we return the field count for things that have fields and, other than that, ensure that
         // undefined will always have the lowest field count
         let min = usize::MIN;
-        match self {
+        trait_impl_for_type_info!(
+            match self,
+            get_field_count | min,
             TargetEnrichedTypeInfo::Interface(i) => {
                 if i.indexer.is_some() {
                     // TODO: is this what we want????
@@ -811,31 +870,19 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
                 } else {
                     i.fields.len()
                 }
-            }
-            TargetEnrichedTypeInfo::Enum(e) => e.members.len(),
-            TargetEnrichedTypeInfo::Alias(a) => a
-                .resolve_target_type()
-                .as_ref()
-                .map(get_field_count)
-                .unwrap_or(min),
-            TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
-                TypeIdent::Builtin(Builtin::PrimitiveUndefined) => min,
-                TypeIdent::Builtin(_) => min,
-                TypeIdent::GeneratedName { .. } => unreachable!(),
-                _ => r
-                    .resolve_target_type()
-                    .as_ref()
-                    .map(get_field_count)
-                    .unwrap_or(min),
             },
+            TargetEnrichedTypeInfo::Enum(e) => e.members.len(),
+            TargetEnrichedTypeInfo::Ref(TypeRef {
+                referent: TypeIdent::Builtin(_),
+                ..
+            }) => min,
             TargetEnrichedTypeInfo::Array { .. } => min,
-            TargetEnrichedTypeInfo::Optional { item_type } => item_type.get_field_count(),
             TargetEnrichedTypeInfo::Union(u) => {
                 u.types.iter().map(get_field_count).max().unwrap_or(min)
-            }
+            },
             TargetEnrichedTypeInfo::Intersection(i) => {
                 i.types.iter().map(get_field_count).min().unwrap_or(min)
-            }
+            },
             TargetEnrichedTypeInfo::Tuple(t) => t.types.len(),
             TargetEnrichedTypeInfo::Mapped { .. } => usize::MAX,
             TargetEnrichedTypeInfo::Func(_) => min,
@@ -848,14 +895,9 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
                         .as_ref()
                         .map(|t| t.get_field_count())
                         .unwrap_or(0)
-            }
+            },
             TargetEnrichedTypeInfo::Var { .. } => min,
-            TargetEnrichedTypeInfo::NamespaceImport(n) => n
-                .resolve_target_type()
-                .as_ref()
-                .map(get_field_count)
-                .unwrap_or(min),
-        }
+        )
     }
 }
 
@@ -914,29 +956,24 @@ impl UndefinedHandler for TypeRef {
 
 impl UndefinedHandler for TargetEnrichedTypeInfo {
     fn is_potentially_undefined(&self) -> bool {
-        match self {
+        trait_impl_for_type_info!(
+            match self,
+            is_potentially_undefined | false,
             TargetEnrichedTypeInfo::Interface(_) => false,
             TargetEnrichedTypeInfo::Enum(_) => false,
-            TargetEnrichedTypeInfo::Alias(a) => a
-                .resolve_target_type()
-                .as_ref()
-                .map(is_potentially_undefined)
-                .unwrap_or(false),
-            TargetEnrichedTypeInfo::Ref(r) => match &r.referent {
-                TypeIdent::Builtin(
+            TargetEnrichedTypeInfo::Ref(TypeRef {
+                referent: TypeIdent::Builtin(
                     Builtin::PrimitiveUndefined
                     | Builtin::PrimitiveAny
                     | Builtin::PrimitiveObject
                     | Builtin::PrimitiveVoid,
-                ) => true,
-                TypeIdent::Builtin(_) => false,
-                TypeIdent::GeneratedName { .. } => unreachable!(),
-                _ => r
-                    .resolve_target_type()
-                    .as_ref()
-                    .map(is_potentially_undefined)
-                    .unwrap_or(false),
-            },
+                ),
+                ..
+            }) => true,
+            TargetEnrichedTypeInfo::Ref(TypeRef {
+                referent: TypeIdent::Builtin(_),
+                ..
+            }) => false,
             TargetEnrichedTypeInfo::Array { .. } => false,
             TargetEnrichedTypeInfo::Optional { .. } => true,
             TargetEnrichedTypeInfo::Union(u) => u.is_potentially_undefined(),
@@ -947,12 +984,31 @@ impl UndefinedHandler for TargetEnrichedTypeInfo {
             TargetEnrichedTypeInfo::Constructor(_) => false,
             TargetEnrichedTypeInfo::Class(_) => false,
             TargetEnrichedTypeInfo::Var { .. } => false,
-            TargetEnrichedTypeInfo::NamespaceImport(n) => n
-                .resolve_target_type()
-                .as_ref()
-                .map(is_potentially_undefined)
-                .unwrap_or(false),
-        }
+        )
+    }
+}
+
+trait ContainsHydratableField {
+    fn contains_hydratable_field(&self) -> bool;
+}
+
+impl ContainsHydratableField for TargetEnrichedTypeInfo {
+    fn contains_hydratable_field(&self) -> bool {
+        trait_impl_for_type_info!(
+            match self,
+            ContainsHydratableField::contains_hydratable_field | false,
+            aggregate with any,
+            TargetEnrichedTypeInfo::Enum(_) => false,
+            TargetEnrichedTypeInfo::Ref(TypeRef {
+                referent: TypeIdent::Builtin(_),
+                ..
+            }) => false,
+            TargetEnrichedTypeInfo::Func(_) => true,
+            TargetEnrichedTypeInfo::Constructor(_) => true,
+            // TODO: Class??
+            TargetEnrichedTypeInfo::Class(_) => false,
+            TargetEnrichedTypeInfo::Var { .. } => false,
+        )
     }
 }
 
