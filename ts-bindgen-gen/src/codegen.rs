@@ -219,17 +219,59 @@ impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
     }
 }
 
-struct InternalFunc<'a> {
-    func: &'a Func,
-    js_name: &'a str,
+trait HasFnPrototype {
+    fn return_type(&self) -> TypeRef;
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a>;
+    fn is_variadic(&self) -> bool {
+        self.params().any(|p| p.is_variadic)
+    }
 }
 
-impl<'a> InternalFunc<'a> {
-    fn to_internal_rust_name(js_name: &str) -> Identifier {
-        to_snake_case_ident(format!("__tsb_{}", js_name))
+impl HasFnPrototype for TypeRef {
+    fn return_type(&self) -> TypeRef {
+        self.type_params
+            .last()
+            .map(Clone::clone)
+            .unwrap_or_else(|| TypeRef {
+                referent: TypeIdent::Builtin(Builtin::PrimitiveVoid),
+                type_params: vec![],
+                context: self.context.clone(),
+            })
     }
 
-    fn to_serialized_type(typ: &TypeRef) -> TokenStream2 {
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
+        Box::new(
+            self.type_params
+                .iter()
+                .enumerate()
+                .map(|(i, t)| Param {
+                    name: format!("arg{}", i),
+                    type_info: t.clone(),
+                    is_variadic: false, // TODO
+                    context: t.context.clone(),
+                })
+                .take(self.type_params.len() - 1),
+        )
+    }
+}
+
+impl HasFnPrototype for Func {
+    fn return_type(&self) -> TypeRef {
+        (*self.return_type).clone()
+    }
+
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
+        Box::new(self.params.iter().cloned())
+    }
+}
+
+mod fn_types {
+    use super::{
+        quote, Builtin, HasFnPrototype, ResolveTargetType, SerializationType,
+        SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2, TypeIdent, TypeRef,
+    };
+
+    fn exposed_to_js_type(typ: &TypeRef) -> TokenStream2 {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
@@ -238,20 +280,11 @@ impl<'a> InternalFunc<'a> {
             SerializationType::Fn => {
                 let target = typ.resolve_target_type();
                 match target {
-                    // TODO: lots of similar code
                     Some(TargetEnrichedTypeInfo::Ref(typ))
                         if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) =>
                     {
-                        let params = typ
-                            .type_params
-                            .iter()
-                            .map(InternalFunc::to_serialized_type)
-                            .take(typ.type_params.len() - 1);
-                        let ret = typ
-                            .type_params
-                            .last()
-                            .map(InternalFunc::to_serialized_type)
-                            .unwrap_or_else(|| quote! { () });
+                        let params = typ.params().map(|p| exposed_to_js_param_type(&p.type_info));
+                        let ret = exposed_to_js_param_type(&typ.return_type());
                         quote! {
                             &Closure<dyn Fn(#(#params),*) -> std::result::Result<#ret, JsValue>>
                         }
@@ -263,29 +296,392 @@ impl<'a> InternalFunc<'a> {
             }
         }
     }
+
+    pub fn exposed_to_js_param_type(typ: &TypeRef) -> TokenStream2 {
+        exposed_to_js_type(typ)
+    }
+
+    pub fn exposed_to_js_return_type(typ: &TypeRef) -> TokenStream2 {
+        let t = exposed_to_js_param_type(typ);
+        quote! {
+            std::result::Result<#t, JsValue>
+        }
+    }
+
+    fn exposed_to_rust_type(typ: &TypeRef) -> TokenStream2 {
+        let serialization_type = typ.serialization_type();
+        match serialization_type {
+            SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
+            SerializationType::Ref => quote! { &#typ },
+            SerializationType::Fn => quote! { &'static #typ },
+        }
+    }
+
+    pub fn exposed_to_rust_param_type(typ: &TypeRef) -> TokenStream2 {
+        exposed_to_rust_type(typ)
+    }
+
+    pub fn exposed_to_rust_return_type(typ: &TypeRef) -> TokenStream2 {
+        quote! { #typ }
+    }
+}
+
+trait FnPrototypeExt {
+    fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2;
+    fn exposed_to_js_fn_type(&self) -> TokenStream2;
+
+    fn exposed_to_js_boxed_fn_type(&self) -> TokenStream2;
+
+    fn exposed_to_js_wrapped_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2;
+
+    fn exposed_to_js_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2;
+
+    fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2;
+
+    fn exposed_to_rust_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2;
+
+    /// Returns a token stream defining local closures for any parameters
+    /// such that the closures may be invoked by js, wrapping rust closures.
+    /// This is named exposed_to_rust because it is used when constructing
+    /// a function that may be called from rust (and, hence, might have
+    /// rust closures in need of wrapping).
+    fn exposed_to_rust_param_wrappers(&self) -> TokenStream2;
+}
+
+impl<T: HasFnPrototype> FnPrototypeExt for T {
+    fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
+        let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+
+        quote! {
+            move |#(#params),*| -> #ret {
+                #body
+            }
+        }
+    }
+
+    fn exposed_to_js_fn_type(&self) -> TokenStream2 {
+        let params = self
+            .params()
+            .map(|p| p.as_exposed_to_js_unnamed_param_list());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+        quote! {
+            dyn Fn(#(#params),*) -> #ret
+        }
+    }
+
+    fn exposed_to_js_boxed_fn_type(&self) -> TokenStream2 {
+        let fn_type = self.exposed_to_js_fn_type();
+        quote! {
+            Box<#fn_type>
+        }
+    }
+
+    fn exposed_to_js_wrapped_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
+        let closure = self.exposed_to_js_closure(body);
+        let boxed_fn_type = self.exposed_to_js_boxed_fn_type();
+        quote! {
+            Closure::wrap(Box::new(
+                #closure
+            ) as #boxed_fn_type)
+        }
+    }
+
+    fn exposed_to_js_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
+        let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+        quote! {
+            fn #name(#(#params),*) -> #ret
+        }
+    }
+
+    fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
+        let args = self.params().map(|p| to_snake_case_ident(p.name));
+        quote! {
+            #name(#(#args),*)
+        }
+    }
+
+    fn exposed_to_rust_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
+        let params = self
+            .params()
+            .map(|p| p.as_exposed_to_rust_named_param_list());
+        let ret = fn_types::exposed_to_rust_return_type(&self.return_type());
+        quote! {
+            fn #name(#(#params),*) -> std::result::Result<#ret, JsValue>
+        }
+    }
+
+    fn exposed_to_rust_param_wrappers(&self) -> TokenStream2 {
+        let wrapper_fns = self.params().filter_map(|p| {
+            let name = p.local_fn_name();
+            let f = p.js_wrapper_fn();
+            f.map(|f| {
+                quote! {
+                    let #name = #f;
+                }
+            })
+        });
+
+        quote! {
+            #(#wrapper_fns);*
+        }
+    }
+}
+
+trait ParamExt {
+    /// The rust name for this parameter.
+    fn rust_name(&self) -> Identifier;
+
+    /// Returns a token stream suitable for inclusion in a named parameter
+    /// list, such as that of a function definition, where the param type
+    /// is able to be exposed to javascript.
+    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2;
+
+    /// Returns a token stream suitable for inclusing in an un-named parameter
+    /// list, such as that of a function type, where the param type is able
+    /// to be exposed to javascript
+    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2;
+
+    /// Returns a token stream suitable for inclusion in a named parameter
+    /// list, such as that of a function definition, where the param type
+    /// is idiomatic to be exposed to rust callers.
+    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2;
+
+    /// Returns a token stream suitable for inclusion in an un-named parameter
+    /// list, such as that of a function type, where the param type
+    /// is idiomatic to be exposed to rust callers.
+    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2;
+
+    /// Renders a conversion from a local rust type with the same name as the
+    /// parameter to a js type.
+    fn rust_to_js_conversion(&self) -> TokenStream2;
+
+    /// Renders a conversion from a local rust type with the same name as the
+    /// parameter to a JsValue.
+    fn rust_to_jsvalue_conversion(&self) -> TokenStream2;
+
+    /// Returns an Identifier representing the name of the local wrapper
+    /// function corresponding to this parameter if this parameter is of
+    /// function type.
+    fn local_fn_name(&self) -> Identifier;
+
+    /// Renders a conversion from a local JsValue with the same name as the
+    /// parameter to a rust type.
+    fn js_to_rust_conversion(&self) -> TokenStream2;
+
+    /// If this parameter is a function, return a Some(TokenStream) where the
+    /// TokenStream defines an exposed-to-js closure that will proxy calls
+    /// to the underlying param.
+    fn js_wrapper_fn(&self) -> Option<TokenStream2>;
+}
+
+impl ParamExt for Param {
+    fn rust_name(&self) -> Identifier {
+        to_snake_case_ident(&self.name)
+    }
+
+    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
+        let full_type = self.as_exposed_to_js_unnamed_param_list();
+        let n = self.rust_name();
+        quote! { #n: #full_type }
+    }
+
+    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
+        let typ = fn_types::exposed_to_js_param_type(&self.type_info);
+        if self.is_variadic {
+            quote! { &[#typ] }
+        } else {
+            quote! { #typ }
+        }
+    }
+
+    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
+        let full_type = self.as_exposed_to_rust_unnamed_param_list();
+        let n = self.rust_name();
+        quote! { #n: #full_type }
+    }
+
+    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
+        let typ = fn_types::exposed_to_rust_param_type(&self.type_info);
+        if self.is_variadic {
+            quote! { &[#typ] }
+        } else {
+            quote! { #typ }
+        }
+    }
+
+    fn js_to_rust_conversion(&self) -> TokenStream2 {
+        let serialization_type = self.type_info.serialization_type();
+        let name = self.rust_name();
+
+        match serialization_type {
+            SerializationType::Raw | SerializationType::Ref => quote! { #name },
+            SerializationType::SerdeJson => {
+                quote! {
+                    ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#name).map_err(ts_bindgen_rt::Error::from)?
+                }
+            }
+            SerializationType::Fn => {
+                // TODO: we're not recursive yet
+                unimplemented!();
+            }
+        }
+    }
+
+    fn local_fn_name(&self) -> Identifier {
+        to_snake_case_ident(format!("__tsb_local_{}", self.name))
+    }
+
+    fn rust_to_js_conversion(&self) -> TokenStream2 {
+        let name = self.rust_name();
+        let fn_name = self.local_fn_name();
+        render_rust_to_js_conversion(&name, &fn_name, &self.type_info, quote! {})
+    }
+
+    fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
+        let name = self.rust_name();
+        let fn_name = self.local_fn_name();
+        render_rust_to_jsvalue_conversion(&name, &fn_name, &self.type_info, quote! {})
+    }
+
+    fn js_wrapper_fn(&self) -> Option<TokenStream2> {
+        let type_info = self.type_info.resolve_target_type();
+        if type_info
+            .as_ref()
+            .map(SerializationTypeGetter::serialization_type)
+            != Some(SerializationType::Fn)
+        {
+            return None;
+        }
+
+        if let Some(TargetEnrichedTypeInfo::Ref(typ)) = type_info {
+            if !matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) {
+                return None;
+            }
+
+            // TODO: needs to render wrappers for typ.params() that are
+            // functions
+            let args = typ.params().map(|p| p.js_to_rust_conversion());
+            let result = to_snake_case_ident("result");
+            let fn_name = to_snake_case_ident("result_adapter");
+            let conversion = render_rust_to_js_conversion(
+                &result,
+                &fn_name,
+                &typ.return_type(),
+                quote! { .map_err(ts_bindgen_rt::Error::from)? },
+            );
+            let name = self.rust_name();
+            let invocation = quote! {
+                let #result = #name(#(#args),*)?;
+                Ok(#conversion)
+            };
+            Some(typ.exposed_to_js_wrapped_closure(invocation))
+        } else {
+            None
+        }
+    }
+}
+
+struct InternalFunc<'a> {
+    func: &'a Func,
+    js_name: &'a str,
+}
+
+impl<'a> InternalFunc<'a> {
+    fn to_internal_rust_name(js_name: &str) -> Identifier {
+        to_snake_case_ident(format!("__tsb_{}", js_name))
+    }
 }
 
 impl<'a> ToTokens for InternalFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let fn_name = Self::to_internal_rust_name(self.js_name);
 
-        let param_toks: Vec<TokenStream2> = self
-            .func
-            .params
-            .iter()
-            .map(|p| {
-                let p = TransformedParam(p, InternalFunc::to_serialized_type);
-                quote! { #p }
-            })
-            .collect();
-
-        let return_type = InternalFunc::to_serialized_type(&self.func.return_type);
+        let f = self.func.exposed_to_js_fn_decl(fn_name);
 
         let our_toks = quote! {
-            pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue>;
+            pub #f;
         };
 
         toks.extend(our_toks);
+    }
+}
+
+fn render_wasm_bindgen_return_to_js(
+    return_type: &TypeRef,
+    return_value: &TokenStream2,
+) -> TokenStream2 {
+    let serialization_type = return_type.serialization_type();
+    match serialization_type {
+        SerializationType::Raw | SerializationType::Ref => return_value.clone(),
+        SerializationType::SerdeJson => {
+            if return_type.contains_hydratable_field() {
+                quote! { ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap() }
+            } else {
+                quote! { #return_value.into_serde().unwrap() }
+            }
+        }
+        SerializationType::Fn => {
+            // TODO - should be a js_sys::Function that we wrap
+            quote! { #return_value.into_serde().unwrap() }
+        }
+    }
+}
+
+fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream2) -> TokenStream2 {
+    let serialization_type = return_type.serialization_type();
+    match serialization_type {
+        SerializationType::Raw | SerializationType::Ref => quote! {
+            #return_value.into_serde().unwrap()
+        },
+        SerializationType::SerdeJson => {
+            if return_type.contains_hydratable_field() {
+                quote! { ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap() }
+            } else {
+                quote! { #return_value.into_serde().unwrap() }
+            }
+        }
+        SerializationType::Fn => {
+            // TODO - should be a js_sys::Function that we wrap
+            quote! { #return_value.into_serde().unwrap() }
+        }
+    }
+}
+
+fn render_rust_to_js_conversion(
+    name: &Identifier,
+    fn_name: &Identifier,
+    typ: &TypeRef,
+    error_mapper: TokenStream2,
+) -> TokenStream2 {
+    let serialization_type = typ.serialization_type();
+    match serialization_type {
+        SerializationType::Raw | SerializationType::Ref => quote! { #name },
+        SerializationType::SerdeJson => {
+            quote! { ts_bindgen_rt::from_serde_or_undefined(#name)#error_mapper }
+        }
+        SerializationType::Fn => {
+            quote! { &#fn_name }
+        }
+    }
+}
+
+fn render_rust_to_jsvalue_conversion(
+    name: &Identifier,
+    fn_name: &Identifier,
+    typ: &TypeRef,
+    error_mapper: TokenStream2,
+) -> TokenStream2 {
+    let serialization_type = typ.serialization_type();
+    match serialization_type {
+        SerializationType::Raw | SerializationType::Ref => quote! { JsValue::from(#name) },
+        SerializationType::SerdeJson => {
+            quote! { ts_bindgen_rt::from_serde_or_undefined(#name)#error_mapper }
+        }
+        SerializationType::Fn => {
+            quote! { &#fn_name }
+        }
     }
 }
 
@@ -298,178 +694,31 @@ impl<'a> WrapperFunc<'a> {
     fn to_rust_name(js_name: &str) -> Identifier {
         to_snake_case_ident(js_name)
     }
-
-    fn to_local_fn_name(name: &str) -> Identifier {
-        to_snake_case_ident(format!("__tsb_local_{}", name))
-    }
-
-    fn to_serialized_type(typ: &TypeRef) -> TokenStream2 {
-        let serialization_type = typ.serialization_type();
-        match serialization_type {
-            SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
-            SerializationType::Ref => quote! { &#typ },
-            SerializationType::Fn => quote! { &'static #typ },
-        }
-    }
 }
 
 impl<'a> ToTokens for WrapperFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let fn_name = Self::to_rust_name(self.js_name);
 
-        let param_toks: Vec<TokenStream2> = self
-            .func
-            .params
-            .iter()
-            .map(|p| {
-                let p = TransformedParam(p, WrapperFunc::to_serialized_type);
-                quote! { #p }
-            })
-            .collect();
-
-        let return_type = &self.func.return_type;
-
         let internal_fn_name = InternalFunc::to_internal_rust_name(self.js_name);
-        let args: Vec<TokenStream2> = self
-            .func
-            .params
-            .iter()
-            .map(|p| {
-                let serialization_type = p.type_info.serialization_type();
-                let param_name = to_snake_case_ident(&p.name);
-                match serialization_type {
-                    SerializationType::Raw | SerializationType::Ref => quote! { #param_name },
-                    SerializationType::SerdeJson => {
-                        if p.type_info.is_potentially_undefined() {
-                            quote! { ts_bindgen_rt::from_serde_or_undefined(&#param_name) }
-                        } else {
-                            quote! { JsValue::from_serde(&#param_name) }
-                        }
-                    }
-                    SerializationType::Fn => {
-                        let local_fn_name = Self::to_local_fn_name(&p.name);
-                        quote! { &#local_fn_name }
-                    }
-                }
-            })
-            .collect();
-        let unwrapper = {
-            let serialization_type = return_type.serialization_type();
-            match serialization_type {
-                SerializationType::Raw | SerializationType::Ref => quote! {},
-                SerializationType::SerdeJson => {
-                    if return_type.is_potentially_undefined() {
-                        quote! { .into_serde_or_default().unwrap() }
-                    } else {
-                        quote! { .into_serde().unwrap() }
-                    }
-                }
-                SerializationType::Fn => {
-                    // TODO - should be a js_sys::Function that we wrap
-                    quote! { .into_serde().unwrap() }
-                }
-            }
+        let args = self.func.params.iter().map(|p| p.rust_to_js_conversion());
+        let return_value = quote! {
+            #internal_fn_name(#(#args),*)?
         };
-        let wrapper_fns = self.func.params.iter()
-            .filter_map(|p| p.type_info.resolve_target_type().map(|t| (p, t)))
-            .filter(|(_p, t)| t.serialization_type() == SerializationType::Fn)
-            .filter_map(|(p, t)| {
-                // TODO: lots of similar code
-                let orig_name = to_snake_case_ident(&p.name);
-                let name = Self::to_local_fn_name(&p.name);
-                match t {
-                    TargetEnrichedTypeInfo::Ref(typ) if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) => {
-                        let params = typ
-                            .type_params
-                            .iter()
-                            .enumerate()
-                            .map(|(i, t)| {
-                                let typ = InternalFunc::to_serialized_type(t);
-                                let n = to_snake_case_ident(format!("arg{}", i));
-                                quote! { #n: #typ }
-                            })
-                            .take(typ.type_params.len() - 1);
-                        let param_types = typ
-                            .type_params
-                            .iter()
-                            .map(|t| {
-                                let typ = InternalFunc::to_serialized_type(t);
-                                quote! { #typ }
-                            })
-                            .take(typ.type_params.len() - 1);
-                        let ret = typ
-                            .type_params
-                            .last()
-                            .map(InternalFunc::to_serialized_type)
-                            .unwrap_or_else(|| quote! { () });
-                        let args = typ
-                            .type_params
-                            .iter()
-                            .enumerate()
-                            .map(|(i, t)| {
-                                let n = to_snake_case_ident(format!("arg{}", i));
-                                let serialization_type = t.serialization_type();
-                                match serialization_type {
-                                    SerializationType::Raw | SerializationType::Ref => quote! { #n },
-                                    SerializationType::SerdeJson => {
-                                        let into_serde = if t.is_potentially_undefined() {
-                                            quote! { into_serde_or_default() }
-                                        } else {
-                                            quote! { into_serde() }
-                                        };
-                                        quote! { #n.#into_serde.map_err(ts_bindgen_rt::Error::from)? }
-                                    },
-                                    SerializationType::Fn => {
-                                        // TODO: we're not recursive yet
-                                        unimplemented!();
-                                    }
-                                }
-                            })
-                            .take(typ.type_params.len() - 1);
-                        let ret_type = typ.type_params.last()
-                            .map(SerializationTypeGetter::serialization_type)
-                            .unwrap_or_else(|| SerializationType::Raw);
-                        let full_ret = quote! {
-                            std::result::Result<#ret, JsValue>
-                        };
-                        let box_fn_type = quote! {
-                            Box<dyn Fn(#(#param_types),*) -> #full_ret>
-                        };
-                        let invocation = if ret_type == SerializationType::SerdeJson {
-                            let res_handler = if typ.type_params.last().map(is_potentially_undefined).unwrap_or(false) {
-                                quote! { ts_bindgen_rt::from_serde_or_undefined }
-                            } else {
-                                quote! { JsValue::from_serde }
-                            };
-                            quote! {
-                                let result = #orig_name(#(#args),*)?;
-                                Ok(#res_handler(&result).map_err(ts_bindgen_rt::Error::from)?)
-                            }
-                        } else {
-                            quote! {
-                                #orig_name(#(#args),*)
-                            }
-                        };
-                        Some(quote! {
-                            let #name = Closure::wrap(Box::new(
-                                move |#(#params),*| -> #full_ret {
-                                    #invocation
-                                }
-                            ) as #box_fn_type);
-                        })
-                    },
-                    _ => None,
-                }
-            });
+        let ret = render_wasm_bindgen_return_to_js(&self.func.return_type(), &return_value);
+        let wrapper_fns = self.func.exposed_to_rust_param_wrappers();
+
+        let f = self.func.exposed_to_rust_fn_decl(fn_name);
 
         let our_toks = quote! {
             #[allow(dead_code)]
-            pub fn #fn_name(#(#param_toks),*) -> std::result::Result<#return_type, JsValue> {
+            pub #f {
                 #[allow(unused_imports)]
                 use ts_bindgen_rt::IntoSerdeOrDefault;
 
-                #(#wrapper_fns);*
-                Ok(#internal_fn_name(#(#args),*)?#unwrapper)
+                #wrapper_fns
+
+                Ok(#ret)
             }
         };
 
@@ -636,6 +885,9 @@ impl ExtraFieldAttrs for Builtin {
             })),
             Builtin::PrimitiveAny => Box::new(iter::once(quote! {
                 skip_serializing_if = "JsValue::is_undefined"
+            })),
+            Builtin::Fn => Box::new(iter::once(quote! {
+                skip
             })),
             _ => Box::new(iter::empty()),
         }
@@ -988,17 +1240,33 @@ impl UndefinedHandler for TargetEnrichedTypeInfo {
     }
 }
 
-trait ContainsHydratableField {
+trait Hydratable {
     fn contains_hydratable_field(&self) -> bool;
+    fn render_hydrate_from_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2;
+    fn render_hydrate_to_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2;
 }
 
-impl ContainsHydratableField for TargetEnrichedTypeInfo {
+impl Hydratable for TargetEnrichedTypeInfo {
     fn contains_hydratable_field(&self) -> bool {
         trait_impl_for_type_info!(
             match self,
-            ContainsHydratableField::contains_hydratable_field | false,
+            Hydratable::contains_hydratable_field | false,
             aggregate with any,
             TargetEnrichedTypeInfo::Enum(_) => false,
+            TargetEnrichedTypeInfo::Ref(TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Fn),
+                ..
+            }) => true,
             TargetEnrichedTypeInfo::Ref(TypeRef {
                 referent: TypeIdent::Builtin(_),
                 ..
@@ -1009,6 +1277,146 @@ impl ContainsHydratableField for TargetEnrichedTypeInfo {
             TargetEnrichedTypeInfo::Class(_) => false,
             TargetEnrichedTypeInfo::Var { .. } => false,
         )
+    }
+
+    fn render_hydrate_from_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2 {
+        let js_value = quote! {
+            js_sys::Reflect::get(#jsv, &#js_name.into()).map_err(ts_bindgen_rt::Error::from)?
+        };
+        let render_hydrate =
+            |t: &TargetEnrichedTypeInfo| t.render_hydrate_from_js(jsv, field_name, js_name);
+        let empty = quote! {};
+        let render_for_hydrator = || {
+            quote! {
+                let #field_name = #js_value;
+                ts_bindgen_rt::Hydrator::hydrate_from_js_value(self.#field_name, #field_name)?;
+            }
+        };
+
+        trait_impl_for_type_info!(
+            match self,
+            render_hydrate | empty,
+            TargetEnrichedTypeInfo::Ref(tr @ TypeRef { referent: TypeIdent::Builtin(Builtin::Fn), .. }) => {
+                let return_type = tr.return_type();
+                let return_value = quote! { ret };
+                let ret = render_raw_return_to_js(&return_type, &return_value);
+                let args = quote! { args };
+                let params = tr.params().map(|p| p.as_exposed_to_rust_named_param_list());
+                // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
+                let conversions = tr.params().map(|p| {
+                    let name = p.rust_name();
+                    let conv = p.rust_to_jsvalue_conversion();
+                    quote! {
+                        let #name = #conv;
+                    }
+                });
+                let pushes = tr.params().map(|p| {
+                    let name = p.rust_name();
+                    quote! {
+                        #args.push(&#name);
+                    }
+                });
+                quote! {
+                    let #field_name = #js_value;
+                    let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&#field_name);
+                    self.#field_name = #field_name.map(|f| {
+                        let f = f.clone();
+                        std::rc::Rc::new(move |#(#params),*| {
+                            #(#conversions);*
+                            let args = js_sys::Array::new();
+                            #(#pushes);*
+                            let #return_value = f.apply(&JsValue::null(), &args)?;
+                            Ok(#ret)
+                        }) as std::rc::Rc<#tr>
+                    });
+                }
+            },
+            TargetEnrichedTypeInfo::Interface(_) => render_for_hydrator(),
+            TargetEnrichedTypeInfo::Union(_) => render_for_hydrator(),
+            TargetEnrichedTypeInfo::Class(_) => render_for_hydrator(),
+            _ => quote! { },
+        )
+    }
+
+    fn render_hydrate_to_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2 {
+        let js_value = quote! {
+            js_sys::Reflect::get(#jsv, &#js_name.into())?
+        };
+        let render_hydrate =
+            |t: &TargetEnrichedTypeInfo| t.render_hydrate_to_js(jsv, field_name, js_name);
+        let empty = quote! {};
+        let render_for_hydrator = || {
+            quote! {
+                ts_bindgen_rt::Hydrator::hydrate_to_js_value(self.#field_name, #js_value)?;
+            }
+        };
+
+        trait_impl_for_type_info!(
+            match self,
+            render_hydrate | empty,
+            TargetEnrichedTypeInfo::Ref(tr @ TypeRef { referent: TypeIdent::Builtin(Builtin::Fn), .. }) => {
+                let invocation = tr.invoke_with_name(field_name);
+                let closure = tr.exposed_to_js_wrapped_closure(invocation);
+                quote! {
+                    if let Some(#field_name) = self.#field_name {
+                        let #field_name = #field_name.clone();
+                        let #field_name = #closure;
+                        js_sys::Reflect::set(
+                            jsv,
+                            &#js_name.into(),
+                            #field_name.as_ref(),
+                        ).map_err(ts_bindgen_rt::Error::from)?;
+                    }
+                }
+            },
+            TargetEnrichedTypeInfo::Interface(_) => render_for_hydrator(),
+            TargetEnrichedTypeInfo::Union(_) => render_for_hydrator(),
+            TargetEnrichedTypeInfo::Class(_) => render_for_hydrator(),
+            _ => quote! { },
+        )
+    }
+}
+
+impl Hydratable for TypeRef {
+    fn contains_hydratable_field(&self) -> bool {
+        self.resolve_target_type()
+            .as_ref()
+            .map(Hydratable::contains_hydratable_field)
+            .unwrap_or(false)
+    }
+
+    fn render_hydrate_from_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2 {
+        self.resolve_target_type()
+            .as_ref()
+            .map(|t| t.render_hydrate_from_js(jsv, field_name, js_name))
+            .unwrap_or_else(|| quote! {})
+    }
+
+    fn render_hydrate_to_js(
+        &self,
+        jsv: &TokenStream2,
+        field_name: &Identifier,
+        js_name: &str,
+    ) -> TokenStream2 {
+        self.resolve_target_type()
+            .as_ref()
+            .map(|t| t.render_hydrate_to_js(jsv, field_name, js_name))
+            .unwrap_or_else(|| quote! {})
     }
 }
 
@@ -1030,14 +1438,8 @@ impl ToTokens for TargetEnrichedType {
                 let mut field_toks = extended_fields
                     .iter()
                     .map(|(js_field_name, typ)| {
-                        let field_name = to_snake_case_ident(js_field_name);
-                        let extra_attrs = typ.extra_field_attrs();
-                        let attrs =
-                            iter::once(quote! { rename = #js_field_name }).chain(extra_attrs);
-                        quote! {
-                            #[serde(#(#attrs),*)]
-                            pub #field_name: #typ
-                        }
+                        let field = FieldDefinition { js_field_name, typ };
+                        quote! { #field }
                     })
                     .collect::<Vec<TokenStream2>>();
 
@@ -1057,17 +1459,45 @@ impl ToTokens for TargetEnrichedType {
                     });
                 }
 
+                let jsv = quote! { jsv };
+
+                let hydrate_from_js_fields = extended_fields
+                    .iter()
+                    .filter(|(_, t)| t.contains_hydratable_field())
+                    .map(|(js_name, t)| {
+                        let field_name = to_snake_case_ident(js_name);
+                        t.render_hydrate_from_js(&jsv, &field_name, js_name)
+                    });
+                let hydrate_to_js_fields = extended_fields
+                    .iter()
+                    .filter(|(_, t)| t.contains_hydratable_field())
+                    .map(|(js_name, t)| {
+                        let field_name = to_snake_case_ident(js_name);
+                        t.render_hydrate_to_js(&jsv, &field_name, js_name)
+                    });
+
                 quote! {
-                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     pub struct #name {
                         #(#field_toks),*
+                    }
+
+                    impl ts_bindgen_rt::Hydrator for #name {
+                        fn hydrate_from_js_value(&mut self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
+                            #(#hydrate_from_js_fields);*
+                            Ok(())
+                        }
+                        fn hydrate_to_js_value(self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
+                            #(#hydrate_to_js_fields);*
+                            Ok(())
+                        }
                     }
                 }
             }
             TargetEnrichedTypeInfo::Enum(Enum { members, .. }) => {
                 quote! {
                     #[wasm_bindgen]
-                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #name {
                         #(#members),*
@@ -1156,14 +1586,67 @@ impl ToTokens for TargetEnrichedType {
                     })
                     .unwrap_or_else(|| quote! {});
 
+                let hydratable_cases = u
+                    .types
+                    .iter()
+                    .filter(|t| t.contains_hydratable_field())
+                    .filter(|t| !t.is_uninhabited()) // should never happen but might as well
+                    .collect::<Vec<_>>();
+                let hydrator_impl = if hydratable_cases.is_empty() {
+                    quote! {}
+                } else {
+                    let jsv = quote! { jsv };
+                    let has_rest = hydratable_cases.len() < u.types.len();
+                    let rest_case = if has_rest {
+                        quote! { _ => Ok(()) }
+                    } else {
+                        quote! {}
+                    };
+                    let hydrate_from_js_cases = hydratable_cases.iter()
+                        .map(|t| {
+                            let case = type_to_union_case_name(t);
+
+                            quote! {
+                                #name::#case(x) => ts_bindgen_rt::Hydrator::hydrate_from_js_value(x, #jsv)
+                            }
+                        })
+                        .chain(iter::once(rest_case.clone()));
+                    let hydrate_to_js_cases = hydratable_cases.iter()
+                        .map(|t| {
+                            let case = type_to_union_case_name(t);
+
+                            quote! {
+                                #name::#case(x) => ts_bindgen_rt::Hydrator::hydrate_to_js_value(x, #jsv)
+                            }
+                        })
+                        .chain(iter::once(rest_case.clone()));
+
+                    quote! {
+                        impl ts_bindgen_rt::Hydrator for #name {
+                            fn hydrate_from_js_value(&mut self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
+                                match self {
+                                    #(#hydrate_from_js_cases),*
+                                }
+                            }
+                            fn hydrate_to_js_value(self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
+                                match self {
+                                    #(#hydrate_to_js_cases),*
+                                }
+                            }
+                        }
+                    }
+                };
+
                 quote! {
-                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #name {
                         #(#member_cases),*
                     }
 
                     #default_impl
+
+                    #hydrator_impl
 
                     impl ts_bindgen_rt::ShouldSkipSerializing for #name {
                         fn should_skip_serializing(&self) -> bool {
@@ -1176,7 +1659,7 @@ impl ToTokens for TargetEnrichedType {
             }
             TargetEnrichedTypeInfo::Tuple(Tuple { types, .. }) => {
                 quote! {
-                    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+                    #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     pub struct #name(#(pub #types),*);
                 }
             }
@@ -1452,16 +1935,8 @@ impl ToTokens for TypeRef {
         let our_toks = {
             let (_, name) = self.referent.to_name();
             if matches!(&self.referent, TypeIdent::Builtin(Builtin::Fn)) {
-                let params = self
-                    .type_params
-                    .iter()
-                    .map(|p| quote! { #p })
-                    .take(self.type_params.len() - 1);
-                let ret = self
-                    .type_params
-                    .last()
-                    .map(|p| quote! { #p })
-                    .unwrap_or_else(|| quote! {()});
+                let params = self.params().map(|p| p.type_info);
+                let ret = self.return_type();
                 quote! {
                     dyn #name(#(#params),*) -> Result<#ret, JsValue>
                 }
@@ -1471,6 +1946,41 @@ impl ToTokens for TypeRef {
                 let type_params = self.type_params.iter().map(|p| quote! { #p });
                 quote! { #name<#(#type_params),*> }
             }
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+struct FieldDefinition<'a> {
+    js_field_name: &'a str,
+    typ: &'a TypeRef,
+}
+
+impl<'a> ToTokens for FieldDefinition<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let js_field_name = self.js_field_name;
+        let field_name = to_snake_case_ident(js_field_name);
+        let typ = self.typ;
+        let extra_attrs = typ.extra_field_attrs();
+        let attrs = iter::once(quote! { rename = #js_field_name }).chain(extra_attrs);
+        let rendered_type = if matches!(
+            typ,
+            TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Fn),
+                ..
+            }
+        ) {
+            quote! {
+                Option<std::rc::Rc<#typ>>
+            }
+        } else {
+            quote! { #typ }
+        };
+
+        let our_toks = quote! {
+            #[serde(#(#attrs),*)]
+            pub #field_name: #rendered_type
         };
 
         toks.append_all(our_toks);

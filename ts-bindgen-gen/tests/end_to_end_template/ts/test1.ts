@@ -23,6 +23,7 @@ export interface Abc {
   readonly environment: {
       [key: string]: string;
   };
+  fn: (a: number) => string;
 }
 
 export interface Def extends Abc {
@@ -53,6 +54,7 @@ export function runTest(testFn: BridgeTestFn): boolean {
       env_1: "something",
       env_2: "or another",
     },
+    fn: (a: number) => `hello $a`,
   };
   return testFn("hello") === "hello"
     && testFn(MyEnum.A) === "A"
