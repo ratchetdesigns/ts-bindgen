@@ -54,7 +54,7 @@ export function runTest(testFn: BridgeTestFn): boolean {
       env_1: "something",
       env_2: "or another",
     },
-    fn: (a: number) => `hello $a`,
+    fn: (a: number) => `hello ${a}`,
   };
   return testFn("hello") === "hello"
     && testFn(MyEnum.A) === "A"
@@ -62,9 +62,19 @@ export function runTest(testFn: BridgeTestFn): boolean {
     && testFn(base) !== base
     && util.isDeepStrictEqual(testFn(derived), derived)
     && testFn(derived) !== derived
-    && util.isDeepStrictEqual(testFn({...abc, union: null}), {...abc, union: null})
-    && util.isDeepStrictEqual(testFn({...abc, union: 7}), {...abc, union: 7})
-    && util.isDeepStrictEqual(testFn({...abc, union: undefined }), without(abc, "union"))
+    && util.isDeepStrictEqual(
+      without(testFn({...abc, union: null}) as Abc, "fn"),
+      without({...abc, union: null}, "fn")
+    )
+    && util.isDeepStrictEqual(
+      without(testFn({...abc, union: 7}) as Abc, "fn"),
+      without({...abc, union: 7}, "fn")
+    )
+    && util.isDeepStrictEqual(
+      without(testFn({...abc, union: undefined }) as Abc, "fn"),
+      without(without(abc, "union"), "fn")
+    )
+    && (testFn(abc) as Abc).fn(4) === "hello 4"
     && testFn(abc) !== abc
     && typeof testFn(undefined) === 'undefined';
 }
