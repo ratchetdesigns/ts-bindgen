@@ -1459,7 +1459,14 @@ impl ToTokens for TargetEnrichedType {
                     });
                 }
 
-                let jsv = quote! { jsv };
+                let has_hydratable_fields = extended_fields
+                    .iter()
+                    .any(|(_, t)| t.contains_hydratable_field());
+                let jsv = if has_hydratable_fields {
+                    quote! { jsv }
+                } else {
+                    quote! { _jsv }
+                };
 
                 let hydrate_from_js_fields = extended_fields
                     .iter()
