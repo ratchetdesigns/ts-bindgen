@@ -1376,6 +1376,7 @@ impl Hydratable for TargetEnrichedTypeInfo {
                             &#js_name.into(),
                             #field_name.as_ref(),
                         ).map_err(ts_bindgen_rt::Error::from)?;
+                        #field_name.forget(); // TODO: how do we properly handle memory management?
                     }
                 }
             },
