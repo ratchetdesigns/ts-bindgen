@@ -59,6 +59,22 @@ pub struct Param {
     pub is_variadic: bool,
 }
 
+impl Param {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeInfo>,
+    ) -> Self {
+        Param {
+            name: self.name.clone(),
+            type_info: self
+                .type_info
+                .resolve_names(types_by_name_by_file, type_params),
+            is_variadic: self.is_variadic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
     pub type_params: HashMap<String, TypeInfo>,
@@ -66,9 +82,55 @@ pub struct Func {
     pub return_type: Box<TypeInfo>,
 }
 
+impl Func {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeInfo>,
+    ) -> Self {
+        Func {
+            type_params: self
+                .type_params
+                .iter()
+                .map(|(n, t)| {
+                    (
+                        n.clone(),
+                        t.resolve_names(types_by_name_by_file, type_params),
+                    )
+                })
+                .collect(),
+            params: self
+                .params
+                .iter()
+                .map(|p| p.resolve_names(types_by_name_by_file, type_params))
+                .collect(),
+            return_type: Box::new(
+                self.return_type
+                    .resolve_names(types_by_name_by_file, type_params),
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
+}
+
+impl Ctor {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeInfo>,
+    ) -> Self {
+        Ctor {
+            params: self
+                .params
+                .iter()
+                .map(|p| p.resolve_names(types_by_name_by_file, type_params))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,10 +143,18 @@ pub enum Member {
 impl Member {
     fn resolve_names(
         &self,
-        _types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        _type_params: &HashMap<String, TypeInfo>,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeInfo>,
     ) -> Self {
-        self.clone() // TODO
+        match self {
+            Self::Constructor(ctor) => {
+                Self::Constructor(ctor.resolve_names(types_by_name_by_file, type_params))
+            }
+            Self::Method(f) => Self::Method(f.resolve_names(types_by_name_by_file, type_params)),
+            Self::Property(t) => {
+                Self::Property(t.resolve_names(types_by_name_by_file, type_params))
+            }
+        }
     }
 }
 
