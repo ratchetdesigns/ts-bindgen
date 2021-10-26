@@ -1073,13 +1073,16 @@ impl TsTypes {
             type_params: _,
             ..
         } = class;
-
         TypeInfo::Class(Class {
             super_class: ClassSuperTypeRef::from(class)
                 .map(|super_ref| Box::new(Source::from(self, ts_path, &super_ref).into())),
             members: body
                 .iter()
                 .filter_map(|member| match member {
+                    ClassMember::StaticBlock(s) => {
+                        // TODO
+                        panic!("we don't handle static blocks in classes yet");
+                    }
                     ClassMember::Constructor(ctor) => Some((
                         ctor.key()
                             .unwrap_or_else(|| panic!("no key for constructor")),
