@@ -5,9 +5,9 @@ use crate::identifier::{
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
-    Alias, Builtin, Enum, EnumMember, Func, Indexer, Interface, Intersection, NamespaceImport,
-    Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent, TypeRef,
-    TypesByIdentByPath, Union,
+    Alias, Builtin, Class, Context, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
+    Member, NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent,
+    TypeRef, TypesByIdentByPath, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -258,6 +258,17 @@ impl HasFnPrototype for TypeRef {
 impl HasFnPrototype for Func {
     fn return_type(&self) -> TypeRef {
         (*self.return_type).clone()
+    }
+
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
+        Box::new(self.params.iter().cloned())
+    }
+}
+
+impl HasFnPrototype for Ctor {
+    fn return_type(&self) -> TypeRef {
+        // TODO
+        unimplemented!()
     }
 
     fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
@@ -1421,6 +1432,20 @@ impl Hydratable for TypeRef {
     }
 }
 
+trait JsModulePath {
+    fn js_module_path(&self) -> String;
+}
+
+impl JsModulePath for Context {
+    fn js_module_path(&self) -> String {
+        let path = &self.path;
+        let path = path_relative_to_cargo_toml(path.with_file_name(
+            trim_after_dot(&*path.file_name().unwrap().to_string_lossy()).to_string() + ".js",
+        ));
+        path.to_string_lossy().to_string()
+    }
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -1672,12 +1697,7 @@ impl ToTokens for TargetEnrichedType {
                 }
             }
             TargetEnrichedTypeInfo::Func(func) => {
-                let path = &func.context.path;
-                let path = path_relative_to_cargo_toml(path.with_file_name(
-                    trim_after_dot(&*path.file_name().unwrap().to_string_lossy()).to_string()
-                        + ".js",
-                ));
-                let path = path.to_string_lossy();
+                let path = func.context.js_module_path();
                 let attrs = {
                     let mut attrs = vec![quote! { js_name = #js_name, catch }];
                     if func.is_variadic() {
@@ -1696,6 +1716,90 @@ impl ToTokens for TargetEnrichedType {
                     }
 
                     #wrapper_func
+                }
+            }
+            TargetEnrichedTypeInfo::Class(Class {
+                super_class,
+                members,
+                context,
+            }) => {
+                let path = context.js_module_path();
+                let mut attrs = vec![quote! { js_name = #js_name }];
+                if let Some(TypeRef {
+                    referent,
+                    type_params,
+                    ..
+                }) = super_class.as_ref()
+                {
+                    let (_, super_name) = referent.to_name();
+
+                    attrs.push(quote! {
+                        extends = #super_name
+                    });
+                }
+
+                let members = members.iter().map(|(member_js_name, member)| {
+                    let member_js_ident = format_ident!("{}", member_js_name);
+                    match member {
+                        Member::Constructor(ctor) => {
+                            let param_toks = ctor
+                                .params()
+                                .map(|p| p.as_exposed_to_rust_named_param_list());
+
+                            quote! {
+                                #[wasm_bindgen(constructor)]
+                                fn new(#(#param_toks),*) -> #name;
+                            }
+                        }
+                        Member::Method(func) => {
+                            let fn_name = InternalFunc::to_internal_rust_name(member_js_name);
+
+                            let f = func.exposed_to_js_fn_decl(fn_name);
+
+                            let mut attrs = vec![
+                                quote! {js_name = #member_js_ident},
+                                quote! {method},
+                                quote! {js_class = #js_name},
+                            ];
+                            if func.is_variadic() {
+                                attrs.push(quote! { variadic });
+                            }
+
+                            quote! {
+                                #[wasm_bindgen(#(#attrs),*)]
+                                #f;
+                            }
+                        }
+                        Member::Property(typ) => {
+                            let member_name = to_snake_case_ident(member_js_name);
+                            let setter_name = format_ident!("set_{}", member_name.to_string());
+                            // TODO: don't add structural if the property is actually a
+                            // javascript getter/setter
+                            quote! {
+                                #[wasm_bindgen(method, structural, getter = #member_js_ident)]
+                                fn #member_name(this: &#name) -> #typ;
+
+                                #[wasm_bindgen(method, structural, setter = #member_js_ident)]
+                                fn #setter_name(this: &#name, value: #typ);
+                            }
+                        }
+                    }
+                });
+
+                quote! {
+                    #[wasm_bindgen(module = #path)]
+                    extern "C" {
+                        #[wasm_bindgen(#(#attrs),*)]
+                        type #name;
+
+                        #(#members)*
+                    }
+
+                    impl #name {
+                        fn hello_world(&self) -> String {
+                            "hello".to_string()
+                        }
+                    }
                 }
             }
             /*TypeInfo::Intersection {
@@ -1717,78 +1821,6 @@ impl ToTokens for TargetEnrichedType {
                 params: Vec<Param>,
                 return_type: Box<TypeInfo>,
             },
-            TypeInfo::Class(Class {
-                super_class,
-                members,
-            }) => {
-                let mut attrs = vec![quote! { js_name = #js_name }];
-                if let Some(TypeRef {
-                    referent,
-                    type_params,
-                }) = super_class.as_ref().map(|sc| &**sc)
-                {
-                    let super_name = to_camel_case_ident(referent.to_name());
-
-                    attrs.push(quote! {
-                        extends = #super_name
-                    });
-                }
-
-                let members: Vec<TokenStream2> = members
-                    .iter()
-                    .map(|(member_js_name, member)| match member {
-                        Member::Constructor(ctor) => {
-                            let param_toks: Vec<TokenStream2> =
-                                ctor.params.iter().map(|p| quote! { #p }).collect();
-
-                            quote! {
-                                #[wasm_bindgen(constructor)]
-                                fn new(#(#param_toks),*) -> #name;
-                            }
-                        }
-                        Member::Method(func) => {
-                            let f = InternalFunc {
-                                js_name: member_js_name,
-                                func,
-                            };
-                            let mut attrs = vec![
-                                quote! {js_name = #member_js_name},
-                                quote! {method},
-                                quote! {js_class = #js_name},
-                            ];
-                            if func.is_variadic() {
-                                attrs.push(quote! { variadic });
-                            }
-
-                            quote! {
-                                #[wasm_bindgen(#(#attrs),*)]
-                                #f
-                            }
-                        }
-                        Member::Property(typ) => {
-                            let member_name = to_snake_case_ident(member_js_name);
-                            let setter_name = format_ident!("set_{}", member_name);
-                            quote! {
-                                #[wasm_bindgen(method, structural, getter = #member_js_name)]
-                                fn #member_name(this: &#name) -> #typ;
-
-                                #[wasm_bindgen(method, structural, setter = #member_js_name)]
-                                fn #setter_name(this: &#name, value: #typ);
-                            }
-                        }
-                    })
-                    .collect();
-
-                quote! {
-                    #[wasm_bindgen]
-                    extern "C" {
-                        #[wasm_bindgen(#(#attrs),*)]
-                        type #name;
-
-                        #(#members)*
-                    }
-                }
-            }
             TypeInfo::Var {
                 type_info: Box<TypeInfo>,
             },*/
