@@ -221,9 +221,9 @@ impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
 
 trait HasFnPrototype {
     fn return_type(&self) -> TypeRef;
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a>;
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
     fn is_variadic(&self) -> bool {
-        self.params().any(|p| p.is_variadic)
+        self.params().any(|p| p.is_variadic())
     }
 }
 
@@ -239,29 +239,43 @@ impl HasFnPrototype for TypeRef {
             })
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
         Box::new(
             self.type_params
                 .iter()
                 .enumerate()
-                .map(|(i, t)| Param {
-                    name: format!("arg{}", i),
-                    type_info: t.clone(),
-                    is_variadic: false, // TODO
-                    context: t.context.clone(),
+                .map(|(i, t)| {
+                    Box::new(Param {
+                        name: format!("arg{}", i),
+                        type_info: t.clone(),
+                        is_variadic: false, // TODO
+                        context: t.context.clone(),
+                    }) as Box<dyn ParamExt>
                 })
                 .take(self.type_params.len() - 1),
         )
     }
 }
 
+#[derive(Debug, Clone)]
+struct SelfParam;
+
 impl HasFnPrototype for Func {
     fn return_type(&self) -> TypeRef {
         (*self.return_type).clone()
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
-        Box::new(self.params.iter().cloned())
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+        let reg_params = self
+            .params
+            .iter()
+            .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>);
+
+        if self.is_member {
+            Box::new(iter::once(Box::new(SelfParam) as Box<dyn ParamExt>).chain(reg_params))
+        } else {
+            Box::new(reg_params)
+        }
     }
 }
 
@@ -271,8 +285,12 @@ impl HasFnPrototype for Ctor {
         unimplemented!()
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Param> + 'a> {
-        Box::new(self.params.iter().cloned())
+    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+        Box::new(
+            self.params
+                .iter()
+                .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>),
+        )
     }
 }
 
@@ -294,7 +312,9 @@ mod fn_types {
                     Some(TargetEnrichedTypeInfo::Ref(typ))
                         if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) =>
                     {
-                        let params = typ.params().map(|p| exposed_to_js_param_type(&p.type_info));
+                        let params = typ
+                            .params()
+                            .map(|p| p.as_exposed_to_js_unnamed_param_list());
                         let ret = exposed_to_js_param_type(&typ.return_type());
                         quote! {
                             &Closure<dyn Fn(#(#params),*) -> std::result::Result<#ret, JsValue>>
@@ -407,7 +427,7 @@ impl<T: HasFnPrototype> FnPrototypeExt for T {
     }
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
-        let args = self.params().map(|p| to_snake_case_ident(p.name));
+        let args = self.params().map(|p| p.rust_name());
         quote! {
             #name(#(#args),*)
         }
@@ -485,6 +505,9 @@ trait ParamExt {
     /// TokenStream defines an exposed-to-js closure that will proxy calls
     /// to the underlying param.
     fn js_wrapper_fn(&self) -> Option<TokenStream2>;
+
+    /// Is the parameter the final parameter of a variadic function?
+    fn is_variadic(&self) -> bool;
 }
 
 impl ParamExt for Param {
@@ -591,6 +614,57 @@ impl ParamExt for Param {
         } else {
             None
         }
+    }
+
+    fn is_variadic(&self) -> bool {
+        self.is_variadic
+    }
+}
+
+impl ParamExt for SelfParam {
+    fn rust_name(&self) -> Identifier {
+        to_snake_case_ident("self")
+    }
+
+    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
+        self.as_exposed_to_js_unnamed_param_list()
+    }
+
+    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
+        quote! { &self }
+    }
+
+    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
+        self.as_exposed_to_rust_unnamed_param_list()
+    }
+
+    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
+        quote! { &self }
+    }
+
+    fn js_to_rust_conversion(&self) -> TokenStream2 {
+        quote! { &self }
+    }
+
+    fn local_fn_name(&self) -> Identifier {
+        // this is never used...
+        self.rust_name()
+    }
+
+    fn rust_to_js_conversion(&self) -> TokenStream2 {
+        quote! { &self }
+    }
+
+    fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
+        quote! { &self }
+    }
+
+    fn js_wrapper_fn(&self) -> Option<TokenStream2> {
+        None
+    }
+
+    fn is_variadic(&self) -> bool {
+        false
     }
 }
 
@@ -1760,6 +1834,7 @@ impl ToTokens for TargetEnrichedType {
                                 quote! {js_name = #member_js_ident},
                                 quote! {method},
                                 quote! {js_class = #js_name},
+                                quote! {catch},
                             ];
                             if func.is_variadic() {
                                 attrs.push(quote! { variadic });
@@ -1975,8 +2050,10 @@ impl ToTokens for TypeRef {
         let our_toks = {
             let (_, name) = self.referent.to_name();
             if matches!(&self.referent, TypeIdent::Builtin(Builtin::Fn)) {
-                let params = self.params().map(|p| p.type_info);
-                let ret = self.return_type();
+                let params = self
+                    .params()
+                    .map(|p| p.as_exposed_to_rust_unnamed_param_list());
+                let ret = fn_types::exposed_to_rust_return_type(&self.return_type());
                 quote! {
                     dyn #name(#(#params),*) -> Result<#ret, JsValue>
                 }

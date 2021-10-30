@@ -43,6 +43,18 @@ function without<T, P extends keyof T>(obj: T, prop: P): Omit<T, P> {
   return o;
 }
 
+export class AdamClass {
+  n: number;
+
+  constructor(n: number) {
+    this.n = n;
+  }
+
+  getN(): number {
+    return this.n;
+  }
+}
+
 export function runTest(testFn: BridgeTestFn): boolean {
   const base = { baseField: 7 };
   const derived = { baseField: 3, derivedField: "potato" };

@@ -367,6 +367,8 @@ trait FuncExt {
 
     fn return_type(&self) -> Option<&TsType>;
 
+    fn is_member(&self) -> bool;
+
     fn to_func(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Func {
         Func {
             params: self.params(ts_path, ts_types),
@@ -376,6 +378,7 @@ trait FuncExt {
                     .map(|t| ts_types.process_type(ts_path, t))
                     .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             ),
+            is_member: self.is_member(),
         }
     }
 
@@ -400,6 +403,10 @@ impl FuncExt for TsMethodSignature {
     fn return_type(&self) -> Option<&TsType> {
         self.type_ann.as_ref().map(|t| &*t.type_ann)
     }
+
+    fn is_member(&self) -> bool {
+        false
+    }
 }
 
 impl FuncExt for TsFnType {
@@ -417,6 +424,10 @@ impl FuncExt for TsFnType {
 
     fn return_type(&self) -> Option<&TsType> {
         Some(&self.type_ann.type_ann)
+    }
+
+    fn is_member(&self) -> bool {
+        false
     }
 }
 
@@ -436,6 +447,10 @@ impl FuncExt for Function {
     fn return_type(&self) -> Option<&TsType> {
         self.return_type.as_ref().map(|t| &*t.type_ann)
     }
+
+    fn is_member(&self) -> bool {
+        false
+    }
 }
 
 impl FuncExt for ClassMethod {
@@ -454,6 +469,10 @@ impl FuncExt for ClassMethod {
 
     fn return_type(&self) -> Option<&TsType> {
         self.function.return_type.as_ref().map(|t| &*t.type_ann)
+    }
+
+    fn is_member(&self) -> bool {
+        !self.is_static
     }
 }
 
@@ -873,6 +892,7 @@ impl TsTypes {
             type_params: self.process_fn_type_params(ts_path, type_params),
             params: self.process_params(ts_path, params),
             return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
+            is_member: false,
         })
     }
 
@@ -913,6 +933,7 @@ impl TsTypes {
                     .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             }],
             return_type: Box::new(TypeInfo::PrimitiveBoolean(PrimitiveBoolean())),
+            is_member: false,
         })
     }
 

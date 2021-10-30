@@ -758,6 +758,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
+    pub is_member: bool,
 }
 
 impl ApplyNames for Func {
@@ -774,6 +775,7 @@ impl ApplyNames for Func {
                 .map(|p| p.apply_names(names_by_id))
                 .collect(),
             return_type: Box::new(self.return_type.apply_names(names_by_id)),
+            is_member: self.is_member,
         }
     }
 }
@@ -787,6 +789,7 @@ impl From<FuncIR> for EffectContainer<Func> {
             .into_iter()
             .map(|(n, p)| (n, p.into()))
             .collect();
+        let is_member = src.is_member;
 
         combine_effects!(
             params => (effect_mappers::prepend_name("Params")),
@@ -796,6 +799,7 @@ impl From<FuncIR> for EffectContainer<Func> {
                 type_params,
                 params,
                 return_type: Box::new(return_type),
+                is_member,
             }
         )
     }

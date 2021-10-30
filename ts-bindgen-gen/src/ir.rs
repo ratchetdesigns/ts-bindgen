@@ -80,6 +80,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeInfo>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeInfo>,
+    pub is_member: bool,
 }
 
 impl Func {
@@ -108,6 +109,7 @@ impl Func {
                 self.return_type
                     .resolve_names(types_by_name_by_file, type_params),
             ),
+            is_member: self.is_member,
         }
     }
 }
@@ -371,6 +373,7 @@ impl TypeInfo {
             return Some(TypeInfo::Func(Func {
                 type_params: Default::default(),
                 return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+                is_member: false,
                 params: vec![Param {
                     name: "args".to_string(),
                     type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
@@ -504,6 +507,7 @@ impl TypeInfo {
                 params,
                 type_params: fn_type_params,
                 return_type,
+                is_member,
             }) => {
                 let tps = {
                     let mut tps = type_params.clone();
@@ -523,6 +527,7 @@ impl TypeInfo {
                     return_type: Box::new(
                         return_type.resolve_names(types_by_name_by_file, type_params),
                     ),
+                    is_member: *is_member,
                 })
             }
             Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
