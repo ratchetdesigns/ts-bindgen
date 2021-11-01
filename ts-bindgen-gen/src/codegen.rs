@@ -222,6 +222,8 @@ impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
 trait HasFnPrototype {
     fn return_type(&self) -> TypeRef;
     fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
+    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
+    fn is_member(&self) -> bool;
     fn is_variadic(&self) -> bool {
         self.params().any(|p| p.is_variadic())
     }
@@ -255,6 +257,15 @@ impl HasFnPrototype for TypeRef {
                 .take(self.type_params.len() - 1),
         )
     }
+
+    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+        // args and params are the same for non-members
+        self.params()
+    }
+
+    fn is_member(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -268,10 +279,7 @@ impl HasFnPrototype for Func {
     }
 
     fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
-        let reg_params = self
-            .params
-            .iter()
-            .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>);
+        let reg_params = self.args();
 
         if let Some(class_name) = &self.class_name {
             Box::new(
@@ -283,6 +291,18 @@ impl HasFnPrototype for Func {
         } else {
             Box::new(reg_params)
         }
+    }
+
+    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+        Box::new(
+            self.params
+                .iter()
+                .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>),
+        )
+    }
+
+    fn is_member(&self) -> bool {
+        self.class_name.is_some()
     }
 }
 
@@ -298,6 +318,14 @@ impl HasFnPrototype for Ctor {
                 .iter()
                 .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>),
         )
+    }
+
+    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+        self.params()
+    }
+
+    fn is_member(&self) -> bool {
+        true
     }
 }
 
@@ -384,6 +412,15 @@ trait FnPrototypeExt {
     /// a function that may be called from rust (and, hence, might have
     /// rust closures in need of wrapping).
     fn exposed_to_rust_param_wrappers(&self) -> TokenStream2;
+
+    /// Renders a wrapper function intended to be called idiomatically from
+    /// rust, which wraps an invocation of a corresponding underlying js
+    /// function.
+    fn exposed_to_rust_wrapper_fn(
+        &self,
+        fn_name: &Identifier,
+        internal_fn_name: &Identifier,
+    ) -> TokenStream2;
 }
 
 impl<T: HasFnPrototype> FnPrototypeExt for T {
@@ -434,7 +471,7 @@ impl<T: HasFnPrototype> FnPrototypeExt for T {
     }
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
-        let args = self.params().map(|p| p.rust_name());
+        let args = self.args().map(|p| p.rust_name());
         quote! {
             #name(#(#args),*)
         }
@@ -463,6 +500,38 @@ impl<T: HasFnPrototype> FnPrototypeExt for T {
 
         quote! {
             #(#wrapper_fns);*
+        }
+    }
+
+    fn exposed_to_rust_wrapper_fn(
+        &self,
+        fn_name: &Identifier,
+        internal_fn_name: &Identifier,
+    ) -> TokenStream2 {
+        let args = self.args().map(|p| p.rust_to_js_conversion());
+        let self_access = if self.is_member() {
+            quote! { self. }
+        } else {
+            quote! {}
+        };
+        let return_value = quote! {
+            #self_access #internal_fn_name(#(#args),*)?
+        };
+        let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value);
+        let wrapper_fns = self.exposed_to_rust_param_wrappers();
+
+        let f = self.exposed_to_rust_fn_decl(fn_name);
+
+        quote! {
+            #[allow(dead_code)]
+            pub #f {
+                #[allow(unused_imports)]
+                use ts_bindgen_rt::IntoSerdeOrDefault;
+
+                #wrapper_fns
+
+                Ok(#ret)
+            }
         }
     }
 }
@@ -603,7 +672,7 @@ impl ParamExt for Param {
 
             // TODO: needs to render wrappers for typ.params() that are
             // functions
-            let args = typ.params().map(|p| p.js_to_rust_conversion());
+            let args = typ.args().map(|p| p.js_to_rust_conversion());
             let result = to_snake_case_ident("result");
             let fn_name = to_snake_case_ident("result_adapter");
             let conversion = render_rust_to_js_conversion(
@@ -795,26 +864,9 @@ impl<'a> ToTokens for WrapperFunc<'a> {
         let fn_name = Self::to_rust_name(self.js_name);
 
         let internal_fn_name = InternalFunc::to_internal_rust_name(self.js_name);
-        let args = self.func.params.iter().map(|p| p.rust_to_js_conversion());
-        let return_value = quote! {
-            #internal_fn_name(#(#args),*)?
-        };
-        let ret = render_wasm_bindgen_return_to_js(&self.func.return_type(), &return_value);
-        let wrapper_fns = self.func.exposed_to_rust_param_wrappers();
-
-        let f = self.func.exposed_to_rust_fn_decl(fn_name);
-
-        let our_toks = quote! {
-            #[allow(dead_code)]
-            pub #f {
-                #[allow(unused_imports)]
-                use ts_bindgen_rt::IntoSerdeOrDefault;
-
-                #wrapper_fns
-
-                Ok(#ret)
-            }
-        };
+        let our_toks = self
+            .func
+            .exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name);
 
         toks.extend(our_toks);
     }
@@ -1402,7 +1454,7 @@ impl Hydratable for TargetEnrichedTypeInfo {
                 let args = quote! { args };
                 let params = tr.params().map(|p| p.as_exposed_to_rust_named_param_list());
                 // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
-                let conversions = tr.params().map(|p| {
+                let conversions = tr.args().map(|p| {
                     let name = p.rust_name();
                     let conv = p.rust_to_jsvalue_conversion();
                     quote! {
@@ -1415,6 +1467,8 @@ impl Hydratable for TargetEnrichedTypeInfo {
                         #args.push(&#name);
                     }
                 });
+                // TODO: do we need to handle member functions here (first arg to apply may be
+                // non-null)
                 quote! {
                     let #field_name = #js_value;
                     let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&#field_name);
@@ -1821,7 +1875,7 @@ impl ToTokens for TargetEnrichedType {
                     });
                 }
 
-                let members = members.iter().map(|(member_js_name, member)| {
+                let member_defs = members.iter().map(|(member_js_name, member)| {
                     let member_js_ident = format_ident!("{}", member_js_name);
                     match member {
                         Member::Constructor(ctor) => {
@@ -1870,19 +1924,29 @@ impl ToTokens for TargetEnrichedType {
                     }
                 });
 
+                let public_methods = members
+                    .iter()
+                    .filter_map(|(js_name, member)| match member {
+                        Member::Method(m) => Some((js_name, m)),
+                        _ => None,
+                    })
+                    .map(|(js_name, method)| {
+                        let fn_name = to_snake_case_ident(js_name);
+                        let internal_fn_name = InternalFunc::to_internal_rust_name(js_name);
+                        method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
+                    });
+
                 quote! {
                     #[wasm_bindgen(module = #path)]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
                         type #name;
 
-                        #(#members)*
+                        #(#member_defs)*
                     }
 
                     impl #name {
-                        fn hello_world(&self) -> String {
-                            "hello".to_string()
-                        }
+                        #(#public_methods)*
                     }
                 }
             }
