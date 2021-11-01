@@ -1940,13 +1940,19 @@ impl ToTokens for TargetEnrichedType {
                     #[wasm_bindgen(module = #path)]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
-                        type #name;
+                        #vis type #name;
 
                         #(#member_defs)*
                     }
 
                     impl #name {
                         #(#public_methods)*
+                    }
+
+                    impl Clone for #name {
+                        fn clone(&self) -> Self {
+                            Self { obj: self.obj.clone() }
+                        }
                     }
                 }
             }
