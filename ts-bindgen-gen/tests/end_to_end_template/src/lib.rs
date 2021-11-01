@@ -2,7 +2,7 @@ mod js_lib;
 
 use wasm_bindgen::JsValue;
 use crate::js_lib::root::tmp::test::ts::index::run_test;
-use crate::js_lib::root::tmp::test::ts::test1::AnyType;
+use crate::js_lib::root::tmp::test::ts::round_trip_clone::AnyType;
 
 pub fn cloner(t: AnyType) -> Result<AnyType, JsValue> {
     Ok(t.clone())

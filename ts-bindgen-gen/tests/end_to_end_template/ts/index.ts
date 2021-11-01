@@ -1,6 +1,6 @@
-export * as Test1 from './test1';
-import {runTest as runTest1, BridgeTestFn as BridgeTestFn1} from './test1';
+export * as RoundTripClone from './round-trip-clone';
+import {runTest as roundTripClone, RoundTripCloneFn} from './round-trip-clone';
 
-export function runTest(bridgeTestFn1: BridgeTestFn1, ...a: number[]): boolean {
-  return runTest1(bridgeTestFn1);
+export function runTest(cloneFn: RoundTripCloneFn, ...a: number[]): boolean {
+  return roundTripClone(cloneFn);
 }

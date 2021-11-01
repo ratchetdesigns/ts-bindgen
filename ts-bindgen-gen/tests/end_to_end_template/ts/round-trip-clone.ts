@@ -34,7 +34,7 @@ export type MaybeNumber = null | undefined | number;
 
 export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber;
 
-export type BridgeTestFn = (input: AnyType) => AnyType;
+export type RoundTripCloneFn = (input: AnyType) => AnyType;
 
 // TODO: because we serialize to json, we turn undefined into a missing key
 function without<T, P extends keyof T>(obj: T, prop: P): Omit<T, P> {
@@ -55,7 +55,7 @@ export class AdamClass {
   }
 }
 
-export function runTest(testFn: BridgeTestFn): boolean {
+export function runTest(testFn: RoundTripCloneFn): boolean {
   const base = { baseField: 7 };
   const derived = { baseField: 3, derivedField: "potato" };
   const abc: Abc = {
