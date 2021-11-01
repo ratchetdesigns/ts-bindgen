@@ -367,8 +367,6 @@ trait FuncExt {
 
     fn return_type(&self) -> Option<&TsType>;
 
-    fn is_member(&self) -> bool;
-
     fn to_func(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Func {
         Func {
             params: self.params(ts_path, ts_types),
@@ -378,8 +376,14 @@ trait FuncExt {
                     .map(|t| ts_types.process_type(ts_path, t))
                     .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             ),
-            is_member: self.is_member(),
+            class_name: None,
         }
+    }
+
+    fn to_member_func(&self, ts_path: &Path, ts_types: &mut TsTypes, name: &TypeName) -> Func {
+        let mut f = self.to_func(ts_path, ts_types);
+        f.class_name = Some(name.clone());
+        f
     }
 
     fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> TypeInfo {
@@ -403,10 +407,6 @@ impl FuncExt for TsMethodSignature {
     fn return_type(&self) -> Option<&TsType> {
         self.type_ann.as_ref().map(|t| &*t.type_ann)
     }
-
-    fn is_member(&self) -> bool {
-        false
-    }
 }
 
 impl FuncExt for TsFnType {
@@ -424,10 +424,6 @@ impl FuncExt for TsFnType {
 
     fn return_type(&self) -> Option<&TsType> {
         Some(&self.type_ann.type_ann)
-    }
-
-    fn is_member(&self) -> bool {
-        false
     }
 }
 
@@ -447,10 +443,6 @@ impl FuncExt for Function {
     fn return_type(&self) -> Option<&TsType> {
         self.return_type.as_ref().map(|t| &*t.type_ann)
     }
-
-    fn is_member(&self) -> bool {
-        false
-    }
 }
 
 impl FuncExt for ClassMethod {
@@ -469,10 +461,6 @@ impl FuncExt for ClassMethod {
 
     fn return_type(&self) -> Option<&TsType> {
         self.function.return_type.as_ref().map(|t| &*t.type_ann)
-    }
-
-    fn is_member(&self) -> bool {
-        !self.is_static
     }
 }
 
@@ -892,7 +880,7 @@ impl TsTypes {
             type_params: self.process_fn_type_params(ts_path, type_params),
             params: self.process_params(ts_path, params),
             return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)),
-            is_member: false,
+            class_name: None,
         })
     }
 
@@ -933,7 +921,7 @@ impl TsTypes {
                     .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             }],
             return_type: Box::new(TypeInfo::PrimitiveBoolean(PrimitiveBoolean())),
-            is_member: false,
+            class_name: None,
         })
     }
 
@@ -1088,7 +1076,12 @@ impl TsTypes {
         }
     }
 
-    fn process_class(&mut self, ts_path: &Path, class: &swc_ecma_ast::Class) -> TypeInfo {
+    fn process_class(
+        &mut self,
+        ts_path: &Path,
+        name: &TypeName,
+        class: &swc_ecma_ast::Class,
+    ) -> TypeInfo {
         let swc_ecma_ast::Class {
             body,
             type_params: _,
@@ -1111,7 +1104,7 @@ impl TsTypes {
                         method
                             .key()
                             .unwrap_or_else(|| panic!("no key for constructor")),
-                        Member::Method(method.to_func(ts_path, self)),
+                        Member::Method(method.to_member_func(ts_path, self, name)),
                     )),
                     ClassMember::PrivateMethod(_) => None,
                     ClassMember::ClassProp(prop) => Some((
@@ -1131,10 +1124,11 @@ impl TsTypes {
         ts_path: &Path,
         ClassDecl { ident, class, .. }: &ClassDecl,
     ) -> Type {
+        let name = TypeName::for_name(ts_path, &ident.sym.to_string());
         Type {
-            name: TypeName::for_name(ts_path, &ident.sym.to_string()),
+            name: name.clone(),
             is_exported: false,
-            info: self.process_class(ts_path, class),
+            info: self.process_class(ts_path, &name, class),
         }
     }
 

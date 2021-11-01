@@ -258,7 +258,9 @@ impl HasFnPrototype for TypeRef {
 }
 
 #[derive(Debug, Clone)]
-struct SelfParam;
+struct SelfParam {
+    class_name: TypeIdent,
+}
 
 impl HasFnPrototype for Func {
     fn return_type(&self) -> TypeRef {
@@ -271,8 +273,13 @@ impl HasFnPrototype for Func {
             .iter()
             .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>);
 
-        if self.is_member {
-            Box::new(iter::once(Box::new(SelfParam) as Box<dyn ParamExt>).chain(reg_params))
+        if let Some(class_name) = &self.class_name {
+            Box::new(
+                iter::once(Box::new(SelfParam {
+                    class_name: class_name.clone(),
+                }) as Box<dyn ParamExt>)
+                .chain(reg_params),
+            )
         } else {
             Box::new(reg_params)
         }
@@ -627,15 +634,17 @@ impl ParamExt for SelfParam {
     }
 
     fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
-        self.as_exposed_to_js_unnamed_param_list()
+        let (_, class_name) = self.class_name.to_name();
+        quote! { this: &#class_name }
     }
 
     fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
-        quote! { &self }
+        let (_, class_name) = self.class_name.to_name();
+        quote! { &#class_name}
     }
 
     fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
-        self.as_exposed_to_rust_unnamed_param_list()
+        quote! { &self }
     }
 
     fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {

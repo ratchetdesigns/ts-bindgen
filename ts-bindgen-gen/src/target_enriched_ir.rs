@@ -343,7 +343,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
-    pub is_member: bool,
+    pub class_name: Option<TypeIdent>,
     pub context: Context,
 }
 
@@ -358,7 +358,7 @@ from_struct!(
     type_params => {},
     params => [],
     return_type => box,
-    is_member => nc,
+    class_name => nc,
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -758,7 +758,7 @@ pub struct Func {
     pub type_params: HashMap<String, TypeRef>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
-    pub is_member: bool,
+    pub class_name: Option<TypeIdent>,
 }
 
 impl ApplyNames for Func {
@@ -775,7 +775,7 @@ impl ApplyNames for Func {
                 .map(|p| p.apply_names(names_by_id))
                 .collect(),
             return_type: Box::new(self.return_type.apply_names(names_by_id)),
-            is_member: self.is_member,
+            class_name: self.class_name.map(|n| n.apply_names(names_by_id)),
         }
     }
 }
@@ -789,17 +789,18 @@ impl From<FuncIR> for EffectContainer<Func> {
             .into_iter()
             .map(|(n, p)| (n, p.into()))
             .collect();
-        let is_member = src.is_member;
+        let class_name: EffectContainer<Option<_>> = src.class_name.map(|n| n.into()).into();
 
         combine_effects!(
             params => (effect_mappers::prepend_name("Params")),
             return_type => (effect_mappers::prepend_name("Return")),
-            type_params => (effect_mappers::identity());
+            type_params => (effect_mappers::identity()),
+            class_name => (effect_mappers::identity());
             Func {
                 type_params,
                 params,
                 return_type: Box::new(return_type),
-                is_member,
+                class_name,
             }
         )
     }
