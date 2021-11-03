@@ -32,18 +32,7 @@ export interface Def extends Abc {
 
 export type MaybeNumber = null | undefined | number;
 
-export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber;
-
-export type RoundTripCloneFn = (input: AnyType) => AnyType;
-
-// TODO: because we serialize to json, we turn undefined into a missing key
-function without<T, P extends keyof T>(obj: T, prop: P): Omit<T, P> {
-  let o = { ...obj };
-  delete o[prop];
-  return o;
-}
-
-export class AdamClass {
+export class MyClass{
   n: number;
 
   constructor(n: number) {
@@ -53,6 +42,17 @@ export class AdamClass {
   getN(): number {
     return this.n;
   }
+}
+
+export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber | MyClass;
+
+export type RoundTripCloneFn = (input: AnyType) => AnyType;
+
+// TODO: because we serialize to json, we turn undefined into a missing key
+function without<T, P extends keyof T>(obj: T, prop: P): Omit<T, P> {
+  let o = { ...obj };
+  delete o[prop];
+  return o;
 }
 
 export function runTest(testFn: RoundTripCloneFn): boolean {
@@ -68,6 +68,7 @@ export function runTest(testFn: RoundTripCloneFn): boolean {
     },
     fn: (a: number) => `hello ${a}`,
   };
+  const myClass = new MyClass(5);
   return testFn("hello") === "hello"
     && testFn(MyEnum.A) === "A"
     && util.isDeepStrictEqual(testFn(base), base)
@@ -84,9 +85,10 @@ export function runTest(testFn: RoundTripCloneFn): boolean {
     )
     && util.isDeepStrictEqual(
       without(testFn({...abc, union: undefined }) as Abc, "fn"),
-      without(without(abc, "union"), "fn")
+      without(abc, "fn")
     )
     && (testFn(abc) as Abc).fn(4) === "hello 4"
     && testFn(abc) !== abc
+    && testFn(myClass) === myClass
     && typeof testFn(undefined) === 'undefined';
 }
