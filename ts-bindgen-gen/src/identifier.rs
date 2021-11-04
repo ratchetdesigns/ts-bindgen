@@ -38,6 +38,19 @@ impl Identifier {
             type_params: Default::default(),
         }
     }
+
+    pub fn prefix_name(&self, prefix: &str) -> Identifier {
+        let mut type_parts = self.type_parts.clone();
+        if let Some(last_part) = type_parts.pop() {
+            let last_part = format_ident!("{}{}", prefix, last_part);
+            type_parts.push(last_part);
+        }
+
+        Identifier {
+            type_parts,
+            type_params: self.type_params.clone(),
+        }
+    }
 }
 
 impl Display for Identifier {
