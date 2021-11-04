@@ -779,10 +779,8 @@ fn render_wasm_bindgen_return_to_js(
     match serialization_type {
         SerializationType::Raw | SerializationType::Ref => return_value.clone(),
         SerializationType::SerdeJson => {
-            if return_type.contains_hydratable_field() {
-                quote! { ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap() }
-            } else {
-                quote! { #return_value.into_serde().unwrap() }
+            quote! {
+                ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap()
             }
         }
         SerializationType::Fn => {
@@ -799,10 +797,8 @@ fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream2) -
             #return_value.into_serde().unwrap()
         },
         SerializationType::SerdeJson => {
-            if return_type.contains_hydratable_field() {
-                quote! { ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap() }
-            } else {
-                quote! { #return_value.into_serde().unwrap() }
+            quote! {
+                ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap()
             }
         }
         SerializationType::Fn => {
@@ -965,77 +961,6 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
                 _ => SerializationType::SerdeJson,
             },
             _ => SerializationType::SerdeJson,
-        }
-    }
-}
-
-trait ExtraFieldAttrs {
-    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>>;
-}
-
-impl ExtraFieldAttrs for TypeRef {
-    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
-        let resolved_type = self.resolve_target_type();
-        let resolved_extra_attrs = resolved_type
-            .map(|ti| ti.extra_field_attrs())
-            .unwrap_or_else(|| Box::new(iter::empty()));
-
-        Box::new(
-            self.referent
-                .extra_field_attrs()
-                .chain(resolved_extra_attrs),
-        )
-    }
-}
-
-impl ExtraFieldAttrs for TargetEnrichedTypeInfo {
-    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
-        match self {
-            TargetEnrichedTypeInfo::Union(u) => {
-                let first = iter::once(quote! {
-                    skip_serializing_if = "ts_bindgen_rt::ShouldSkipSerializing::should_skip_serializing"
-                });
-
-                if u.has_undefined_member() {
-                    Box::new(first.chain(iter::once(quote! {
-                        default
-                    })))
-                } else {
-                    Box::new(first)
-                }
-            }
-            _ => Box::new(iter::empty()),
-        }
-    }
-}
-
-impl ExtraFieldAttrs for TypeIdent {
-    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
-        if let TypeIdent::Builtin(b) = self {
-            b.extra_field_attrs()
-        } else {
-            Box::new(iter::empty())
-        }
-    }
-}
-
-impl ExtraFieldAttrs for Builtin {
-    fn extra_field_attrs(&self) -> Box<dyn Iterator<Item = TokenStream2>> {
-        match self {
-            // TODO: figure out how to represent undefined for Builtin::PrimitiveObject
-            Builtin::PrimitiveUndefined => Box::new(iter::once(quote! {
-                skip_serializing
-            })),
-            Builtin::Optional => Box::new(iter::once(quote! {
-                skip_serializing_if = "Option::is_none"
-            })),
-            Builtin::PrimitiveAny => Box::new(iter::once(quote! {
-                skip_serializing_if = "JsValue::is_undefined"
-            })),
-            Builtin::Fn => Box::new(iter::once(quote! {
-                skip
-            })),
-            _ => Box::new(iter::empty()),
         }
     }
 }
@@ -1386,189 +1311,6 @@ impl UndefinedHandler for TargetEnrichedTypeInfo {
     }
 }
 
-trait Hydratable {
-    fn contains_hydratable_field(&self) -> bool;
-    fn render_hydrate_from_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2;
-    fn render_hydrate_to_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2;
-}
-
-impl Hydratable for TargetEnrichedTypeInfo {
-    fn contains_hydratable_field(&self) -> bool {
-        trait_impl_for_type_info!(
-            match self,
-            Hydratable::contains_hydratable_field | false,
-            aggregate with any,
-            TargetEnrichedTypeInfo::Enum(_) => false,
-            TargetEnrichedTypeInfo::Ref(TypeRef {
-                referent: TypeIdent::Builtin(Builtin::Fn),
-                ..
-            }) => true,
-            TargetEnrichedTypeInfo::Ref(TypeRef {
-                referent: TypeIdent::Builtin(_),
-                ..
-            }) => false,
-            TargetEnrichedTypeInfo::Func(_) => true,
-            TargetEnrichedTypeInfo::Constructor(_) => true,
-            // TODO: Class??
-            TargetEnrichedTypeInfo::Class(_) => false,
-            TargetEnrichedTypeInfo::Var { .. } => false,
-        )
-    }
-
-    fn render_hydrate_from_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2 {
-        let js_value = quote! {
-            js_sys::Reflect::get(#jsv, &#js_name.into()).map_err(ts_bindgen_rt::Error::from)?
-        };
-        let render_hydrate =
-            |t: &TargetEnrichedTypeInfo| t.render_hydrate_from_js(jsv, field_name, js_name);
-        let empty = quote! {};
-        let render_for_hydrator = || {
-            quote! {
-                let #field_name = #js_value;
-                ts_bindgen_rt::Hydrator::hydrate_from_js_value(self.#field_name, #field_name)?;
-            }
-        };
-
-        trait_impl_for_type_info!(
-            match self,
-            render_hydrate | empty,
-            TargetEnrichedTypeInfo::Ref(tr @ TypeRef { referent: TypeIdent::Builtin(Builtin::Fn), .. }) => {
-                let return_type = tr.return_type();
-                let return_value = quote! { ret };
-                let ret = render_raw_return_to_js(&return_type, &return_value);
-                let args = quote! { args };
-                let params = tr.params().map(|p| p.as_exposed_to_rust_named_param_list());
-                // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
-                let conversions = tr.args().map(|p| {
-                    let name = p.rust_name();
-                    let conv = p.rust_to_jsvalue_conversion();
-                    quote! {
-                        let #name = #conv;
-                    }
-                });
-                let pushes = tr.params().map(|p| {
-                    let name = p.rust_name();
-                    quote! {
-                        #args.push(&#name);
-                    }
-                });
-                // TODO: do we need to handle member functions here (first arg to apply may be
-                // non-null)
-                quote! {
-                    let #field_name = #js_value;
-                    let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&#field_name);
-                    self.#field_name = #field_name.map(|f| {
-                        let f = f.clone();
-                        std::rc::Rc::new(move |#(#params),*| {
-                            #(#conversions);*
-                            let args = js_sys::Array::new();
-                            #(#pushes);*
-                            let #return_value = f.apply(&JsValue::null(), &args)?;
-                            Ok(#ret)
-                        }) as std::rc::Rc<#tr>
-                    });
-                }
-            },
-            TargetEnrichedTypeInfo::Interface(_) => render_for_hydrator(),
-            TargetEnrichedTypeInfo::Union(_) => render_for_hydrator(),
-            TargetEnrichedTypeInfo::Class(_) => render_for_hydrator(),
-            _ => quote! { },
-        )
-    }
-
-    fn render_hydrate_to_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2 {
-        let js_value = quote! {
-            js_sys::Reflect::get(#jsv, &#js_name.into())?
-        };
-        let render_hydrate =
-            |t: &TargetEnrichedTypeInfo| t.render_hydrate_to_js(jsv, field_name, js_name);
-        let empty = quote! {};
-        let render_for_hydrator = || {
-            quote! {
-                ts_bindgen_rt::Hydrator::hydrate_to_js_value(self.#field_name, #js_value)?;
-            }
-        };
-
-        trait_impl_for_type_info!(
-            match self,
-            render_hydrate | empty,
-            TargetEnrichedTypeInfo::Ref(tr @ TypeRef { referent: TypeIdent::Builtin(Builtin::Fn), .. }) => {
-                let invocation = tr.invoke_with_name(field_name);
-                let closure = tr.exposed_to_js_wrapped_closure(invocation);
-                quote! {
-                    if let Some(#field_name) = self.#field_name {
-                        let #field_name = #field_name.clone();
-                        let #field_name = #closure;
-                        js_sys::Reflect::set(
-                            jsv,
-                            &#js_name.into(),
-                            #field_name.as_ref(),
-                        ).map_err(ts_bindgen_rt::Error::from)?;
-                        #field_name.forget(); // TODO: how do we properly handle memory management?
-                    }
-                }
-            },
-            TargetEnrichedTypeInfo::Interface(_) => render_for_hydrator(),
-            TargetEnrichedTypeInfo::Union(_) => render_for_hydrator(),
-            TargetEnrichedTypeInfo::Class(_) => render_for_hydrator(),
-            _ => quote! { },
-        )
-    }
-}
-
-impl Hydratable for TypeRef {
-    fn contains_hydratable_field(&self) -> bool {
-        self.resolve_target_type()
-            .as_ref()
-            .map(Hydratable::contains_hydratable_field)
-            .unwrap_or(false)
-    }
-
-    fn render_hydrate_from_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2 {
-        self.resolve_target_type()
-            .as_ref()
-            .map(|t| t.render_hydrate_from_js(jsv, field_name, js_name))
-            .unwrap_or_else(|| quote! {})
-    }
-
-    fn render_hydrate_to_js(
-        &self,
-        jsv: &TokenStream2,
-        field_name: &Identifier,
-        js_name: &str,
-    ) -> TokenStream2 {
-        self.resolve_target_type()
-            .as_ref()
-            .map(|t| t.render_hydrate_to_js(jsv, field_name, js_name))
-            .unwrap_or_else(|| quote! {})
-    }
-}
-
 trait JsModulePath {
     fn js_module_path(&self) -> String;
 }
@@ -1622,45 +1364,10 @@ impl ToTokens for TargetEnrichedType {
                     });
                 }
 
-                let has_hydratable_fields = extended_fields
-                    .iter()
-                    .any(|(_, t)| t.contains_hydratable_field());
-                let jsv = if has_hydratable_fields {
-                    quote! { jsv }
-                } else {
-                    quote! { _jsv }
-                };
-
-                let hydrate_from_js_fields = extended_fields
-                    .iter()
-                    .filter(|(_, t)| t.contains_hydratable_field())
-                    .map(|(js_name, t)| {
-                        let field_name = to_snake_case_ident(js_name);
-                        t.render_hydrate_from_js(&jsv, &field_name, js_name)
-                    });
-                let hydrate_to_js_fields = extended_fields
-                    .iter()
-                    .filter(|(_, t)| t.contains_hydratable_field())
-                    .map(|(js_name, t)| {
-                        let field_name = to_snake_case_ident(js_name);
-                        t.render_hydrate_to_js(&jsv, &field_name, js_name)
-                    });
-
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     pub struct #name {
                         #(#field_toks),*
-                    }
-
-                    impl ts_bindgen_rt::Hydrator for #name {
-                        fn hydrate_from_js_value(&mut self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
-                            #(#hydrate_from_js_fields);*
-                            Ok(())
-                        }
-                        fn hydrate_to_js_value(self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
-                            #(#hydrate_to_js_fields);*
-                            Ok(())
-                        }
                     }
                 }
             }
@@ -1709,121 +1416,16 @@ impl ToTokens for TargetEnrichedType {
                         let case = type_to_union_case_name(t);
 
                         quote! {
-                            #[serde(skip)]
+                            #[serde(serialize_with="ts_bindgen_rt::serialize_undefined", deserialize_with="ts_bindgen_rt::deserialize_undefined")]
                             #case
                         }
                     }));
-
-                let skip_serializing_cases = undefined_members
-                    .iter()
-                    .chain(not_undefined_members.iter())
-                    .filter(|t| t.is_potentially_undefined())
-                    .map(|undefined_member| {
-                        let case = type_to_union_case_name(undefined_member);
-                        if undefined_member.is_uninhabited() {
-                            quote! {
-                                #name::#case => true
-                            }
-                        } else {
-                            quote! {
-                                #name::#case(x) => x.should_skip_serializing()
-                            }
-                        }
-                    })
-                    .chain(iter::once(quote! {
-                        _ => false
-                    }));
-
-                let default_impl = undefined_members
-                    .iter()
-                    .chain(not_undefined_members.iter())
-                    .filter(|t| t.is_potentially_undefined())
-                    .next()
-                    .map(|undefined_member| {
-                        let default_field = type_to_union_case_name(undefined_member);
-                        let default_ctor = if undefined_member.is_uninhabited() {
-                            quote! { #default_field }
-                        } else {
-                            quote! { #default_field(std::default::Default::default()) }
-                        };
-                        quote! {
-                            impl std::default::Default for #name {
-                                fn default() -> Self {
-                                    #name::#default_ctor
-                                }
-                            }
-                        }
-                    })
-                    .unwrap_or_else(|| quote! {});
-
-                let hydratable_cases = u
-                    .types
-                    .iter()
-                    .filter(|t| t.contains_hydratable_field())
-                    .filter(|t| !t.is_uninhabited()) // should never happen but might as well
-                    .collect::<Vec<_>>();
-                let hydrator_impl = if hydratable_cases.is_empty() {
-                    quote! {}
-                } else {
-                    let jsv = quote! { jsv };
-                    let has_rest = hydratable_cases.len() < u.types.len();
-                    let rest_case = if has_rest {
-                        quote! { _ => Ok(()) }
-                    } else {
-                        quote! {}
-                    };
-                    let hydrate_from_js_cases = hydratable_cases.iter()
-                        .map(|t| {
-                            let case = type_to_union_case_name(t);
-
-                            quote! {
-                                #name::#case(x) => ts_bindgen_rt::Hydrator::hydrate_from_js_value(x, #jsv)
-                            }
-                        })
-                        .chain(iter::once(rest_case.clone()));
-                    let hydrate_to_js_cases = hydratable_cases.iter()
-                        .map(|t| {
-                            let case = type_to_union_case_name(t);
-
-                            quote! {
-                                #name::#case(x) => ts_bindgen_rt::Hydrator::hydrate_to_js_value(x, #jsv)
-                            }
-                        })
-                        .chain(iter::once(rest_case.clone()));
-
-                    quote! {
-                        impl ts_bindgen_rt::Hydrator for #name {
-                            fn hydrate_from_js_value(&mut self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
-                                match self {
-                                    #(#hydrate_from_js_cases),*
-                                }
-                            }
-                            fn hydrate_to_js_value(self, #jsv: &JsValue) -> Result<(), Box<dyn std::error::Error>> {
-                                match self {
-                                    #(#hydrate_to_js_cases),*
-                                }
-                            }
-                        }
-                    }
-                };
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #name {
                         #(#member_cases),*
-                    }
-
-                    #default_impl
-
-                    #hydrator_impl
-
-                    impl ts_bindgen_rt::ShouldSkipSerializing for #name {
-                        fn should_skip_serializing(&self) -> bool {
-                            match self {
-                                #(#skip_serializing_cases),*
-                            }
-                        }
                     }
                 }
             }
@@ -1952,6 +1554,24 @@ impl ToTokens for TargetEnrichedType {
                     impl Clone for #name {
                         fn clone(&self) -> Self {
                             Self { obj: self.obj.clone() }
+                        }
+                    }
+
+                    impl serde::ser::Serialize for #name {
+                        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                        where
+                            S: serde::ser::Serializer,
+                        {
+                            ts_bindgen_rt::serialize_as_jsvalue(serializer, self)
+                        }
+                    }
+
+                    impl<'de> serde::de::Deserialize<'de> for #name {
+                        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+                        where
+                            D: serde::de::Deserializer<'de>,
+                        {
+                            ts_bindgen_rt::deserialize_as_jsvalue(deserializer)
                         }
                     }
                 }
@@ -2158,8 +1778,6 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         let js_field_name = self.js_field_name;
         let field_name = to_snake_case_ident(js_field_name);
         let typ = self.typ;
-        let extra_attrs = typ.extra_field_attrs();
-        let attrs = iter::once(quote! { rename = #js_field_name }).chain(extra_attrs);
         let rendered_type = if matches!(
             typ,
             TypeRef {
@@ -2175,7 +1793,7 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         };
 
         let our_toks = quote! {
-            #[serde(#(#attrs),*)]
+            #[serde(rename=#js_field_name)]
             pub #field_name: #rendered_type
         };
 
