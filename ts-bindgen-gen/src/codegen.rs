@@ -1609,10 +1609,66 @@ impl ToTokens for TargetEnrichedType {
                     }
                 }
             }
-            /*TypeInfo::Intersection {
-                types: Vec<TypeInfo>,
-            },
-            TypeInfo::Mapped {
+            TargetEnrichedTypeInfo::Intersection(isect) => {
+                if let Some(first_type) = isect.types.first().and_then(|t| t.resolve_target_type())
+                {
+                    if let TargetEnrichedTypeInfo::Interface(_) = first_type {
+                        let fields = isect
+                            .types
+                            .iter()
+                            .filter_map(|t| t.resolve_target_type())
+                            .filter_map(|t| {
+                                if let TargetEnrichedTypeInfo::Interface(iface) = t {
+                                    Some(iface)
+                                } else {
+                                    None
+                                }
+                            })
+                            .flat_map(|iface| get_recursive_fields(&iface))
+                            .collect();
+
+                        let indexer = isect
+                            .types
+                            .iter()
+                            .filter_map(|t| t.resolve_target_type())
+                            .filter_map(|t| {
+                                if let TargetEnrichedTypeInfo::Interface(iface) = t {
+                                    Some(iface)
+                                } else {
+                                    None
+                                }
+                            })
+                            .filter_map(|iface| iface.indexer)
+                            .next();
+
+                        let typ = TargetEnrichedType {
+                            name: self.name.clone(),
+                            is_exported: self.is_exported,
+                            info: TargetEnrichedTypeInfo::Interface(Interface {
+                                indexer,
+                                fields,
+                                extends: Default::default(),
+                                context: isect.context.clone(),
+                            }),
+                            context: isect.context.clone(),
+                        };
+
+                        quote! {
+                            #typ
+                        }
+                    } else {
+                        // TODO: this is weird, do we ever run into trouble with this?
+                        let mut typ = self.clone();
+                        typ.info = first_type.clone();
+                        quote! {
+                            #typ
+                        }
+                    }
+                } else {
+                    panic!("Intersections must not be empty");
+                }
+            }
+            /*TypeInfo::Mapped {
                 value_type: Box<TypeInfo>,
             },
             TypeInfo::LitNumber {

@@ -44,7 +44,17 @@ export class MyClass{
   }
 }
 
-export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber | MyClass;
+interface T1 {
+  b: number;
+}
+
+interface T2 {
+  a: string;
+}
+
+export type Isect = T1 & T2;
+
+export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber | MyClass | Isect;
 
 export type RoundTripCloneFn = (input: AnyType) => AnyType;
 
@@ -69,6 +79,10 @@ export function runTest(testFn: RoundTripCloneFn): boolean {
     fn: (a: number) => `hello ${a}`,
   };
   const myClass = new MyClass(5);
+  const isect = {
+    a: "isect!",
+    b: 37
+  };
   return testFn("hello") === "hello"
     && testFn(MyEnum.A) === "A"
     && util.isDeepStrictEqual(testFn(base), base)
@@ -90,5 +104,7 @@ export function runTest(testFn: RoundTripCloneFn): boolean {
     && (testFn(abc) as Abc).fn(4) === "hello 4"
     && testFn(abc) !== abc
     && testFn(myClass) === myClass
-    && typeof testFn(undefined) === 'undefined';
+    && typeof testFn(undefined) === 'undefined'
+    && util.isDeepStrictEqual(testFn(isect), isect)
+    && testFn(isect) !== isect;
 }
