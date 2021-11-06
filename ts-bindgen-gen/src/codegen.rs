@@ -1520,7 +1520,7 @@ impl ToTokens for TargetEnrichedType {
 
                             quote! {
                                 #[wasm_bindgen(constructor)]
-                                fn new(#(#param_toks),*) -> #name;
+                                pub fn new(#(#param_toks),*) -> #name;
                             }
                         }
                         Member::Method(func) => {
