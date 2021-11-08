@@ -3,7 +3,7 @@ use crate::ir::{
     LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
     PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
     PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
-    TypeInfo, TypeName, TypeRef, Union,
+    TypeInfo, TypeName, TypeParamConfig, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -491,6 +491,31 @@ impl IndexerExt for TsIndexSignature {
     }
 }
 
+trait HasTypeParams {
+    fn type_param_config(&self) -> HashMap<String, TypeParamConfig>;
+}
+
+impl HasTypeParams for Option<TsTypeParamDecl> {
+    fn type_param_config(&self) -> HashMap<String, TypeParamConfig> {
+        self.as_ref()
+            .map(|tps| {
+                tps.params
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.name.sym.to_string(),
+                            TypeParamConfig {
+                                constraint: None,
+                                default_type_arg: None,
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| Default::default())
+    }
+}
+
 impl TsTypes {
     pub fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
         let mut tt: TsTypes = Default::default();
@@ -794,6 +819,7 @@ impl TsTypes {
         TsTypeLit { members, .. }: &TsTypeLit,
     ) -> TypeInfo {
         // TODO: anonymous interfaces show up as a type lit
+        // e.g. function(a: {p: number})
         if members.len() != 1 || !members.first().expect("no members").is_ts_index_signature() {
             panic!("Bad type lit, {:?}, in {:?}", members, ts_path);
         }
@@ -843,27 +869,10 @@ impl TsTypes {
 
     fn process_fn_type_params(
         &mut self,
-        ts_path: &Path,
+        _ts_path: &Path,
         type_params: &Option<TsTypeParamDecl>,
-    ) -> HashMap<String, TypeInfo> {
-        type_params
-            .as_ref()
-            .map(|params| {
-                params
-                    .params
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.name.sym.to_string(),
-                            p.constraint
-                                .as_ref()
-                                .map(|c| self.process_type(ts_path, c))
-                                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+    ) -> HashMap<String, TypeParamConfig> {
+        type_params.type_param_config()
     }
 
     fn process_fn_type(
@@ -978,7 +987,7 @@ impl TsTypes {
         ts_path: &Path,
         TsInterfaceDecl {
             id,
-            type_params: _,
+            type_params,
             extends,
             body,
             ..
@@ -1018,6 +1027,7 @@ impl TsTypes {
                         }
                     })
                     .collect(),
+                type_params: type_params.type_param_config(),
             }),
         }
     }
@@ -1061,7 +1071,7 @@ impl TsTypes {
         ts_path: &Path,
         TsTypeAliasDecl {
             id,
-            type_params: _,
+            type_params,
             type_ann,
             ..
         }: &TsTypeAliasDecl,
@@ -1072,6 +1082,7 @@ impl TsTypes {
             is_exported: false,
             info: TypeInfo::Alias(Alias {
                 target: Box::new(type_info),
+                type_params: type_params.type_param_config(),
             }),
         }
     }

@@ -63,7 +63,7 @@ impl Param {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         Param {
             name: self.name.clone(),
@@ -77,7 +77,7 @@ impl Param {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeInfo>,
+    pub type_params: HashMap<String, TypeParamConfig>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeInfo>,
     pub class_name: Option<TypeName>,
@@ -87,7 +87,7 @@ impl Func {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         Func {
             type_params: self
@@ -123,7 +123,7 @@ impl Ctor {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         Ctor {
             params: self
@@ -146,7 +146,7 @@ impl Member {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         match self {
             Self::Constructor(ctor) => {
@@ -170,7 +170,7 @@ impl Indexer {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         Indexer {
             readonly: self.readonly,
@@ -206,6 +206,32 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
+    pub type_params: HashMap<String, TypeParamConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParamConfig {
+    pub constraint: Option<TypeInfo>,
+    pub default_type_arg: Option<TypeInfo>,
+}
+
+impl TypeParamConfig {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeParamConfig>,
+    ) -> Self {
+        TypeParamConfig {
+            constraint: self
+                .constraint
+                .as_ref()
+                .map(|t| t.resolve_names(types_by_name_by_file, type_params)),
+            default_type_arg: self
+                .default_type_arg
+                .as_ref()
+                .map(|t| t.resolve_names(types_by_name_by_file, type_params)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +263,7 @@ pub struct Enum {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: Box<TypeInfo>,
+    pub type_params: HashMap<String, TypeParamConfig>,
 }
 
 macro_rules! make_primitives {
@@ -328,7 +355,7 @@ impl TypeInfo {
         referent: &TypeName,
         alias_type_params: &[TypeInfo],
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Option<TypeInfo> {
         if referent.name == TypeIdent::Name("Array".to_string()) {
             assert_eq!(
@@ -406,38 +433,45 @@ impl TypeInfo {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeInfo>,
+        type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
         match self {
             Self::Interface(Interface {
                 indexer,
                 extends,
                 fields,
-            }) => Self::Interface(Interface {
-                indexer: indexer
-                    .as_ref()
-                    .map(|i| i.resolve_names(types_by_name_by_file, type_params)),
-                extends: extends
-                    .iter()
-                    .map(|e| {
-                        // TODO: no reason to have BaseClass - just use a ref
-                        if let BaseClass::Unresolved(tn) = e {
-                            BaseClass::Resolved(TypeInfo::Ref(tn.clone()))
-                        } else {
-                            e.clone()
-                        }
-                    })
-                    .collect(),
-                fields: fields
-                    .iter()
-                    .map(|(n, t)| {
-                        (
-                            n.to_string(),
-                            t.resolve_names(types_by_name_by_file, type_params),
-                        )
-                    })
-                    .collect(),
-            }),
+                type_params: iface_type_params,
+            }) => {
+                let iface_type_params =
+                    resolve_type_params(types_by_name_by_file, type_params, iface_type_params);
+                let our_type_params = extend_type_params(type_params, &iface_type_params);
+                Self::Interface(Interface {
+                    indexer: indexer
+                        .as_ref()
+                        .map(|i| i.resolve_names(types_by_name_by_file, &our_type_params)),
+                    extends: extends
+                        .iter()
+                        .map(|e| {
+                            // TODO: no reason to have BaseClass - just use a ref
+                            if let BaseClass::Unresolved(tn) = e {
+                                BaseClass::Resolved(TypeInfo::Ref(tn.clone()))
+                            } else {
+                                e.clone()
+                            }
+                        })
+                        .collect(),
+                    fields: fields
+                        .iter()
+                        .map(|(n, t)| {
+                            (
+                                n.to_string(),
+                                t.resolve_names(types_by_name_by_file, &our_type_params),
+                            )
+                        })
+                        .collect(),
+                    type_params: iface_type_params,
+                })
+            }
             Self::Ref(TypeRef {
                 referent,
                 type_params: alias_type_params,
@@ -457,6 +491,13 @@ impl TypeInfo {
                     // look up the type just to make sure it exists, we get a builtin if it doesn't
                     // exist below
                     types_by_name.get(&n).map(|_| self.clone())
+                })
+                .or_else(|| {
+                    if let TypeIdent::Name(n) = &referent.name {
+                        type_params.get(n).map(|_| self.clone())
+                    } else {
+                        None
+                    }
                 })
                 .or_else(|| {
                     self.resolve_builtin(
@@ -509,13 +550,10 @@ impl TypeInfo {
                 return_type,
                 class_name,
             }) => {
-                let tps = {
-                    let mut tps = type_params.clone();
-                    tps.extend(fn_type_params.clone().into_iter());
-                    tps
-                };
+                let fn_type_params =
+                    resolve_type_params(types_by_name_by_file, type_params, fn_type_params);
+                let tps = extend_type_params(type_params, &fn_type_params);
                 Self::Func(Func {
-                    type_params: fn_type_params.clone(),
                     params: params
                         .iter()
                         .map(|p| Param {
@@ -528,6 +566,7 @@ impl TypeInfo {
                         return_type.resolve_names(types_by_name_by_file, type_params),
                     ),
                     class_name: class_name.clone(),
+                    type_params: fn_type_params,
                 })
             }
             Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
@@ -601,4 +640,30 @@ impl Type {
                 .resolve_names(types_by_name_by_file, &Default::default()),
         }
     }
+}
+
+fn extend_type_params(
+    a: &HashMap<String, TypeParamConfig>,
+    b: &HashMap<String, TypeParamConfig>,
+) -> HashMap<String, TypeParamConfig> {
+    a.iter()
+        .chain(b.iter())
+        .map(|(n, t)| (n.clone(), t.clone()))
+        .collect()
+}
+
+fn resolve_type_params(
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    type_params: &HashMap<String, TypeParamConfig>,
+    our_type_params: &HashMap<String, TypeParamConfig>,
+) -> HashMap<String, TypeParamConfig> {
+    our_type_params
+        .iter()
+        .map(|(n, c)| {
+            (
+                n.clone(),
+                c.resolve_names(types_by_name_by_file, type_params),
+            )
+        })
+        .collect()
 }

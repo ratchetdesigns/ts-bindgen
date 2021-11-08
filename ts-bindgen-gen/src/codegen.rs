@@ -7,7 +7,7 @@ use crate::mod_def::ToModPathIter;
 use crate::target_enriched_ir::{
     Alias, Builtin, Class, Context, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
     Member, NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent,
-    TypeRef, TypesByIdentByPath, Union,
+    TypeParamConfig, TypeRef, TypesByIdentByPath, Union,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -1337,9 +1337,14 @@ impl ToTokens for TargetEnrichedType {
 
         let our_toks = match &self.info {
             TargetEnrichedTypeInfo::Interface(iface) => {
-                let Interface { indexer, .. } = iface;
+                let Interface {
+                    indexer,
+                    type_params,
+                    ..
+                } = iface;
                 let extended_fields = get_recursive_fields(iface);
 
+                let full_type_params = render_type_params(type_params);
                 let mut field_toks = extended_fields
                     .iter()
                     .map(|(js_field_name, typ)| {
@@ -1347,6 +1352,7 @@ impl ToTokens for TargetEnrichedType {
                             self_name: &name,
                             js_field_name,
                             typ,
+                            type_params,
                         };
                         quote! { #field }
                     })
@@ -1397,7 +1403,7 @@ impl ToTokens for TargetEnrichedType {
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
-                    pub struct #name {
+                    pub struct #name #full_type_params {
                         #(#field_toks),*
                     }
 
@@ -1414,9 +1420,15 @@ impl ToTokens for TargetEnrichedType {
                     }
                 }
             }
-            TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
+            TargetEnrichedTypeInfo::Alias(Alias {
+                target,
+                type_params,
+                ..
+            }) => {
+                let tps = render_type_params(type_params);
+
                 quote! {
-                    #vis type #name = #target;
+                    #vis type #name #tps = #target;
                 }
             }
             //TargetEnrichedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
@@ -1649,6 +1661,7 @@ impl ToTokens for TargetEnrichedType {
                                 fields,
                                 extends: Default::default(),
                                 context: isect.context.clone(),
+                                type_params: Default::default(), // TODO: copy over type params from isect
                             }),
                             context: isect.context.clone(),
                         };
@@ -1861,6 +1874,7 @@ struct FieldDefinition<'a> {
     self_name: &'a Identifier,
     js_field_name: &'a str,
     typ: &'a TypeRef,
+    type_params: &'a HashMap<String, TypeParamConfig>,
 }
 
 impl<'a> ToTokens for FieldDefinition<'a> {
@@ -1868,7 +1882,20 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         let js_field_name = self.js_field_name;
         let field_name = to_snake_case_ident(js_field_name);
         let typ = self.typ;
+        let (_, type_name) = typ.referent.to_name();
+        let type_name = type_name.to_string();
+        let type_param = self.type_params.get(&type_name);
         let mut serde_attrs = vec![quote! { rename = #js_field_name }];
+        if type_param.is_some() {
+            let bound = format!(
+                "{}: Clone + serde::Serialize + serde::Deserialize<'de>",
+                &type_name
+            );
+            let attr = quote! {
+                bound(deserialize = #bound)
+            };
+            serde_attrs.push(attr);
+        }
         let rendered_type = if matches!(
             typ,
             TypeRef {
@@ -1993,5 +2020,21 @@ fn render_serialize_fn(
         })
     } else {
         None
+    }
+}
+
+fn render_type_params(type_params: &HashMap<String, TypeParamConfig>) -> TokenStream2 {
+    let type_param_toks = type_params.iter().map(|(n, _t)| {
+        let n = to_camel_case_ident(n);
+        quote! {
+            #n
+        }
+    });
+    if type_params.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            <#(#type_param_toks),*>
+        }
     }
 }

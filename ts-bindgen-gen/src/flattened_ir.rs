@@ -6,8 +6,8 @@ use crate::ir::{
     LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
     PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
-    TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeRef as TypeRefIR,
-    Union as UnionIR,
+    TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
+    TypeParamConfig as TypeParamConfigIR, TypeRef as TypeRefIR, Union as UnionIR,
 };
 use enum_to_enum::{FromEnum, WithEffects};
 use std::collections::HashMap;
@@ -234,6 +234,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
+    pub type_params: HashMap<String, TypeParamConfig>,
 }
 
 impl ApplyNames for Interface {
@@ -249,6 +250,11 @@ impl ApplyNames for Interface {
                 .fields
                 .into_iter()
                 .map(|(k, v)| (k, v.apply_names(names_by_id)))
+                .collect(),
+            type_params: self
+                .type_params
+                .into_iter()
+                .map(|(n, t)| (n, t.apply_names(names_by_id)))
                 .collect(),
         }
     }
@@ -313,15 +319,26 @@ impl From<InterfaceIR> for EffectContainer<Interface> {
                 (n, effects)
             })
             .collect();
+        let type_params = src
+            .type_params
+            .into_iter()
+            .map(|(n, t)| {
+                let effects =
+                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
+                (n, effects)
+            })
+            .collect();
 
         combine_effects!(
             indexer => (effect_mappers::prepend_name("Indexer")),
             extends => (effect_mappers::identity()),
-            fields => (effect_mappers::identity());
+            fields => (effect_mappers::identity()),
+            type_params => (effect_mappers::identity());
             Interface {
                 indexer,
                 extends,
                 fields,
+                type_params,
             }
         )
     }
@@ -754,8 +771,40 @@ impl From<TupleIR> for EffectContainer<Tuple> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParamConfig {
+    pub constraint: Option<FlattenedTypeInfo>,
+    pub default_type_arg: Option<FlattenedTypeInfo>,
+}
+
+impl ApplyNames for TypeParamConfig {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        TypeParamConfig {
+            constraint: self.constraint.map(|c| c.apply_names(names_by_id)),
+            default_type_arg: self.default_type_arg.map(|d| d.apply_names(names_by_id)),
+        }
+    }
+}
+
+impl From<TypeParamConfigIR> for EffectContainer<TypeParamConfig> {
+    fn from(src: TypeParamConfigIR) -> EffectContainer<TypeParamConfig> {
+        let constraint: EffectContainer<Option<_>> = src.constraint.map(|c| c.into()).into();
+        let default_type_arg: EffectContainer<Option<_>> =
+            src.default_type_arg.map(|d| d.into()).into();
+
+        combine_effects!(
+            constraint => (effect_mappers::prepend_name("Constraint")),
+            default_type_arg => (effect_mappers::prepend_name("Default"));
+            TypeParamConfig {
+                constraint,
+                default_type_arg,
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeRef>,
+    pub type_params: HashMap<String, TypeParamConfig>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
     pub class_name: Option<TypeIdent>,
@@ -960,14 +1009,26 @@ impl From<EnumIR> for Enum {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeRef,
+    pub type_params: HashMap<String, TypeParamConfig>,
 }
 
 impl From<AliasIR> for EffectContainer<Alias> {
     fn from(src: AliasIR) -> EffectContainer<Alias> {
         let target: EffectContainer<_> = (*src.target).into();
+        let type_params = src
+            .type_params
+            .into_iter()
+            .map(|(n, t)| {
+                let effects =
+                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
+                (n, effects)
+            })
+            .collect();
+
         combine_effects!(
-            target => (effect_mappers::prepend_name("Aliased"));
-            Alias { target }
+            target => (effect_mappers::prepend_name("Aliased")),
+            type_params => (effect_mappers::identity());
+            Alias { target, type_params }
         )
     }
 }
@@ -976,6 +1037,11 @@ impl ApplyNames for Alias {
     fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
         Alias {
             target: self.target.apply_names(names_by_id),
+            type_params: self
+                .type_params
+                .into_iter()
+                .map(|(n, t)| (n, t.apply_names(names_by_id)))
+                .collect(),
         }
     }
 }

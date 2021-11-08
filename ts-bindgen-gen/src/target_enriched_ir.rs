@@ -4,7 +4,8 @@ use crate::flattened_ir::{
     Indexer as FlattenedIndexer, Interface as FlattenedInterface,
     Intersection as FlattenedIntersection, Member as FlattenedMember,
     NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
-    TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
+    TypeParamConfig as FlattenedTypeParamConfig, TypeRef as FlattenedTypeRef,
+    Union as FlattenedUnion,
 };
 pub use crate::flattened_ir::{Builtin, TypeIdent};
 use std::cell::RefCell;
@@ -339,8 +340,21 @@ from_struct!(
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParamConfig {
+    pub constraint: Option<TargetEnrichedTypeInfo>,
+    pub default_type_arg: Option<TargetEnrichedTypeInfo>,
+    pub context: Context,
+}
+
+from_struct!(
+    FlattenedTypeParamConfig => TypeParamConfig;
+    constraint => Option,
+    default_type_arg => Option,
+);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeRef>,
+    pub type_params: HashMap<String, TypeParamConfig>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
     pub class_name: Option<TypeIdent>,
@@ -397,12 +411,14 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeRef,
+    pub type_params: HashMap<String, TypeParamConfig>,
     pub context: Context,
 }
 
 from_struct!(
     FlattenedAlias => Alias;
     target => .,
+    type_params => {},
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -447,6 +463,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
+    pub type_params: HashMap<String, TypeParamConfig>,
     pub context: Context,
 }
 
@@ -455,6 +472,7 @@ from_struct!(
     indexer => Option,
     extends => [],
     fields => {},
+    type_params => {},
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
