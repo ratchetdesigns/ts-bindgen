@@ -304,6 +304,8 @@ impl From<WithContext<FlattenedMember>> for Member {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
+    pub type_params: HashMap<String, TypeParamConfig>,
+    pub implements: Vec<TypeRef>,
     pub context: Context,
 }
 
@@ -311,6 +313,8 @@ from_struct!(
     FlattenedClass => Class;
     super_class => Option,
     members => {},
+    type_params => {},
+    implements => [],
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]

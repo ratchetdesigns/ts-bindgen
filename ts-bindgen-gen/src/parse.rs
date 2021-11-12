@@ -1095,7 +1095,8 @@ impl TsTypes {
     ) -> TypeInfo {
         let swc_ecma_ast::Class {
             body,
-            type_params: _,
+            type_params,
+            implements,
             ..
         } = class;
         TypeInfo::Class(Class {
@@ -1127,6 +1128,11 @@ impl TsTypes {
                     ClassMember::Empty(_) => None,
                 })
                 .collect(),
+            implements: implements
+                .iter()
+                .map(|i| Source::from(self, ts_path, i).into())
+                .collect(),
+            type_params: type_params.type_param_config(),
         })
     }
 

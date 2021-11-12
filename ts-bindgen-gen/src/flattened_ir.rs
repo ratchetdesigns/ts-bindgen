@@ -920,6 +920,8 @@ impl From<CtorIR> for EffectContainer<Ctor> {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
+    pub type_params: HashMap<String, TypeParamConfig>,
+    pub implements: Vec<TypeRef>,
 }
 
 impl ApplyNames for Class {
@@ -931,6 +933,16 @@ impl ApplyNames for Class {
                 .into_iter()
                 .map(|(n, m)| (n, m.apply_names(names_by_id)))
                 .collect(),
+            type_params: self
+                .type_params
+                .into_iter()
+                .map(|(n, t)| (n, t.apply_names(names_by_id)))
+                .collect(),
+            implements: self
+                .implements
+                .into_iter()
+                .map(|i| i.apply_names(names_by_id))
+                .collect(),
         }
     }
 }
@@ -938,17 +950,31 @@ impl ApplyNames for Class {
 impl From<ClassIR> for EffectContainer<Class> {
     fn from(src: ClassIR) -> EffectContainer<Class> {
         let super_class: EffectContainer<Option<_>> = src.super_class.map(|r| (*r).into()).into();
+        let type_params = src
+            .type_params
+            .into_iter()
+            .map(|(n, t)| {
+                let effects =
+                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
+                (n, effects)
+            })
+            .collect();
         let members = src
             .members
             .into_iter()
             .map(|(n, m)| (n, m.into()))
             .collect();
+        let implements = src.implements.into_iter().map(|i| i.into()).collect();
         combine_effects!(
             members => (effect_mappers::identity()),
-            super_class => (effect_mappers::identity());
+            super_class => (effect_mappers::identity()),
+            type_params => (effect_mappers::identity()),
+            implements => (effect_mappers::identity());
             Class {
                 members,
                 super_class,
+                type_params,
+                implements,
             }
         )
     }

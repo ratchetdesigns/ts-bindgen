@@ -238,6 +238,8 @@ impl TypeParamConfig {
 pub struct Class {
     pub super_class: Option<Box<TypeRef>>,
     pub members: HashMap<String, Member>,
+    pub type_params: HashMap<String, TypeParamConfig>,
+    pub implements: Vec<TypeRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -584,18 +586,23 @@ impl TypeInfo {
             Self::Class(Class {
                 members,
                 super_class,
-            }) => Self::Class(Class {
-                super_class: super_class.clone(),
-                members: members
-                    .iter()
-                    .map(|(n, m)| {
-                        (
-                            n.to_string(),
-                            m.resolve_names(types_by_name_by_file, type_params),
-                        )
-                    })
-                    .collect(),
-            }),
+                type_params: class_type_params,
+                implements,
+            }) => {
+                let class_type_params =
+                    resolve_type_params(types_by_name_by_file, type_params, class_type_params);
+                let tps = extend_type_params(type_params, &class_type_params);
+
+                Self::Class(Class {
+                    super_class: super_class.clone(),
+                    members: members
+                        .iter()
+                        .map(|(n, m)| (n.to_string(), m.resolve_names(types_by_name_by_file, &tps)))
+                        .collect(),
+                    type_params: class_type_params,
+                    implements: implements.clone(),
+                })
+            }
             Self::Var { type_info } => Self::Var {
                 type_info: Box::new(type_info.resolve_names(types_by_name_by_file, type_params)),
             },

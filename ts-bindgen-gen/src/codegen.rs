@@ -499,7 +499,7 @@ impl<T: HasFnPrototype> FnPrototypeExt for T {
         });
 
         quote! {
-            #(#wrapper_fns);*
+            #(#wrapper_fns)*
         }
     }
 
@@ -1400,12 +1400,15 @@ impl ToTokens for TargetEnrichedType {
                         pub #extra_fields_name: std::collections::HashMap<String, #value_type>
                     });
                 }
+                let trait_defn = render_trait_defn(&name, type_params, iface);
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     pub struct #name #full_type_params {
                         #(#field_toks),*
                     }
+
+                    #trait_defn
 
                     #serializer_impl
                 }
@@ -1502,11 +1505,14 @@ impl ToTokens for TargetEnrichedType {
                     #wrapper_func
                 }
             }
-            TargetEnrichedTypeInfo::Class(Class {
-                super_class,
-                members,
-                context,
-            }) => {
+            TargetEnrichedTypeInfo::Class(class) => {
+                let Class {
+                    super_class,
+                    members,
+                    context,
+                    type_params: _,
+                    implements: _,
+                } = class;
                 let path = context.js_module_path();
                 let mut attrs = vec![quote! { js_name = #js_name }];
                 if let Some(TypeRef {
@@ -1583,6 +1589,9 @@ impl ToTokens for TargetEnrichedType {
                         method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
                     });
 
+                let type_params: HashMap<String, TypeParamConfig> = Default::default();
+                let trait_defn = render_trait_defn(&name, &type_params, class);
+
                 quote! {
                     #[wasm_bindgen(module = #path)]
                     extern "C" {
@@ -1595,6 +1604,8 @@ impl ToTokens for TargetEnrichedType {
                     impl #name {
                         #(#public_methods)*
                     }
+
+                    #trait_defn
 
                     impl Clone for #name {
                         fn clone(&self) -> Self {
@@ -1926,6 +1937,142 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         };
 
         toks.append_all(our_toks);
+    }
+}
+
+trait TraitName {
+    fn trait_name(&self) -> Identifier;
+}
+
+impl TraitName for Identifier {
+    fn trait_name(&self) -> Identifier {
+        self.suffix_name("Trait")
+    }
+}
+
+type BoxedTypeRefIter<'a> = Box<dyn Iterator<Item = TypeRef> + 'a>;
+
+trait Traitable {
+    fn has_super_traits(&self) -> bool;
+
+    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a>;
+
+    fn recursive_super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+        Box::new(self.super_traits().fold(
+            Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
+            |cur, s| {
+                let supers = s
+                    .resolve_target_type()
+                    .map(|t| {
+                        Box::new(
+                            t.recursive_super_traits()
+                                .collect::<Vec<TypeRef>>()
+                                .into_iter(),
+                        ) as BoxedTypeRefIter<'a>
+                    })
+                    .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>);
+                Box::new(
+                    cur.chain(Box::new(iter::once(s)) as BoxedTypeRefIter<'a>)
+                        .chain(supers),
+                ) as BoxedTypeRefIter<'a>
+            },
+        )) as BoxedTypeRefIter<'a>
+    }
+}
+
+impl Traitable for Interface {
+    fn has_super_traits(&self) -> bool {
+        !self.extends.is_empty()
+    }
+
+    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+        Box::new(self.extends.iter().cloned()) as BoxedTypeRefIter<'a>
+    }
+}
+
+impl Traitable for Class {
+    fn has_super_traits(&self) -> bool {
+        self.super_class.is_some() || !self.implements.is_empty()
+    }
+
+    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+        let super_class = self
+            .super_class
+            .as_ref()
+            .map(|s| Box::new(iter::once(s).cloned()) as BoxedTypeRefIter<'a>)
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>);
+        let implements = self.implements.iter().cloned();
+
+        Box::new(super_class.chain(implements))
+    }
+}
+
+impl Traitable for TargetEnrichedTypeInfo {
+    fn has_super_traits(&self) -> bool {
+        match self {
+            TargetEnrichedTypeInfo::Class(c) => c.has_super_traits(),
+            TargetEnrichedTypeInfo::Interface(i) => i.has_super_traits(),
+            _ => false,
+        }
+    }
+
+    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+        match self {
+            TargetEnrichedTypeInfo::Class(c) => c.super_traits(),
+            TargetEnrichedTypeInfo::Interface(i) => i.super_traits(),
+            _ => Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
+        }
+    }
+}
+
+fn render_trait_defn<T>(
+    name: &Identifier,
+    type_params: &HashMap<String, TypeParamConfig>,
+    item: &T,
+) -> TokenStream2
+where
+    T: Traitable,
+{
+    let trait_name = name.trait_name();
+    let tps = render_type_params(type_params);
+    let full_name = quote! {
+        #name #tps
+    };
+    let (super_decl, super_impls) = if item.has_super_traits() {
+        // TODO: would be nice to mark Identifiers with the type of identifier they are
+        // e.g. mark anything coming out of a TraitName::trait_name as a trait
+        // identifier
+        let to_trait_name = |t: TypeRef| t.referent.to_name().1.trait_name();
+        let supers = item.super_traits().map(&to_trait_name);
+        let super_decl = quote! {
+            : #(#supers)+*
+        };
+        let make_impl = |trait_name: Identifier| {
+            quote! {
+                impl #tps #trait_name for #full_name {}
+            }
+        };
+        let super_impls = item
+            .recursive_super_traits()
+            .map(&to_trait_name)
+            .chain(Box::new(iter::once(trait_name.clone())))
+            .map(&make_impl);
+        let super_impls = quote! {
+            #(#super_impls)*
+        };
+
+        (super_decl, super_impls)
+    } else {
+        (quote! {}, quote! {})
+    };
+
+    // TODO: add field accessors and setters
+
+    quote! {
+        trait #trait_name #super_decl {
+        }
+
+        #super_impls
     }
 }
 

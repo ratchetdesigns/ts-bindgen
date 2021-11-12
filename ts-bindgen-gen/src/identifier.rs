@@ -51,6 +51,19 @@ impl Identifier {
             type_params: self.type_params.clone(),
         }
     }
+
+    pub fn suffix_name(&self, suffix: &str) -> Identifier {
+        let mut type_parts = self.type_parts.clone();
+        if let Some(last_part) = type_parts.pop() {
+            let last_part = format_ident!("{}{}", last_part, suffix);
+            type_parts.push(last_part);
+        }
+
+        Identifier {
+            type_parts,
+            type_params: self.type_params.clone(),
+        }
+    }
 }
 
 impl Display for Identifier {
