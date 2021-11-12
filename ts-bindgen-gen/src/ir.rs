@@ -77,7 +77,7 @@ impl Param {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeInfo>,
     pub class_name: Option<TypeName>,
@@ -206,7 +206,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,7 +238,7 @@ impl TypeParamConfig {
 pub struct Class {
     pub super_class: Option<Box<TypeRef>>,
     pub members: HashMap<String, Member>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub implements: Vec<TypeRef>,
 }
 
@@ -265,7 +265,7 @@ pub struct Enum {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: Box<TypeInfo>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
 macro_rules! make_primitives {
@@ -651,19 +651,19 @@ impl Type {
 
 fn extend_type_params(
     a: &HashMap<String, TypeParamConfig>,
-    b: &HashMap<String, TypeParamConfig>,
+    b: &[(String, TypeParamConfig)],
 ) -> HashMap<String, TypeParamConfig> {
     a.iter()
-        .chain(b.iter())
-        .map(|(n, t)| (n.clone(), t.clone()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .chain(b.iter().map(|(k, v)| (k.clone(), v.clone())))
         .collect()
 }
 
 fn resolve_type_params(
     types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
     type_params: &HashMap<String, TypeParamConfig>,
-    our_type_params: &HashMap<String, TypeParamConfig>,
-) -> HashMap<String, TypeParamConfig> {
+    our_type_params: &[(String, TypeParamConfig)],
+) -> Vec<(String, TypeParamConfig)> {
     our_type_params
         .iter()
         .map(|(n, c)| {

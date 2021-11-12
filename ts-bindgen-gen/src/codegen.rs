@@ -1352,7 +1352,7 @@ impl ToTokens for TargetEnrichedType {
                             self_name: &name,
                             js_field_name,
                             typ,
-                            type_params,
+                            type_params: &type_params.iter().map(|(k, v)| (k.clone(), v)).collect(),
                         };
                         quote! { #field }
                     })
@@ -1510,7 +1510,7 @@ impl ToTokens for TargetEnrichedType {
                     super_class,
                     members,
                     context,
-                    type_params: _,
+                    type_params,
                     implements: _,
                 } = class;
                 let path = context.js_module_path();
@@ -1589,7 +1589,6 @@ impl ToTokens for TargetEnrichedType {
                         method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
                     });
 
-                let type_params: HashMap<String, TypeParamConfig> = Default::default();
                 let trait_defn = render_trait_defn(&name, &type_params, class);
 
                 quote! {
@@ -1885,7 +1884,7 @@ struct FieldDefinition<'a> {
     self_name: &'a Identifier,
     js_field_name: &'a str,
     typ: &'a TypeRef,
-    type_params: &'a HashMap<String, TypeParamConfig>,
+    type_params: &'a HashMap<String, &'a TypeParamConfig>,
 }
 
 impl<'a> ToTokens for FieldDefinition<'a> {
@@ -2027,7 +2026,7 @@ impl Traitable for TargetEnrichedTypeInfo {
 
 fn render_trait_defn<T>(
     name: &Identifier,
-    type_params: &HashMap<String, TypeParamConfig>,
+    type_params: &[(String, TypeParamConfig)],
     item: &T,
 ) -> TokenStream2
 where
@@ -2170,7 +2169,7 @@ fn render_serialize_fn(
     }
 }
 
-fn render_type_params(type_params: &HashMap<String, TypeParamConfig>) -> TokenStream2 {
+fn render_type_params(type_params: &[(String, TypeParamConfig)]) -> TokenStream2 {
     let type_param_toks = type_params.iter().map(|(n, _t)| {
         let n = to_camel_case_ident(n);
         quote! {

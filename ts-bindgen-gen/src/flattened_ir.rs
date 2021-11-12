@@ -126,6 +126,26 @@ impl<K: std::hash::Hash + Eq, V> FromIterator<(K, EffectContainer<V>)>
     }
 }
 
+impl<K, V> FromIterator<(K, EffectContainer<V>)> for EffectContainer<Vec<(K, V)>> {
+    fn from_iter<I: IntoIterator<Item = (K, EffectContainer<V>)>>(iter: I) -> Self {
+        let (vals, effects): (Vec<(K, V)>, Vec<EffectIterator>) = iter
+            .into_iter()
+            .map(|(k, ec)| {
+                let (v, es) = ec.into_value_and_effects();
+                ((k, v), es)
+            })
+            .unzip();
+        EffectContainer::compose_from(
+            vals,
+            effects
+                .into_iter()
+                .flatten()
+                .collect::<Vec<Effect>>()
+                .into_boxed_slice(),
+        )
+    }
+}
+
 /// A subset of [`FlattenedTypeInfo`] variants that may need to be lifted and named
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameableTypeInfo {
@@ -234,7 +254,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
 impl ApplyNames for Interface {
@@ -804,7 +824,7 @@ impl From<TypeParamConfigIR> for EffectContainer<TypeParamConfig> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
     pub class_name: Option<TypeIdent>,
@@ -920,7 +940,7 @@ impl From<CtorIR> for EffectContainer<Ctor> {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub implements: Vec<TypeRef>,
 }
 
@@ -1035,7 +1055,7 @@ impl From<EnumIR> for Enum {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeRef,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
 impl From<AliasIR> for EffectContainer<Alias> {

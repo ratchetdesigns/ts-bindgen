@@ -304,7 +304,7 @@ impl From<WithContext<FlattenedMember>> for Member {
 pub struct Class {
     pub super_class: Option<TypeRef>,
     pub members: HashMap<String, Member>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub implements: Vec<TypeRef>,
     pub context: Context,
 }
@@ -358,7 +358,7 @@ from_struct!(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub params: Vec<Param>,
     pub return_type: Box<TypeRef>,
     pub class_name: Option<TypeIdent>,
@@ -415,7 +415,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
     pub target: TypeRef,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub context: Context,
 }
 
@@ -467,7 +467,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
-    pub type_params: HashMap<String, TypeParamConfig>,
+    pub type_params: Vec<(String, TypeParamConfig)>,
     pub context: Context,
 }
 

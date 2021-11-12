@@ -492,11 +492,11 @@ impl IndexerExt for TsIndexSignature {
 }
 
 trait HasTypeParams {
-    fn type_param_config(&self) -> HashMap<String, TypeParamConfig>;
+    fn type_param_config(&self) -> Vec<(String, TypeParamConfig)>;
 }
 
 impl HasTypeParams for Option<TsTypeParamDecl> {
-    fn type_param_config(&self) -> HashMap<String, TypeParamConfig> {
+    fn type_param_config(&self) -> Vec<(String, TypeParamConfig)> {
         self.as_ref()
             .map(|tps| {
                 tps.params
@@ -871,7 +871,7 @@ impl TsTypes {
         &mut self,
         _ts_path: &Path,
         type_params: &Option<TsTypeParamDecl>,
-    ) -> HashMap<String, TypeParamConfig> {
+    ) -> Vec<(String, TypeParamConfig)> {
         type_params.type_param_config()
     }
 
