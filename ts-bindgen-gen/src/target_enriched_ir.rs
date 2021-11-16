@@ -346,7 +346,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParamConfig {
     pub constraint: Option<TargetEnrichedTypeInfo>,
-    pub default_type_arg: Option<TargetEnrichedTypeInfo>,
+    pub default_type_arg: Option<TypeRef>,
     pub context: Context,
 }
 

@@ -1,25 +1,25 @@
 import * as util from 'util';
 
-export interface A {
-  a: number;
+export interface A<T> {
+  a: T;
 }
 
-export interface B extends A {
+export interface B<T> extends A<T> {
   b: number;
 }
 
-export interface C {
-  c: number;
+export interface C<T> {
+  c: T;
 }
 
-export interface D extends B, C {
-  d: number;
+export interface D<T> extends B<number>, C<string> {
+  d: T;
 }
 
-export class BaseClass implements B, C {
+export class BaseClass implements B<number>, C<string> {
   a: number;
   b: number;
-  c: number;
+  c: string;
   base: number;
 }
 
@@ -58,4 +58,19 @@ export function testObj(testFn: GenericCloneFn<AInt>): boolean {
 
   return util.isDeepStrictEqual(testFn(o), o)
     && testFn(o) !== o;
+}
+
+export function testGenericPropagation(testFn: GenericCloneFn<D<string>>): boolean {
+  let s = {
+    s: "outer",
+    t: {
+      a: 7,
+      b: 10,
+      c: "hello",
+      d: "world",
+    }
+  };
+
+  return util.isDeepStrictEqual(testFn(s), s)
+    && testFn(s) !== s;
 }
