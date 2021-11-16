@@ -1524,6 +1524,7 @@ impl ToTokens for TargetEnrichedType {
                 let tps = render_type_params(type_params);
 
                 quote! {
+                    #[allow(dead_code)]
                     #vis type #name #tps = #target;
                 }
             }
@@ -2139,6 +2140,7 @@ where
         let super_decl = quote! {
             : #(#supers)+*
         };
+        // TODO: tps needs to also include the trait generics
         let make_impl = |trait_name: Identifier| {
             quote! {
                 impl #tps #trait_name for #full_name {}

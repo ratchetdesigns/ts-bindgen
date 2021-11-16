@@ -947,6 +947,19 @@ impl TsTypes {
         })
     }
 
+    fn process_type_op(
+        &mut self,
+        ts_path: &Path,
+        TsTypeOperator { op, type_ann, .. }: &TsTypeOperator,
+    ) -> TypeInfo {
+        match op {
+            TsTypeOperatorOp::KeyOf => TypeInfo::PrimitiveString(PrimitiveString()),
+            TsTypeOperatorOp::Unique | TsTypeOperatorOp::ReadOnly => {
+                self.process_type(ts_path, &*type_ann)
+            }
+        }
+    }
+
     fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> TypeInfo {
         match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref),
@@ -972,6 +985,7 @@ impl TsTypes {
             }
             TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, pred),
             TsType::TsTupleType(tuple) => self.process_tuple(ts_path, tuple),
+            TsType::TsTypeOperator(op) => self.process_type_op(ts_path, op),
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Ref(TypeRef {
