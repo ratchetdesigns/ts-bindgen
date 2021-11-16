@@ -1073,10 +1073,21 @@ fn resolve_type(
     path: &PathBuf,
     id: &TypeIdent,
 ) -> Option<TargetEnrichedTypeInfo> {
-    // TODO: need to look for TypeIdent::Name or TypeIdent::Local interchangeably
     let ti = RefCell::borrow(types_by_ident_by_path)
         .get(path)
-        .and_then(|t_by_id| t_by_id.get(id))
+        .and_then(|t_by_id|
+            t_by_id.get(id)
+                .or_else(|| match id {
+                    // TODO: Name and Local are interchangable. should be resolved as part of ir
+                    // transformation...
+                    TypeIdent::LocalName(n) => t_by_id.get(&TypeIdent::Name {
+                        file: path.clone(),
+                        name: n.clone(),
+                    }),
+                    TypeIdent::Name { file: _, name } => t_by_id.get(&TypeIdent::LocalName(name.clone())),
+                    _ => None,
+                })
+        )
         .map(|t| t.info.clone());
     match ti {
         None => return None,
