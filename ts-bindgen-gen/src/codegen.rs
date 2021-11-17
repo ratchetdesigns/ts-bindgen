@@ -11,6 +11,7 @@ use crate::target_enriched_ir::{
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::iter;
@@ -401,7 +402,7 @@ impl HasFnPrototype for Func {
 
 impl<'b> HasFnPrototype for Constructor<'b> {
     fn return_type(&self) -> TypeRef {
-        self.class.clone()
+        (*self.class).clone()
     }
 
     fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
@@ -422,9 +423,10 @@ impl<'b> HasFnPrototype for Constructor<'b> {
     }
 }
 
+#[derive(Debug, Clone)]
 struct Constructor<'a> {
-    class: &'a TypeRef,
-    ctor: &'a Ctor,
+    class: Cow<'a, TypeRef>,
+    ctor: Cow<'a, Ctor>,
 }
 
 mod fn_types {
@@ -527,7 +529,7 @@ trait FnPrototypeExt {
     ) -> TokenStream2;
 }
 
-impl<T: HasFnPrototype> FnPrototypeExt for T {
+impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
     fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
         let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
         let ret = fn_types::exposed_to_js_return_type(&self.return_type());
@@ -1666,8 +1668,8 @@ impl ToTokens for TargetEnrichedType {
                                 context: class.context.clone(),
                             };
                             let ctor = Constructor {
-                                class: &class_ref,
-                                ctor,
+                                class: Cow::Borrowed(&class_ref),
+                                ctor: Cow::Borrowed(ctor),
                             };
                             let param_toks = ctor
                                 .params()
@@ -2255,6 +2257,38 @@ where
     let full_name = quote! {
         #name #tps
     };
+    let class_name = || TypeIdent::LocalName(js_name.to_string());
+    let method_to_name_and_func = |(n, m): (String, Member)| {
+        let name = to_snake_case_ident(n);
+        match m {
+            Member::Constructor(ctor) => {
+                let class_ref = TypeRef {
+                    referent: class_name(),
+                    type_params: Default::default(),
+                    context: ctor.context.clone(),
+                };
+                let ctor = Constructor {
+                    class: Cow::Owned(class_ref),
+                    ctor: Cow::Owned(ctor),
+                };
+                (
+                    make_identifier!(new),
+                    Box::new(ctor) as Box<dyn HasFnPrototype>,
+                )
+            }
+            Member::Method(f) => (name, Box::new(f) as Box<dyn HasFnPrototype>),
+            Member::Property(t) => {
+                let f = Func {
+                    type_params: Default::default(),
+                    params: Default::default(),
+                    return_type: Box::new(t.clone()),
+                    class_name: Some(class_name()),
+                    context: t.context.clone(),
+                };
+                (name, Box::new(f) as Box<dyn HasFnPrototype>)
+            }
+        }
+    };
     let (super_decl, super_impls) = if item.has_super_traits() {
         // TODO: would be nice to mark Identifiers with the type of identifier they are
         // e.g. mark anything coming out of a TraitName::trait_name as a trait
@@ -2264,7 +2298,6 @@ where
             : #(#supers)+*
         };
         let make_impl = |tr: TypeRef| {
-            // TODO: tps needs to also include the trait generics
             let trait_name = tr.trait_name();
             let supers: Vec<_> = tr
                 .super_traits()
@@ -2307,38 +2340,11 @@ where
     } else {
         (quote! {}, quote! {})
     };
-    let class_name = || TypeIdent::LocalName(js_name.to_string());
 
     let method_decls = item
         .methods()
-        .map(|(n, m)| {
-            let name = to_snake_case_ident(n);
-            match &m {
-                Member::Constructor(ctor) => {
-                    let class_ref = TypeRef {
-                        referent: class_name(),
-                        type_params: Default::default(),
-                        context: ctor.context.clone(),
-                    };
-                    let ctor = Constructor {
-                        class: &class_ref,
-                        ctor,
-                    };
-                    ctor.exposed_to_rust_fn_decl(format_ident!("new"))
-                }
-                Member::Method(f) => f.exposed_to_rust_fn_decl(name),
-                Member::Property(t) => {
-                    let f = Func {
-                        type_params: Default::default(),
-                        params: Default::default(),
-                        return_type: Box::new(t.clone()),
-                        class_name: Some(class_name()),
-                        context: t.context.clone(),
-                    };
-                    f.exposed_to_rust_fn_decl(name)
-                }
-            }
-        })
+        .map(&method_to_name_and_func)
+        .map(|(n, f)| f.exposed_to_rust_fn_decl(n))
         .map(|t| {
             quote! {
                 #t;
