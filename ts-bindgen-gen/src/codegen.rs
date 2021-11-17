@@ -1023,6 +1023,14 @@ impl Named for TypeIdent {
     }
 }
 
+impl Named for TypeRef {
+    fn to_name(&self) -> (&str, Identifier) {
+        let (n, mut id) = self.referent.to_name();
+        id.type_params = self.type_params.iter().map(|t| t.to_name().1).collect();
+        (n, id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SerializationType {
     Raw,
@@ -1075,19 +1083,20 @@ fn resolve_type(
 ) -> Option<TargetEnrichedTypeInfo> {
     let ti = RefCell::borrow(types_by_ident_by_path)
         .get(path)
-        .and_then(|t_by_id|
-            t_by_id.get(id)
-                .or_else(|| match id {
-                    // TODO: Name and Local are interchangable. should be resolved as part of ir
-                    // transformation...
-                    TypeIdent::LocalName(n) => t_by_id.get(&TypeIdent::Name {
-                        file: path.clone(),
-                        name: n.clone(),
-                    }),
-                    TypeIdent::Name { file: _, name } => t_by_id.get(&TypeIdent::LocalName(name.clone())),
-                    _ => None,
-                })
-        )
+        .and_then(|t_by_id| {
+            t_by_id.get(id).or_else(|| match id {
+                // TODO: Name and Local are interchangable. should be resolved as part of ir
+                // transformation...
+                TypeIdent::LocalName(n) => t_by_id.get(&TypeIdent::Name {
+                    file: path.clone(),
+                    name: n.clone(),
+                }),
+                TypeIdent::Name { file: _, name } => {
+                    t_by_id.get(&TypeIdent::LocalName(name.clone()))
+                }
+                _ => None,
+            })
+        })
         .map(|t| t.info.clone());
     match ti {
         None => return None,
@@ -1504,7 +1513,7 @@ impl ToTokens for TargetEnrichedType {
                         pub #extra_fields_name: std::collections::HashMap<String, #value_type>
                     });
                 }
-                let trait_defn = render_trait_defn(&name, type_params, iface);
+                let trait_defn = render_trait_defn(&name, type_params, iface, &iface.context);
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1694,7 +1703,7 @@ impl ToTokens for TargetEnrichedType {
                         method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
                     });
 
-                let trait_defn = render_trait_defn(&name, &type_params, class);
+                let trait_defn = render_trait_defn(&name, &type_params, class, &class.context);
 
                 quote! {
                     #[wasm_bindgen(module = #path)]
@@ -2054,6 +2063,12 @@ impl TraitName for Identifier {
     }
 }
 
+impl TraitName for TypeRef {
+    fn trait_name(&self) -> Identifier {
+        self.to_name().1.trait_name()
+    }
+}
+
 type BoxedTypeRefIter<'a> = Box<dyn Iterator<Item = TypeRef> + 'a>;
 
 trait Traitable {
@@ -2129,15 +2144,46 @@ impl Traitable for TargetEnrichedTypeInfo {
     }
 }
 
+impl Traitable for TypeRef {
+    fn has_super_traits(&self) -> bool {
+        self.resolve_target_type()
+            .map(|t| t.has_super_traits())
+            .unwrap_or(false)
+    }
+
+    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+        self.resolve_target_type()
+            .map(|t| {
+                Box::new(t.super_traits().collect::<Vec<_>>().into_iter()) as BoxedTypeRefIter<'a>
+            })
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>)
+    }
+}
+
+trait NameWithGenericEnv {
+    fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier;
+}
+
+impl NameWithGenericEnv for Identifier {
+    fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier {
+        if self.type_params.len() != type_env.len() {
+            // TODO: panic
+        }
+
+        let tps: Vec<_> = type_env.iter().map(|t| t.to_name().1).collect();
+        self.with_type_params(&tps)
+    }
+}
+
 fn render_trait_defn<T>(
     name: &Identifier,
     type_params: &[(String, TypeParamConfig)],
     item: &T,
+    ctx: &Context,
 ) -> TokenStream2
 where
     T: Traitable,
 {
-    let trait_name = name.trait_name();
     let tps = render_type_params(type_params);
     let full_name = quote! {
         #name #tps
@@ -2146,21 +2192,45 @@ where
         // TODO: would be nice to mark Identifiers with the type of identifier they are
         // e.g. mark anything coming out of a TraitName::trait_name as a trait
         // identifier
-        let to_trait_name = |t: TypeRef| t.referent.to_name().1.trait_name();
-        let supers = item.super_traits().map(&to_trait_name);
+        let supers = item.super_traits().map(|s| s.trait_name());
         let super_decl = quote! {
             : #(#supers)+*
         };
-        // TODO: tps needs to also include the trait generics
-        let make_impl = |trait_name: Identifier| {
+        let make_impl = |tr: TypeRef| {
+            // TODO: tps needs to also include the trait generics
+            let trait_name = tr.trait_name();
+            let supers: Vec<_> = tr
+                .super_traits()
+                .map(|s| {
+                    s.trait_name()
+                        .name_with_generic_env(tr.type_params.as_slice())
+                })
+                .collect();
+            let preds = if supers.is_empty() {
+                quote! {}
+            } else {
+                quote! {
+                    where #full_name: #(#supers)+*
+                }
+            };
             quote! {
-                impl #tps #trait_name for #full_name {}
+                impl #tps #trait_name for #full_name #preds {}
             }
         };
         let super_impls = item
             .recursive_super_traits()
-            .map(&to_trait_name)
-            .chain(Box::new(iter::once(trait_name.clone())))
+            .chain(Box::new(iter::once(TypeRef {
+                referent: TypeIdent::LocalName(name.to_string()),
+                type_params: type_params
+                    .iter()
+                    .map(|(n, _)| TypeRef {
+                        referent: TypeIdent::LocalName(n.clone()),
+                        type_params: Default::default(),
+                        context: ctx.clone(),
+                    })
+                    .collect(),
+                context: ctx.clone(),
+            })))
             .map(&make_impl);
         let super_impls = quote! {
             #(#super_impls)*
@@ -2173,8 +2243,10 @@ where
 
     // TODO: add field accessors and setters
 
+    let trait_name = name.trait_name();
+
     quote! {
-        trait #trait_name #super_decl {
+        trait #trait_name #tps #super_decl {
         }
 
         #super_impls

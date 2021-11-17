@@ -64,6 +64,29 @@ impl Identifier {
             type_params: self.type_params.clone(),
         }
     }
+
+    pub fn with_type_params(&self, type_params: &[Identifier]) -> Identifier {
+        Self {
+            type_parts: self.type_parts.clone(),
+            type_params: type_params.iter().cloned().collect(),
+        }
+    }
+
+    pub fn with_string_type_params(&self, type_params: &[String]) -> Identifier {
+        Self {
+            type_parts: self.type_parts.clone(),
+            type_params: type_params
+                .iter()
+                .map(|p| {
+                    let id = format_ident!("{}", p);
+                    Identifier {
+                        type_parts: vec![id],
+                        type_params: Default::default(),
+                    }
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Display for Identifier {
