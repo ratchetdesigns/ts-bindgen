@@ -2307,6 +2307,7 @@ where
     } else {
         (quote! {}, quote! {})
     };
+    let class_name = || TypeIdent::LocalName(js_name.to_string());
 
     let method_decls = item
         .methods()
@@ -2315,7 +2316,7 @@ where
             match &m {
                 Member::Constructor(ctor) => {
                     let class_ref = TypeRef {
-                        referent: TypeIdent::LocalName(js_name.to_string()),
+                        referent: class_name(),
                         type_params: Default::default(),
                         context: ctor.context.clone(),
                     };
@@ -2327,9 +2328,11 @@ where
                 }
                 Member::Method(f) => f.exposed_to_rust_fn_decl(name),
                 Member::Property(t) => {
-                    let f = TypeRef {
-                        referent: TypeIdent::Builtin(Builtin::Fn),
-                        type_params: vec![t.clone()],
+                    let f = Func {
+                        type_params: Default::default(),
+                        params: Default::default(),
+                        return_type: Box::new(t.clone()),
+                        class_name: Some(class_name()),
                         context: t.context.clone(),
                     };
                     f.exposed_to_rust_fn_decl(name)
