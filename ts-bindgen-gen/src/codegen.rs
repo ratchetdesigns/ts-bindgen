@@ -399,15 +399,15 @@ impl HasFnPrototype for Func {
     }
 }
 
-impl HasFnPrototype for Ctor {
+impl<'b> HasFnPrototype for Constructor<'b> {
     fn return_type(&self) -> TypeRef {
-        // TODO
-        unimplemented!()
+        self.class.clone()
     }
 
     fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
         Box::new(
-            self.params
+            self.ctor
+                .params
                 .iter()
                 .map(|p| Box::new(p.clone()) as Box<dyn ParamExt>),
         )
@@ -420,6 +420,11 @@ impl HasFnPrototype for Ctor {
     fn is_member(&self) -> bool {
         true
     }
+}
+
+struct Constructor<'a> {
+    class: &'a TypeRef,
+    ctor: &'a Ctor,
 }
 
 mod fn_types {
@@ -481,7 +486,13 @@ mod fn_types {
     }
 
     pub fn exposed_to_rust_return_type(typ: &TypeRef) -> TokenStream2 {
-        quote! { #typ }
+        let serialization_type = typ.serialization_type();
+        match serialization_type {
+            // TODO: should combine this and FieldDefinition somehow to render
+            // a SizedType, which ensures that the type it renders is wrapped to be sized.
+            SerializationType::Fn => quote! { std::rc::Rc<#typ> },
+            _ => quote! { #typ },
+        }
     }
 }
 
@@ -1046,7 +1057,9 @@ trait SerializationTypeGetter {
 impl SerializationTypeGetter for TypeRef {
     fn serialization_type(&self) -> SerializationType {
         let resolved_type = self.resolve_target_type();
-        resolved_type.map(|ti| ti.serialization_type()).unwrap()
+        resolved_type
+            .map(|ti| ti.serialization_type())
+            .unwrap_or(SerializationType::Raw) // TODO: we should only ever fall through for generic parameters (really need a different TypeIdent for them)
     }
 }
 
@@ -1513,7 +1526,8 @@ impl ToTokens for TargetEnrichedType {
                         pub #extra_fields_name: std::collections::HashMap<String, #value_type>
                     });
                 }
-                let trait_defn = render_trait_defn(&name, type_params, iface, &iface.context);
+                let trait_defn =
+                    render_trait_defn(&name, &js_name, type_params, iface, &iface.context);
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1646,6 +1660,15 @@ impl ToTokens for TargetEnrichedType {
                     let member_js_ident = format_ident!("{}", member_js_name);
                     match member {
                         Member::Constructor(ctor) => {
+                            let class_ref = TypeRef {
+                                referent: TypeIdent::LocalName(js_name.to_string()),
+                                type_params: Default::default(),
+                                context: class.context.clone(),
+                            };
+                            let ctor = Constructor {
+                                class: &class_ref,
+                                ctor,
+                            };
                             let param_toks = ctor
                                 .params()
                                 .map(|p| p.as_exposed_to_rust_named_param_list());
@@ -1703,7 +1726,8 @@ impl ToTokens for TargetEnrichedType {
                         method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
                     });
 
-                let trait_defn = render_trait_defn(&name, &type_params, class, &class.context);
+                let trait_defn =
+                    render_trait_defn(&name, &js_name, &type_params, class, &class.context);
 
                 quote! {
                     #[wasm_bindgen(module = #path)]
@@ -2069,22 +2093,42 @@ impl TraitName for TypeRef {
     }
 }
 
+trait WithTypeEnv {
+    fn with_type_env(&self, type_env: &[TypeRef]) -> Self;
+}
+
+impl WithTypeEnv for TypeRef {
+    fn with_type_env(&self, type_env: &[TypeRef]) -> Self {
+        let mut t = self.clone();
+        t.type_params = type_env
+            .iter()
+            .chain(t.type_params.iter().skip(type_env.len()))
+            .cloned()
+            .collect();
+        t
+    }
+}
+
 type BoxedTypeRefIter<'a> = Box<dyn Iterator<Item = TypeRef> + 'a>;
+type BoxedMemberIter<'a> = Box<dyn Iterator<Item = (String, Member)> + 'a>;
 
 trait Traitable {
     fn has_super_traits(&self) -> bool;
 
     fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a>;
 
-    fn recursive_super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+    fn methods<'a>(&'a self) -> BoxedMemberIter<'a>;
+
+    fn recursive_super_traits<'a>(&'a self, type_env: &[TypeRef]) -> BoxedTypeRefIter<'a> {
         Box::new(self.super_traits().fold(
             Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
             |cur, s| {
+                let s = s.with_type_env(type_env);
                 let supers = s
                     .resolve_target_type()
                     .map(|t| {
                         Box::new(
-                            t.recursive_super_traits()
+                            t.recursive_super_traits(&s.type_params)
                                 .collect::<Vec<TypeRef>>()
                                 .into_iter(),
                         ) as BoxedTypeRefIter<'a>
@@ -2107,6 +2151,14 @@ impl Traitable for Interface {
     fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
         Box::new(self.extends.iter().cloned()) as BoxedTypeRefIter<'a>
     }
+
+    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+        Box::new(
+            self.fields
+                .iter()
+                .map(|(n, t)| (n.clone(), Member::Property(t.clone()))),
+        )
+    }
 }
 
 impl Traitable for Class {
@@ -2123,6 +2175,10 @@ impl Traitable for Class {
         let implements = self.implements.iter().cloned();
 
         Box::new(super_class.chain(implements))
+    }
+
+    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+        Box::new(self.members.iter().map(|(n, m)| (n.clone(), m.clone())))
     }
 }
 
@@ -2142,6 +2198,14 @@ impl Traitable for TargetEnrichedTypeInfo {
             _ => Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
         }
     }
+
+    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+        match self {
+            TargetEnrichedTypeInfo::Class(c) => c.methods(),
+            TargetEnrichedTypeInfo::Interface(i) => i.methods(),
+            _ => Box::new(iter::empty()) as BoxedMemberIter<'a>,
+        }
+    }
 }
 
 impl Traitable for TypeRef {
@@ -2158,6 +2222,12 @@ impl Traitable for TypeRef {
             })
             .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>)
     }
+
+    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+        self.resolve_target_type()
+            .map(|t| Box::new(t.methods().collect::<Vec<_>>().into_iter()) as BoxedMemberIter<'a>)
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedMemberIter<'a>)
+    }
 }
 
 trait NameWithGenericEnv {
@@ -2166,10 +2236,6 @@ trait NameWithGenericEnv {
 
 impl NameWithGenericEnv for Identifier {
     fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier {
-        if self.type_params.len() != type_env.len() {
-            // TODO: panic
-        }
-
         let tps: Vec<_> = type_env.iter().map(|t| t.to_name().1).collect();
         self.with_type_params(&tps)
     }
@@ -2177,6 +2243,7 @@ impl NameWithGenericEnv for Identifier {
 
 fn render_trait_defn<T>(
     name: &Identifier,
+    js_name: &str,
     type_params: &[(String, TypeParamConfig)],
     item: &T,
     ctx: &Context,
@@ -2218,7 +2285,7 @@ where
             }
         };
         let super_impls = item
-            .recursive_super_traits()
+            .recursive_super_traits(&vec![])
             .chain(Box::new(iter::once(TypeRef {
                 referent: TypeIdent::LocalName(name.to_string()),
                 type_params: type_params
@@ -2241,12 +2308,45 @@ where
         (quote! {}, quote! {})
     };
 
-    // TODO: add field accessors and setters
+    let method_decls = item
+        .methods()
+        .map(|(n, m)| {
+            let name = to_snake_case_ident(n);
+            match &m {
+                Member::Constructor(ctor) => {
+                    let class_ref = TypeRef {
+                        referent: TypeIdent::LocalName(js_name.to_string()),
+                        type_params: Default::default(),
+                        context: ctor.context.clone(),
+                    };
+                    let ctor = Constructor {
+                        class: &class_ref,
+                        ctor,
+                    };
+                    ctor.exposed_to_rust_fn_decl(format_ident!("new"))
+                }
+                Member::Method(f) => f.exposed_to_rust_fn_decl(name),
+                Member::Property(t) => {
+                    let f = TypeRef {
+                        referent: TypeIdent::Builtin(Builtin::Fn),
+                        type_params: vec![t.clone()],
+                        context: t.context.clone(),
+                    };
+                    f.exposed_to_rust_fn_decl(name)
+                }
+            }
+        })
+        .map(|t| {
+            quote! {
+                #t;
+            }
+        });
 
     let trait_name = name.trait_name();
 
     quote! {
         trait #trait_name #tps #super_decl {
+            #(#method_decls)*
         }
 
         #super_impls
