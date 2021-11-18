@@ -543,6 +543,12 @@ trait FnPrototypeExt {
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2;
 
+    fn fully_qualified_invoke_with_name<Name: ToTokens, SelfArg: ToTokens>(
+        &self,
+        name: Name,
+        self_arg: Option<SelfArg>,
+    ) -> TokenStream2;
+
     fn exposed_to_rust_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2;
 
     /// Returns a token stream defining local closures for any parameters
@@ -611,6 +617,22 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
         let args = self.args().map(|p| p.rust_name());
+        quote! {
+            #name(#(#args),*)
+        }
+    }
+
+    fn fully_qualified_invoke_with_name<Name: ToTokens, SelfArg: ToTokens>(
+        &self,
+        name: Name,
+        self_arg: Option<SelfArg>,
+    ) -> TokenStream2 {
+        let args = self.args().map(|p| p.rust_name()).map(|a| quote! { #a });
+        let args: Box<dyn Iterator<Item = TokenStream2>> = if let Some(s) = self_arg {
+            Box::new(iter::once(quote! { #s }).chain(args))
+        } else {
+            Box::new(args)
+        };
         quote! {
             #name(#(#args),*)
         }
@@ -2139,6 +2161,22 @@ impl WithTypeEnv for TypeRef {
     }
 }
 
+/// Represents a superclass or implemented interface.
+struct Super {
+    /// `item` is the superclass or implemented interface.
+    item: TypeRef,
+    /// `implementor` is set to the type that contains the actual implementation.
+    /// For example, a typescript interface, `I`, embeds all members from extended
+    /// interfaces directly within it so implementor will always refer to
+    /// `I`.
+    /// However, a typescript class, `C`, which extends a class `Base`, will not
+    /// contain `Base`'s members so when `Super::item` is set to `Base` or an
+    /// interface implemented by `Base`, `Super::implementor` will be set
+    /// to `Base`.
+    implementor: TypeRef,
+}
+
+type BoxedSuperIter<'a> = Box<dyn Iterator<Item = Super> + 'a>;
 type BoxedTypeRefIter<'a> = Box<dyn Iterator<Item = TypeRef> + 'a>;
 type BoxedMemberIter<'a> = Box<dyn Iterator<Item = (String, Member)> + 'a>;
 
@@ -2149,34 +2187,47 @@ trait Traitable {
 
     fn methods<'a>(&'a self) -> BoxedMemberIter<'a>;
 
+    fn contains_implementation(&self) -> bool;
+
     fn wrap_invocation(
         &self,
-        class_name: &TypeIdent,
+        member_defn_source: &TypeRef,
         name: &Identifier,
         member: &Member,
     ) -> TokenStream2;
 
-    fn recursive_super_traits<'a>(&'a self, type_env: &[TypeRef]) -> BoxedTypeRefIter<'a> {
+    fn recursive_super_traits<'a>(
+        &'a self,
+        implementor: TypeRef,
+        type_env: &[TypeRef],
+    ) -> BoxedSuperIter<'a> {
         Box::new(self.super_traits().fold(
-            Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
+            Box::new(iter::empty()) as BoxedSuperIter<'a>,
             |cur, s| {
                 let s = s.with_type_env(type_env);
+                let implementor = if s.contains_implementation() {
+                    s.clone()
+                } else {
+                    implementor.clone()
+                };
                 let supers = s
                     .resolve_target_type()
                     .map(|t| {
                         Box::new(
-                            t.recursive_super_traits(&s.type_params)
-                                .collect::<Vec<TypeRef>>()
+                            t.recursive_super_traits(implementor.clone(), &s.type_params)
+                                .collect::<Vec<_>>()
                                 .into_iter(),
-                        ) as BoxedTypeRefIter<'a>
+                        ) as BoxedSuperIter<'a>
                     })
-                    .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>);
-                Box::new(
-                    cur.chain(Box::new(iter::once(s)) as BoxedTypeRefIter<'a>)
-                        .chain(supers),
-                ) as BoxedTypeRefIter<'a>
+                    .unwrap_or_else(|| Box::new(iter::empty()) as BoxedSuperIter<'a>);
+                let s_iter = Box::new(iter::once(Super {
+                    item: s.clone(),
+                    implementor,
+                })) as BoxedSuperIter<'a>;
+
+                Box::new(cur.chain(s_iter).chain(supers)) as BoxedSuperIter<'a>
             },
-        )) as BoxedTypeRefIter<'a>
+        )) as BoxedSuperIter<'a>
     }
 }
 
@@ -2197,20 +2248,34 @@ impl Traitable for Interface {
         )
     }
 
+    fn contains_implementation(&self) -> bool {
+        // interfaces in an inheritance tree do not contain implementation,
+        // their implementation is denormalized onto the root item
+        false
+    }
+
     fn wrap_invocation(
         &self,
-        class_name: &TypeIdent,
+        member_defn_source: &TypeRef,
         name: &Identifier,
         member: &Member,
     ) -> TokenStream2 {
+        let class_name = &member_defn_source.referent;
+        let name = quote! {
+            self.#name
+        };
+        let cn = member_defn_source.to_name().1;
+        let fq_name = quote! {
+            #cn::#name
+        };
+        let slf = quote! { self };
         match member {
-            Member::Constructor(c) => {
-                Constructor::new(Cow::Borrowed(c), class_name.clone()).invoke_with_name(name)
-            }
-            Member::Method(f) => f.invoke_with_name(name),
+            Member::Constructor(c) => Constructor::new(Cow::Borrowed(c), class_name.clone())
+                .fully_qualified_invoke_with_name(fq_name, Some(slf)),
+            Member::Method(f) => f.fully_qualified_invoke_with_name(fq_name, Some(slf)),
             Member::Property(_) => {
                 quote! {
-                    std::result::Result::Ok(self.#name)
+                    std::result::Result::Ok(#name)
                 }
             }
         }
@@ -2237,26 +2302,46 @@ impl Traitable for Class {
         Box::new(self.members.iter().map(|(n, m)| (n.clone(), m.clone())))
     }
 
+    fn contains_implementation(&self) -> bool {
+        true
+    }
+
     fn wrap_invocation(
         &self,
-        class_name: &TypeIdent,
+        member_defn_source: &TypeRef,
         name: &Identifier,
         member: &Member,
     ) -> TokenStream2 {
+        let class_name = &member_defn_source.referent;
+        let cn = member_defn_source.to_name().1;
+        let name = quote! {
+            #cn::#name
+        };
+        let slf = quote! { self };
+        let target = quote! { target };
         match member {
-            Member::Constructor(c) => {
-                Constructor::new(Cow::Borrowed(c), class_name.clone()).invoke_with_name(name)
+            Member::Constructor(c) => Constructor::new(Cow::Borrowed(c), class_name.clone())
+                .fully_qualified_invoke_with_name(name, None as Option<TokenStream2>),
+            Member::Method(f) => {
+                let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
+                quote! {
+                    let #target: &#member_defn_source = #slf.as_ref();
+                    #inv
+                }
             }
-            Member::Method(f) => f.invoke_with_name(name),
             Member::Property(t) => {
                 let f = Func {
                     type_params: Default::default(),
                     params: Default::default(),
                     return_type: Box::new(t.clone()),
-                    class_name: None,
+                    class_name: Some(class_name.clone()),
                     context: t.context.clone(),
                 };
-                f.invoke_with_name(name)
+                let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
+                quote! {
+                    let #target: &#member_defn_source = #slf.as_ref();
+                    std::result::Result::Ok(#inv)
+                }
             }
         }
     }
@@ -2295,9 +2380,13 @@ impl Traitable for TargetEnrichedTypeInfo {
         )
     }
 
+    fn contains_implementation(&self) -> bool {
+        delegate_traitable_for_type_info!(self, x, x.contains_implementation(), false,)
+    }
+
     fn wrap_invocation(
         &self,
-        class_name: &TypeIdent,
+        member_defn_source: &TypeRef,
         name: &Identifier,
         member: &Member,
     ) -> TokenStream2 {
@@ -2305,7 +2394,7 @@ impl Traitable for TargetEnrichedTypeInfo {
         delegate_traitable_for_type_info!(
             self,
             x,
-            x.wrap_invocation(class_name, name, member),
+            x.wrap_invocation(member_defn_source, name, member),
             empty,
         )
     }
@@ -2332,14 +2421,20 @@ impl Traitable for TypeRef {
             .unwrap_or_else(|| Box::new(iter::empty()) as BoxedMemberIter<'a>)
     }
 
+    fn contains_implementation(&self) -> bool {
+        self.resolve_target_type()
+            .map(|t| t.contains_implementation())
+            .unwrap_or(false)
+    }
+
     fn wrap_invocation(
         &self,
-        class_name: &TypeIdent,
+        member_defn_source: &TypeRef,
         name: &Identifier,
         member: &Member,
     ) -> TokenStream2 {
         self.resolve_target_type()
-            .map(|t| t.wrap_invocation(class_name, name, member))
+            .map(|t| t.wrap_invocation(member_defn_source, name, member))
             .unwrap_or_else(|| quote! {})
     }
 }
@@ -2370,18 +2465,25 @@ where
         #name #tps
     };
     let class_name = || TypeIdent::LocalName(js_name.to_string());
+    let item_ref = TypeRef {
+        referent: class_name(),
+        type_params: type_params
+            .iter()
+            .map(|(n, _)| TypeRef {
+                referent: TypeIdent::LocalName(n.clone()),
+                type_params: Default::default(),
+                context: ctx.clone(),
+            })
+            .collect(),
+        context: ctx.clone(),
+    };
     let member_to_name_and_func = |type_env: &HashMap<String, TypeRef>,
                                    (n, m): (String, Member)| {
         let name = to_snake_case_ident(n);
         match m {
             Member::Constructor(ctor) => {
-                let class_ref = TypeRef {
-                    referent: class_name(),
-                    type_params: Default::default(),
-                    context: ctor.context.clone(),
-                };
                 let ctor = Constructor {
-                    class: Cow::Owned(class_ref),
+                    class: Cow::Borrowed(&item_ref),
                     ctor: Cow::Owned(ctor),
                 };
                 (
@@ -2410,7 +2512,8 @@ where
         let super_decl = quote! {
             : #(#supers)+*
         };
-        let make_impl = |tr: TypeRef| {
+        let make_impl = |i: Super| {
+            let tr = &i.item;
             let trait_name = tr.trait_name();
             let supers: Vec<_> = tr
                 .super_traits()
@@ -2426,13 +2529,13 @@ where
                     where #full_name: #(#supers)+*
                 }
             };
-            let class_name = class_name();
             let method_impls = tr
                 .methods()
-                .map(|nm| (nm.clone(), member_to_name_and_func(&tr.type_env(), nm)))
-                .map(|((_, m), (n, f))| (n.clone(), m, f.exposed_to_rust_fn_decl(n)))
+                .map(|nm| (nm.1.clone(), member_to_name_and_func(&tr.type_env(), nm)))
+                .map(|(m, (n, f))| (n.clone(), m, f.exposed_to_rust_fn_decl(n)))
                 .map(|(name, member, t)| {
-                    let getter = item.wrap_invocation(&class_name, &name, &member);
+                    // TODO: handle setters somehow
+                    let getter = item.wrap_invocation(&i.implementor, &name, &member);
                     quote! {
                         #t {
                             #getter
@@ -2446,18 +2549,10 @@ where
             }
         };
         let super_impls = item
-            .recursive_super_traits(&vec![])
-            .chain(Box::new(iter::once(TypeRef {
-                referent: TypeIdent::LocalName(name.to_string()),
-                type_params: type_params
-                    .iter()
-                    .map(|(n, _)| TypeRef {
-                        referent: TypeIdent::LocalName(n.clone()),
-                        type_params: Default::default(),
-                        context: ctx.clone(),
-                    })
-                    .collect(),
-                context: ctx.clone(),
+            .recursive_super_traits(item_ref.clone(), &vec![])
+            .chain(Box::new(iter::once(Super {
+                item: item_ref.clone(),
+                implementor: item_ref.clone(),
             })))
             .map(&make_impl);
         let super_impls = quote! {
