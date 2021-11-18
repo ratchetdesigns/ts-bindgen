@@ -225,6 +225,25 @@ impl ResolveGeneric for TypeRef {
     }
 }
 
+trait TypeEnvImplying {
+    fn type_env(&self) -> HashMap<String, TypeRef>;
+}
+
+impl TypeEnvImplying for TypeRef {
+    fn type_env(&self) -> HashMap<String, TypeRef> {
+        self.resolve_target_type()
+            .and_then(|t| {
+                t.required_type_params().map(|tps| {
+                    tps.iter()
+                        .zip(self.type_params.iter())
+                        .map(|((n, _), t)| (n.clone(), t.clone()))
+                        .collect()
+                })
+            })
+            .unwrap_or_else(|| Default::default())
+    }
+}
+
 fn apply_type_params<P, R>(
     provided: &P,
     required: &R,
@@ -427,6 +446,20 @@ impl<'b> HasFnPrototype for Constructor<'b> {
 struct Constructor<'a> {
     class: Cow<'a, TypeRef>,
     ctor: Cow<'a, Ctor>,
+}
+
+impl<'a> Constructor<'a> {
+    fn new(ctor: Cow<'a, Ctor>, class_name: TypeIdent) -> Constructor<'a> {
+        let class_ref = TypeRef {
+            referent: class_name,
+            type_params: Default::default(),
+            context: (&*ctor).context.clone(),
+        };
+        Constructor {
+            class: Cow::Owned(class_ref),
+            ctor,
+        }
+    }
 }
 
 mod fn_types {
@@ -1662,15 +1695,10 @@ impl ToTokens for TargetEnrichedType {
                     let member_js_ident = format_ident!("{}", member_js_name);
                     match member {
                         Member::Constructor(ctor) => {
-                            let class_ref = TypeRef {
-                                referent: TypeIdent::LocalName(js_name.to_string()),
-                                type_params: Default::default(),
-                                context: class.context.clone(),
-                            };
-                            let ctor = Constructor {
-                                class: Cow::Borrowed(&class_ref),
-                                ctor: Cow::Borrowed(ctor),
-                            };
+                            let ctor = Constructor::new(
+                                Cow::Borrowed(ctor),
+                                TypeIdent::LocalName(js_name.to_string()),
+                            );
                             let param_toks = ctor
                                 .params()
                                 .map(|p| p.as_exposed_to_rust_named_param_list());
@@ -2121,6 +2149,13 @@ trait Traitable {
 
     fn methods<'a>(&'a self) -> BoxedMemberIter<'a>;
 
+    fn wrap_invocation(
+        &self,
+        class_name: &TypeIdent,
+        name: &Identifier,
+        member: &Member,
+    ) -> TokenStream2;
+
     fn recursive_super_traits<'a>(&'a self, type_env: &[TypeRef]) -> BoxedTypeRefIter<'a> {
         Box::new(self.super_traits().fold(
             Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
@@ -2161,6 +2196,25 @@ impl Traitable for Interface {
                 .map(|(n, t)| (n.clone(), Member::Property(t.clone()))),
         )
     }
+
+    fn wrap_invocation(
+        &self,
+        class_name: &TypeIdent,
+        name: &Identifier,
+        member: &Member,
+    ) -> TokenStream2 {
+        match member {
+            Member::Constructor(c) => {
+                Constructor::new(Cow::Borrowed(c), class_name.clone()).invoke_with_name(name)
+            }
+            Member::Method(f) => f.invoke_with_name(name),
+            Member::Property(_) => {
+                quote! {
+                    std::result::Result::Ok(self.#name)
+                }
+            }
+        }
+    }
 }
 
 impl Traitable for Class {
@@ -2182,31 +2236,78 @@ impl Traitable for Class {
     fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
         Box::new(self.members.iter().map(|(n, m)| (n.clone(), m.clone())))
     }
+
+    fn wrap_invocation(
+        &self,
+        class_name: &TypeIdent,
+        name: &Identifier,
+        member: &Member,
+    ) -> TokenStream2 {
+        match member {
+            Member::Constructor(c) => {
+                Constructor::new(Cow::Borrowed(c), class_name.clone()).invoke_with_name(name)
+            }
+            Member::Method(f) => f.invoke_with_name(name),
+            Member::Property(t) => {
+                let f = Func {
+                    type_params: Default::default(),
+                    params: Default::default(),
+                    return_type: Box::new(t.clone()),
+                    class_name: None,
+                    context: t.context.clone(),
+                };
+                f.invoke_with_name(name)
+            }
+        }
+    }
+}
+
+macro_rules! delegate_traitable_for_type_info {
+    ($self:ident, $x:ident, $invocation:expr, $default:expr $(,)?) => {
+        match $self {
+            TargetEnrichedTypeInfo::Class($x) => $invocation,
+            TargetEnrichedTypeInfo::Interface($x) => $invocation,
+            _ => $default,
+        }
+    };
 }
 
 impl Traitable for TargetEnrichedTypeInfo {
     fn has_super_traits(&self) -> bool {
-        match self {
-            TargetEnrichedTypeInfo::Class(c) => c.has_super_traits(),
-            TargetEnrichedTypeInfo::Interface(i) => i.has_super_traits(),
-            _ => false,
-        }
+        delegate_traitable_for_type_info!(self, x, x.has_super_traits(), false)
     }
 
     fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
-        match self {
-            TargetEnrichedTypeInfo::Class(c) => c.super_traits(),
-            TargetEnrichedTypeInfo::Interface(i) => i.super_traits(),
-            _ => Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
-        }
+        delegate_traitable_for_type_info!(
+            self,
+            x,
+            x.super_traits(),
+            Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
+        )
     }
 
     fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
-        match self {
-            TargetEnrichedTypeInfo::Class(c) => c.methods(),
-            TargetEnrichedTypeInfo::Interface(i) => i.methods(),
-            _ => Box::new(iter::empty()) as BoxedMemberIter<'a>,
-        }
+        delegate_traitable_for_type_info!(
+            self,
+            x,
+            x.methods(),
+            Box::new(iter::empty()) as BoxedMemberIter<'a>,
+        )
+    }
+
+    fn wrap_invocation(
+        &self,
+        class_name: &TypeIdent,
+        name: &Identifier,
+        member: &Member,
+    ) -> TokenStream2 {
+        let empty = quote! {};
+        delegate_traitable_for_type_info!(
+            self,
+            x,
+            x.wrap_invocation(class_name, name, member),
+            empty,
+        )
     }
 }
 
@@ -2229,6 +2330,17 @@ impl Traitable for TypeRef {
         self.resolve_target_type()
             .map(|t| Box::new(t.methods().collect::<Vec<_>>().into_iter()) as BoxedMemberIter<'a>)
             .unwrap_or_else(|| Box::new(iter::empty()) as BoxedMemberIter<'a>)
+    }
+
+    fn wrap_invocation(
+        &self,
+        class_name: &TypeIdent,
+        name: &Identifier,
+        member: &Member,
+    ) -> TokenStream2 {
+        self.resolve_target_type()
+            .map(|t| t.wrap_invocation(class_name, name, member))
+            .unwrap_or_else(|| quote! {})
     }
 }
 
@@ -2258,7 +2370,8 @@ where
         #name #tps
     };
     let class_name = || TypeIdent::LocalName(js_name.to_string());
-    let method_to_name_and_func = |(n, m): (String, Member)| {
+    let member_to_name_and_func = |type_env: &HashMap<String, TypeRef>,
+                                   (n, m): (String, Member)| {
         let name = to_snake_case_ident(n);
         match m {
             Member::Constructor(ctor) => {
@@ -2281,7 +2394,7 @@ where
                 let f = Func {
                     type_params: Default::default(),
                     params: Default::default(),
-                    return_type: Box::new(t.clone()),
+                    return_type: Box::new(t.resolve_generic_in_env(type_env).clone()),
                     class_name: Some(class_name()),
                     context: t.context.clone(),
                 };
@@ -2313,8 +2426,23 @@ where
                     where #full_name: #(#supers)+*
                 }
             };
+            let class_name = class_name();
+            let method_impls = tr
+                .methods()
+                .map(|nm| (nm.clone(), member_to_name_and_func(&tr.type_env(), nm)))
+                .map(|((_, m), (n, f))| (n.clone(), m, f.exposed_to_rust_fn_decl(n)))
+                .map(|(name, member, t)| {
+                    let getter = item.wrap_invocation(&class_name, &name, &member);
+                    quote! {
+                        #t {
+                            #getter
+                        }
+                    }
+                });
             quote! {
-                impl #tps #trait_name for #full_name #preds {}
+                impl #tps #trait_name for #full_name #preds {
+                    #(#method_impls)*
+                }
             }
         };
         let super_impls = item
@@ -2343,7 +2471,7 @@ where
 
     let method_decls = item
         .methods()
-        .map(&method_to_name_and_func)
+        .map(|nm| member_to_name_and_func(&Default::default(), nm))
         .map(|(n, f)| f.exposed_to_rust_fn_decl(n))
         .map(|t| {
             quote! {
