@@ -332,16 +332,21 @@ impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
     }
 }
 
-trait HasFnPrototype {
+type BoxedParamExtIter<'a> = Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
+
+pub(crate) trait HasFnPrototype {
     fn return_type(&self) -> TypeRef;
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
-    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a>;
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a>;
     fn is_member(&self) -> bool;
     fn is_variadic(&self) -> bool {
         self.params().any(|p| p.is_variadic())
     }
 }
 
+// it's a bit of a stretch to impl HasFnPrototype for TypeRef since this is
+// only valid if TypeRef::referent == TypeIdent::Builtin(Builtin::Fn) but
+// this is quite useful
 impl HasFnPrototype for TypeRef {
     fn return_type(&self) -> TypeRef {
         self.type_params
@@ -354,7 +359,7 @@ impl HasFnPrototype for TypeRef {
             })
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
         Box::new(
             self.type_params
                 .iter()
@@ -371,7 +376,7 @@ impl HasFnPrototype for TypeRef {
         )
     }
 
-    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
         // args and params are the same for non-members
         self.params()
     }
@@ -381,9 +386,37 @@ impl HasFnPrototype for TypeRef {
     }
 }
 
+impl<'b> HasFnPrototype for OwnedTypeRef<'b> {
+    fn return_type(&self) -> TypeRef {
+        self.0.return_type()
+    }
+
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        self.0.params()
+    }
+
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        self.0.args()
+    }
+
+    fn is_member(&self) -> bool {
+        self.0.is_member()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SelfParam {
     class_name: TypeIdent,
+    is_mut: bool,
+}
+
+/// Represents an owned parameter. Needed to render the type of the Param
+/// as owned (sized).
+#[derive(Debug, Clone)]
+struct OwnedParam<'a> {
+    name: &'a str,
+    type_ref: OwnedTypeRef<'a>,
+    is_variadic: bool,
 }
 
 impl HasFnPrototype for Func {
@@ -391,13 +424,14 @@ impl HasFnPrototype for Func {
         (*self.return_type).clone()
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
         let reg_params = self.args();
 
         if let Some(class_name) = &self.class_name {
             Box::new(
                 iter::once(Box::new(SelfParam {
                     class_name: class_name.clone(),
+                    is_mut: false,
                 }) as Box<dyn ParamExt>)
                 .chain(reg_params),
             )
@@ -406,7 +440,7 @@ impl HasFnPrototype for Func {
         }
     }
 
-    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
         Box::new(
             self.params
                 .iter()
@@ -424,7 +458,7 @@ impl<'b> HasFnPrototype for Constructor<'b> {
         (*self.class).clone()
     }
 
-    fn params<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
         Box::new(
             self.ctor
                 .params
@@ -433,7 +467,59 @@ impl<'b> HasFnPrototype for Constructor<'b> {
         )
     }
 
-    fn args<'a>(&'a self) -> Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a> {
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        self.params()
+    }
+
+    fn is_member(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PropertyAccessor {
+    property_name: Identifier,
+    typ: TypeRef,
+    class_name: TypeIdent,
+    access_type: AccessType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AccessType {
+    Getter,
+    Setter,
+}
+
+impl HasFnPrototype for PropertyAccessor {
+    fn return_type(&self) -> TypeRef {
+        match self.access_type {
+            AccessType::Getter => self.typ.clone(),
+            AccessType::Setter => TypeRef {
+                referent: TypeIdent::Builtin(Builtin::PrimitiveVoid),
+                type_params: Default::default(),
+                context: self.typ.context.clone(),
+            },
+        }
+    }
+
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        let self_param = Box::new(iter::once(Box::new(SelfParam {
+            class_name: self.class_name.clone(),
+            is_mut: self.access_type == AccessType::Setter,
+        }) as Box<dyn ParamExt>)) as BoxedParamExtIter<'a>;
+
+        match self.access_type {
+            AccessType::Getter => self_param,
+            AccessType::Setter => Box::new(self_param.chain(iter::once(Box::new(OwnedParam {
+                name: "value",
+                type_ref: OwnedTypeRef(Cow::Owned(self.typ.clone())),
+                is_variadic: false,
+            })
+                as Box<dyn ParamExt>))) as BoxedParamExtIter<'a>,
+        }
+    }
+
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
         self.params()
     }
 
@@ -462,13 +548,103 @@ impl<'a> Constructor<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum TypeRefLike<'a> {
+    TypeRef(Cow<'a, TypeRef>),
+    OwnedTypeRef(Cow<'a, OwnedTypeRef<'a>>),
+}
+
+impl<'a> From<&'a TypeRef> for TypeRefLike<'a> {
+    fn from(src: &'a TypeRef) -> TypeRefLike<'a> {
+        TypeRefLike::TypeRef(Cow::Borrowed(src))
+    }
+}
+
+impl<'a> From<TypeRef> for TypeRefLike<'a> {
+    fn from(src: TypeRef) -> TypeRefLike<'a> {
+        TypeRefLike::TypeRef(Cow::Owned(src))
+    }
+}
+
+impl<'a> From<OwnedTypeRef<'a>> for TypeRefLike<'a> {
+    fn from(src: OwnedTypeRef<'a>) -> TypeRefLike<'a> {
+        TypeRefLike::OwnedTypeRef(Cow::Owned(src))
+    }
+}
+
+impl<'a> From<&'a OwnedTypeRef<'a>> for TypeRefLike<'a> {
+    fn from(src: &'a OwnedTypeRef<'a>) -> TypeRefLike<'a> {
+        TypeRefLike::OwnedTypeRef(Cow::Borrowed(src))
+    }
+}
+
+impl<'a> SerializationTypeGetter for TypeRefLike<'a> {
+    fn serialization_type(&self) -> SerializationType {
+        match self {
+            TypeRefLike::TypeRef(t) => t.serialization_type(),
+            TypeRefLike::OwnedTypeRef(t) => t.serialization_type(),
+        }
+    }
+}
+
+impl<'a> ToTokens for TypeRefLike<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        match self {
+            TypeRefLike::TypeRef(t) => t.to_tokens(toks),
+            TypeRefLike::OwnedTypeRef(t) => t.to_tokens(toks),
+        };
+    }
+}
+
+impl<'a> ResolveTargetType for TypeRefLike<'a> {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
+        match self {
+            TypeRefLike::TypeRef(t) => t.resolve_target_type(),
+            TypeRefLike::OwnedTypeRef(t) => t.resolve_target_type(),
+        }
+    }
+}
+
+impl<'b> HasFnPrototype for TypeRefLike<'b> {
+    fn return_type(&self) -> TypeRef {
+        match self {
+            TypeRefLike::TypeRef(t) => t.return_type(),
+            TypeRefLike::OwnedTypeRef(t) => t.return_type(),
+        }
+    }
+
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        match self {
+            TypeRefLike::TypeRef(t) => t.params(),
+            TypeRefLike::OwnedTypeRef(t) => t.params(),
+        }
+    }
+
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        match self {
+            TypeRefLike::TypeRef(t) => t.args(),
+            TypeRefLike::OwnedTypeRef(t) => t.args(),
+        }
+    }
+
+    fn is_member(&self) -> bool {
+        match self {
+            TypeRefLike::TypeRef(t) => t.is_member(),
+            TypeRefLike::OwnedTypeRef(t) => t.is_member(),
+        }
+    }
+}
+
 mod fn_types {
     use super::{
-        quote, Builtin, HasFnPrototype, ResolveTargetType, SerializationType,
+        Builtin, HasFnPrototype, OwnedTypeRef, ResolveTargetType, SerializationType,
         SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2, TypeIdent, TypeRef,
+        TypeRefLike,
     };
+    use quote::quote;
+    use std::borrow::Cow;
 
-    fn exposed_to_js_type(typ: &TypeRef) -> TokenStream2 {
+    fn exposed_to_js_type(typ: &TypeRefLike) -> TokenStream2 {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
@@ -483,7 +659,7 @@ mod fn_types {
                         let params = typ
                             .params()
                             .map(|p| p.as_exposed_to_js_unnamed_param_list());
-                        let ret = exposed_to_js_param_type(&typ.return_type());
+                        let ret = exposed_to_js_param_type(&typ.return_type().into());
                         quote! {
                             &Closure<dyn Fn(#(#params),*) -> std::result::Result<#ret, JsValue>>
                         }
@@ -496,38 +672,37 @@ mod fn_types {
         }
     }
 
-    pub fn exposed_to_js_param_type(typ: &TypeRef) -> TokenStream2 {
+    pub(crate) fn exposed_to_js_param_type(typ: &TypeRefLike) -> TokenStream2 {
         exposed_to_js_type(typ)
     }
 
-    pub fn exposed_to_js_return_type(typ: &TypeRef) -> TokenStream2 {
-        let t = exposed_to_js_param_type(typ);
+    pub(crate) fn exposed_to_js_return_type(typ: &TypeRef) -> TokenStream2 {
+        let t = exposed_to_js_param_type(&typ.into());
         quote! {
             std::result::Result<#t, JsValue>
         }
     }
 
-    fn exposed_to_rust_type(typ: &TypeRef) -> TokenStream2 {
+    fn exposed_to_rust_type(typ: &TypeRefLike) -> TokenStream2 {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
             SerializationType::Ref => quote! { &#typ },
-            SerializationType::Fn => quote! { &'static #typ },
+            SerializationType::Fn => match typ {
+                // TODO: fix this leaky abstraction...
+                TypeRefLike::TypeRef(_) => quote! { &'static #typ },
+                TypeRefLike::OwnedTypeRef(_) => quote! { #typ },
+            },
         }
     }
 
-    pub fn exposed_to_rust_param_type(typ: &TypeRef) -> TokenStream2 {
+    pub(crate) fn exposed_to_rust_param_type(typ: &TypeRefLike) -> TokenStream2 {
         exposed_to_rust_type(typ)
     }
 
-    pub fn exposed_to_rust_return_type(typ: &TypeRef) -> TokenStream2 {
-        let serialization_type = typ.serialization_type();
-        match serialization_type {
-            // TODO: should combine this and FieldDefinition somehow to render
-            // a SizedType, which ensures that the type it renders is wrapped to be sized.
-            SerializationType::Fn => quote! { std::rc::Rc<#typ> },
-            _ => quote! { #typ },
-        }
+    pub(crate) fn exposed_to_rust_return_type(typ: &TypeRef) -> TokenStream2 {
+        let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
+        quote! { #rendered_type }
     }
 }
 
@@ -697,7 +872,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
     }
 }
 
-trait ParamExt {
+pub(crate) trait ParamExt {
     /// The rust name for this parameter.
     fn rust_name(&self) -> Identifier;
 
@@ -747,9 +922,45 @@ trait ParamExt {
     fn is_variadic(&self) -> bool;
 }
 
-impl ParamExt for Param {
+pub(crate) trait WrappedParam {
+    fn wrapped_type<'a>(&'a self) -> TypeRefLike<'a>;
+
+    fn name(&self) -> &str;
+
+    fn is_variadic(&self) -> bool;
+}
+
+impl WrappedParam for Param {
+    fn wrapped_type<'a>(&'a self) -> TypeRefLike<'a> {
+        (&self.type_info).into()
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_variadic(&self) -> bool {
+        self.is_variadic
+    }
+}
+
+impl<'a> WrappedParam for OwnedParam<'a> {
+    fn wrapped_type<'b>(&'b self) -> TypeRefLike<'b> {
+        (&self.type_ref).into()
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_variadic(&self) -> bool {
+        self.is_variadic
+    }
+}
+
+impl<T: WrappedParam> ParamExt for T {
     fn rust_name(&self) -> Identifier {
-        to_snake_case_ident(&self.name)
+        to_snake_case_ident(self.name())
     }
 
     fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
@@ -759,8 +970,9 @@ impl ParamExt for Param {
     }
 
     fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
-        let typ = fn_types::exposed_to_js_param_type(&self.type_info);
-        if self.is_variadic {
+        let wrapped = self.wrapped_type();
+        let typ = fn_types::exposed_to_js_param_type(&wrapped);
+        if self.is_variadic() {
             quote! { &[#typ] }
         } else {
             quote! { #typ }
@@ -774,8 +986,9 @@ impl ParamExt for Param {
     }
 
     fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
-        let typ = fn_types::exposed_to_rust_param_type(&self.type_info);
-        if self.is_variadic {
+        let wrapped = self.wrapped_type();
+        let typ = fn_types::exposed_to_rust_param_type(&wrapped);
+        if self.is_variadic() {
             quote! { &[#typ] }
         } else {
             quote! { #typ }
@@ -783,7 +996,8 @@ impl ParamExt for Param {
     }
 
     fn js_to_rust_conversion(&self) -> TokenStream2 {
-        let serialization_type = self.type_info.serialization_type();
+        let wrapped = self.wrapped_type();
+        let serialization_type = wrapped.serialization_type();
         let name = self.rust_name();
 
         match serialization_type {
@@ -801,23 +1015,26 @@ impl ParamExt for Param {
     }
 
     fn local_fn_name(&self) -> Identifier {
-        to_snake_case_ident(format!("__tsb_local_{}", self.name))
+        to_snake_case_ident(format!("__tsb_local_{}", self.name()))
     }
 
     fn rust_to_js_conversion(&self) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
-        render_rust_to_js_conversion(&name, &fn_name, &self.type_info, quote! {})
+        let wrapped = self.wrapped_type();
+        render_rust_to_js_conversion(&name, &fn_name, &wrapped, quote! {})
     }
 
     fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
-        render_rust_to_jsvalue_conversion(&name, &fn_name, &self.type_info, quote! {})
+        let wrapped = self.wrapped_type();
+        render_rust_to_jsvalue_conversion(&name, &fn_name, &wrapped, quote! {})
     }
 
     fn js_wrapper_fn(&self) -> Option<TokenStream2> {
-        let type_info = self.type_info.resolve_target_type();
+        let wrapped = self.wrapped_type();
+        let type_info = wrapped.resolve_target_type();
         if type_info
             .as_ref()
             .map(SerializationTypeGetter::serialization_type)
@@ -839,7 +1056,7 @@ impl ParamExt for Param {
             let conversion = render_rust_to_js_conversion(
                 &result,
                 &fn_name,
-                &typ.return_type(),
+                &typ.return_type().into(),
                 quote! { .map_err(ts_bindgen_rt::Error::from)? },
             );
             let name = self.rust_name();
@@ -854,7 +1071,7 @@ impl ParamExt for Param {
     }
 
     fn is_variadic(&self) -> bool {
-        self.is_variadic
+        WrappedParam::is_variadic(self)
     }
 }
 
@@ -874,15 +1091,19 @@ impl ParamExt for SelfParam {
     }
 
     fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
-        quote! { &self }
+        if self.is_mut {
+            quote! { &mut self }
+        } else {
+            quote! { &self }
+        }
     }
 
     fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
-        quote! { &self }
+        self.as_exposed_to_rust_named_param_list()
     }
 
     fn js_to_rust_conversion(&self) -> TokenStream2 {
-        quote! { &self }
+        self.as_exposed_to_rust_named_param_list()
     }
 
     fn local_fn_name(&self) -> Identifier {
@@ -891,11 +1112,11 @@ impl ParamExt for SelfParam {
     }
 
     fn rust_to_js_conversion(&self) -> TokenStream2 {
-        quote! { &self }
+        self.as_exposed_to_rust_named_param_list()
     }
 
     fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
-        quote! { &self }
+        self.as_exposed_to_rust_named_param_list()
     }
 
     fn js_wrapper_fn(&self) -> Option<TokenStream2> {
@@ -972,7 +1193,7 @@ fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream2) -
 fn render_rust_to_js_conversion(
     name: &Identifier,
     fn_name: &Identifier,
-    typ: &TypeRef,
+    typ: &TypeRefLike,
     error_mapper: TokenStream2,
 ) -> TokenStream2 {
     let serialization_type = typ.serialization_type();
@@ -990,7 +1211,7 @@ fn render_rust_to_js_conversion(
 fn render_rust_to_jsvalue_conversion(
     name: &Identifier,
     fn_name: &Identifier,
-    typ: &TypeRef,
+    typ: &TypeRefLike,
     error_mapper: TokenStream2,
 ) -> TokenStream2 {
     let serialization_type = typ.serialization_type();
@@ -1100,14 +1321,14 @@ impl Named for TypeRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SerializationType {
+pub enum SerializationType {
     Raw,
     SerdeJson,
     Ref,
     Fn,
 }
 
-trait SerializationTypeGetter {
+pub(crate) trait SerializationTypeGetter {
     fn serialization_type(&self) -> SerializationType;
 }
 
@@ -1136,7 +1357,7 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
     }
 }
 
-trait ResolveTargetType {
+pub(crate) trait ResolveTargetType {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo>;
 }
 
@@ -2058,6 +2279,8 @@ impl ToTokens for TypeRef {
                 quote! {
                     dyn #name(#(#params),*) -> Result<#ret, JsValue>
                 }
+            } else if matches!(&self.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid)) {
+                quote! { () }
             } else if self.type_params.is_empty() {
                 quote! { #name }
             } else {
@@ -2075,6 +2298,39 @@ struct FieldDefinition<'a> {
     js_field_name: &'a str,
     typ: &'a TypeRef,
     type_params: &'a HashMap<String, &'a TypeParamConfig>,
+}
+
+/// Represents an owned TypeRef. Needed to render the type as owned (sized).
+#[derive(Debug, Clone)]
+pub(crate) struct OwnedTypeRef<'a>(Cow<'a, TypeRef>);
+
+impl<'a> SerializationTypeGetter for OwnedTypeRef<'a> {
+    fn serialization_type(&self) -> SerializationType {
+        self.0.serialization_type()
+    }
+}
+
+impl<'a> ResolveTargetType for OwnedTypeRef<'a> {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
+        self.0.resolve_target_type()
+    }
+}
+
+impl<'a> ToTokens for OwnedTypeRef<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let typ = &*self.0;
+        let our_toks = if TypeIdent::Builtin(Builtin::Fn) == self.0.referent {
+            quote! {
+                std::rc::Rc<#typ>
+            }
+        } else {
+            quote! {
+                #typ
+            }
+        };
+
+        toks.append_all(our_toks);
+    }
 }
 
 impl<'a> ToTokens for FieldDefinition<'a> {
@@ -2096,13 +2352,9 @@ impl<'a> ToTokens for FieldDefinition<'a> {
             };
             serde_attrs.push(attr);
         }
-        let rendered_type = if matches!(
-            typ,
-            TypeRef {
-                referent: TypeIdent::Builtin(Builtin::Fn),
-                ..
-            }
-        ) {
+        let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
+
+        if typ.serialization_type() == SerializationType::Fn {
             let serialize_fn = field_name.prefix_name("__tsb__serialize_");
             let deserialize_fn = field_name.prefix_name("__tsb__deserialize_");
             let serialize_fn = format!("{}::{}", self.self_name, serialize_fn);
@@ -2113,11 +2365,6 @@ impl<'a> ToTokens for FieldDefinition<'a> {
             serde_attrs.push(quote! {
                 deserialize_with = #deserialize_fn
             });
-            quote! {
-                std::rc::Rc<#typ>
-            }
-        } else {
-            quote! { #typ }
         };
 
         let our_toks = quote! {
@@ -2192,8 +2439,7 @@ trait Traitable {
     fn wrap_invocation(
         &self,
         member_defn_source: &TypeRef,
-        name: &Identifier,
-        member: &Member,
+        trait_member: &TraitMember,
     ) -> TokenStream2;
 
     fn recursive_super_traits<'a>(
@@ -2257,25 +2503,34 @@ impl Traitable for Interface {
     fn wrap_invocation(
         &self,
         member_defn_source: &TypeRef,
-        name: &Identifier,
-        member: &Member,
+        trait_member: &TraitMember,
     ) -> TokenStream2 {
         let class_name = &member_defn_source.referent;
-        let name = quote! {
-            self.#name
-        };
+        let name = trait_member.name();
         let cn = member_defn_source.to_name().1;
         let fq_name = quote! {
             #cn::#name
         };
         let slf = quote! { self };
-        match member {
-            Member::Constructor(c) => Constructor::new(Cow::Borrowed(c), class_name.clone())
-                .fully_qualified_invoke_with_name(fq_name, Some(slf)),
-            Member::Method(f) => f.fully_qualified_invoke_with_name(fq_name, Some(slf)),
-            Member::Property(_) => {
+        match trait_member {
+            TraitMember::Constructor { ctor, .. } => {
+                Constructor::new(Cow::Borrowed(&ctor.ctor), class_name.clone())
+                    .fully_qualified_invoke_with_name(fq_name, Some(slf))
+            }
+            TraitMember::Method { method, .. } => {
+                method.fully_qualified_invoke_with_name(fq_name, Some(slf))
+            }
+            TraitMember::Getter { prop, .. } => {
+                let property_name = &prop.property_name;
                 quote! {
-                    std::result::Result::Ok(#name)
+                    std::result::Result::Ok(self.#property_name.clone())
+                }
+            }
+            TraitMember::Setter { prop, .. } => {
+                let property_name = &prop.property_name;
+                quote! {
+                    self.#property_name = value;
+                    std::result::Result::Ok(())
                 }
             }
         }
@@ -2309,38 +2564,64 @@ impl Traitable for Class {
     fn wrap_invocation(
         &self,
         member_defn_source: &TypeRef,
-        name: &Identifier,
-        member: &Member,
+        trait_member: &TraitMember,
     ) -> TokenStream2 {
         let class_name = &member_defn_source.referent;
         let cn = member_defn_source.to_name().1;
+        let name = trait_member.name();
         let name = quote! {
             #cn::#name
         };
         let slf = quote! { self };
         let target = quote! { target };
-        match member {
-            Member::Constructor(c) => Constructor::new(Cow::Borrowed(c), class_name.clone())
-                .fully_qualified_invoke_with_name(name, None as Option<TokenStream2>),
-            Member::Method(f) => {
-                let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
+        match trait_member {
+            TraitMember::Constructor { ctor, .. } => {
+                Constructor::new(Cow::Borrowed(&ctor.ctor), class_name.clone())
+                    .fully_qualified_invoke_with_name(name, None as Option<TokenStream2>)
+            }
+            TraitMember::Method { method, .. } => {
+                let inv = method.fully_qualified_invoke_with_name(name, Some(&target));
                 quote! {
                     let #target: &#member_defn_source = #slf.as_ref();
                     #inv
                 }
             }
-            Member::Property(t) => {
+            TraitMember::Getter { prop, .. } => {
                 let f = Func {
                     type_params: Default::default(),
                     params: Default::default(),
-                    return_type: Box::new(t.clone()),
+                    return_type: Box::new(prop.typ.clone()),
                     class_name: Some(class_name.clone()),
-                    context: t.context.clone(),
+                    context: prop.typ.context.clone(),
                 };
                 let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
                 quote! {
                     let #target: &#member_defn_source = #slf.as_ref();
                     std::result::Result::Ok(#inv)
+                }
+            }
+            TraitMember::Setter { prop, .. } => {
+                let f = Func {
+                    type_params: Default::default(),
+                    params: vec![Param {
+                        name: "value".to_string(),
+                        type_info: prop.typ.clone(),
+                        is_variadic: false,
+                        context: prop.typ.context.clone(),
+                    }],
+                    return_type: Box::new(TypeRef {
+                        referent: TypeIdent::Builtin(Builtin::PrimitiveVoid),
+                        type_params: Default::default(),
+                        context: prop.typ.context.clone(),
+                    }),
+                    class_name: Some(class_name.clone()),
+                    context: prop.typ.context.clone(),
+                };
+                let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
+                quote! {
+                    let #target: &#member_defn_source = #slf.as_ref();
+                    #inv;
+                    Ok(())
                 }
             }
         }
@@ -2387,14 +2668,13 @@ impl Traitable for TargetEnrichedTypeInfo {
     fn wrap_invocation(
         &self,
         member_defn_source: &TypeRef,
-        name: &Identifier,
-        member: &Member,
+        trait_member: &TraitMember,
     ) -> TokenStream2 {
         let empty = quote! {};
         delegate_traitable_for_type_info!(
             self,
             x,
-            x.wrap_invocation(member_defn_source, name, member),
+            x.wrap_invocation(member_defn_source, trait_member),
             empty,
         )
     }
@@ -2430,11 +2710,10 @@ impl Traitable for TypeRef {
     fn wrap_invocation(
         &self,
         member_defn_source: &TypeRef,
-        name: &Identifier,
-        member: &Member,
+        trait_member: &TraitMember,
     ) -> TokenStream2 {
         self.resolve_target_type()
-            .map(|t| t.wrap_invocation(member_defn_source, name, member))
+            .map(|t| t.wrap_invocation(member_defn_source, trait_member))
             .unwrap_or_else(|| quote! {})
     }
 }
@@ -2447,6 +2726,66 @@ impl NameWithGenericEnv for Identifier {
     fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier {
         let tps: Vec<_> = type_env.iter().map(|t| t.to_name().1).collect();
         self.with_type_params(&tps)
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TraitMember<'a> {
+    Constructor {
+        name: Identifier,
+        ctor: Constructor<'a>,
+    },
+    Method {
+        name: Identifier,
+        method: Func,
+    },
+    Getter {
+        name: Identifier,
+        prop: PropertyAccessor,
+    },
+    Setter {
+        name: Identifier,
+        prop: PropertyAccessor,
+    },
+}
+
+impl<'a> TraitMember<'a> {
+    fn name(&'a self) -> &'a Identifier {
+        match self {
+            TraitMember::Constructor { name, .. } => name,
+            TraitMember::Method { name, .. } => name,
+            TraitMember::Getter { name, .. } => name,
+            TraitMember::Setter { name, .. } => name,
+        }
+    }
+}
+
+macro_rules! impl_fn_proto_for_trait_member {
+    ($slf:ident, $f:ident) => {
+        match $slf {
+            TraitMember::Constructor { ctor, .. } => ctor.$f(),
+            TraitMember::Method { method, .. } => method.$f(),
+            TraitMember::Getter { prop, .. } => prop.$f(),
+            TraitMember::Setter { prop, .. } => prop.$f(),
+        }
+    };
+}
+
+impl<'b> HasFnPrototype for TraitMember<'b> {
+    fn return_type(&self) -> TypeRef {
+        impl_fn_proto_for_trait_member!(self, return_type)
+    }
+
+    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        impl_fn_proto_for_trait_member!(self, params)
+    }
+
+    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+        impl_fn_proto_for_trait_member!(self, args)
+    }
+
+    fn is_member(&self) -> bool {
+        impl_fn_proto_for_trait_member!(self, is_member)
     }
 }
 
@@ -2464,6 +2803,8 @@ where
     let full_name = quote! {
         #name #tps
     };
+    let tps_with_constraints =
+        render_type_params_with_constraints(type_params, vec![quote! { std::clone::Clone }]);
     let class_name = || TypeIdent::LocalName(js_name.to_string());
     let item_ref = TypeRef {
         referent: class_name(),
@@ -2477,30 +2818,40 @@ where
             .collect(),
         context: ctx.clone(),
     };
-    let member_to_name_and_func = |type_env: &HashMap<String, TypeRef>,
-                                   (n, m): (String, Member)| {
-        let name = to_snake_case_ident(n);
+    let member_to_trait_member = |type_env: &HashMap<String, TypeRef>, (n, m): (String, Member)| {
+        let name = to_snake_case_ident(&n);
         match m {
             Member::Constructor(ctor) => {
                 let ctor = Constructor {
                     class: Cow::Borrowed(&item_ref),
                     ctor: Cow::Owned(ctor),
                 };
-                (
-                    make_identifier!(new),
-                    Box::new(ctor) as Box<dyn HasFnPrototype>,
-                )
+                vec![TraitMember::Constructor {
+                    name: make_identifier!(new),
+                    ctor,
+                }]
             }
-            Member::Method(f) => (name, Box::new(f) as Box<dyn HasFnPrototype>),
+            Member::Method(f) => vec![TraitMember::Method { name, method: f }],
             Member::Property(t) => {
-                let f = Func {
-                    type_params: Default::default(),
-                    params: Default::default(),
-                    return_type: Box::new(t.resolve_generic_in_env(type_env).clone()),
-                    class_name: Some(class_name()),
-                    context: t.context.clone(),
+                let getter = PropertyAccessor {
+                    property_name: name.clone(),
+                    typ: t.resolve_generic_in_env(type_env).clone(),
+                    class_name: class_name(),
+                    access_type: AccessType::Getter,
                 };
-                (name, Box::new(f) as Box<dyn HasFnPrototype>)
+                let setter = PropertyAccessor {
+                    property_name: name.clone(),
+                    typ: t.resolve_generic_in_env(type_env).clone(),
+                    class_name: class_name(),
+                    access_type: AccessType::Setter,
+                };
+                vec![
+                    TraitMember::Getter { name, prop: getter },
+                    TraitMember::Setter {
+                        name: to_snake_case_ident(format!("set_{}", n)),
+                        prop: setter,
+                    },
+                ]
             }
         }
     };
@@ -2531,19 +2882,20 @@ where
             };
             let method_impls = tr
                 .methods()
-                .map(|nm| (nm.1.clone(), member_to_name_and_func(&tr.type_env(), nm)))
-                .map(|(m, (n, f))| (n.clone(), m, f.exposed_to_rust_fn_decl(n)))
-                .map(|(name, member, t)| {
-                    // TODO: handle setters somehow
-                    let getter = item.wrap_invocation(&i.implementor, &name, &member);
+                .flat_map(|(n, m)| {
+                    member_to_trait_member(&tr.type_env(), (n, m.clone())).into_iter()
+                })
+                .map(|trait_member| {
+                    let proto = trait_member.exposed_to_rust_fn_decl(trait_member.name());
+                    let imp = item.wrap_invocation(&i.implementor, &trait_member);
                     quote! {
-                        #t {
-                            #getter
+                        #proto {
+                            #imp
                         }
                     }
                 });
             quote! {
-                impl #tps #trait_name for #full_name #preds {
+                impl #tps_with_constraints #trait_name for #full_name #preds {
                     #(#method_impls)*
                 }
             }
@@ -2566,8 +2918,8 @@ where
 
     let method_decls = item
         .methods()
-        .map(|nm| member_to_name_and_func(&Default::default(), nm))
-        .map(|(n, f)| f.exposed_to_rust_fn_decl(n))
+        .flat_map(|nm| member_to_trait_member(&Default::default(), nm))
+        .map(|f| f.exposed_to_rust_fn_decl(f.name()))
         .map(|t| {
             quote! {
                 #t;
@@ -2603,6 +2955,7 @@ fn render_deserialize_fn(
         let ret = render_raw_return_to_js(&return_type, &return_value);
         let args = quote! { args };
         let params = tr.params().map(|p| p.as_exposed_to_rust_named_param_list());
+        let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
         // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
         let conversions = tr.args().map(|p| {
             let name = p.rust_name();
@@ -2621,7 +2974,7 @@ fn render_deserialize_fn(
         // non-null)
         Some(quote! {
             #[allow(non_snake_case)]
-            fn #deserialize_fn_name<'de, D>(deserializer: D) -> std::result::Result<std::rc::Rc<#tr>, D::Error>
+            fn #deserialize_fn_name<'de, D>(deserializer: D) -> std::result::Result<#rendered_type, D::Error>
             where
                 D: serde::de::Deserializer<'de>,
             {
@@ -2635,7 +2988,7 @@ fn render_deserialize_fn(
                         #(#pushes);*
                         let #return_value = f.apply(&JsValue::null(), &args)?;
                         Ok(#ret)
-                    }) as std::rc::Rc<#tr>
+                    }) as #rendered_type
                 })
                 .ok_or_else(|| ts_bindgen_rt::jsvalue_serde::Error::InvalidType("expected function".to_string()))
                 .map_err(serde::de::Error::custom)?)
@@ -2661,9 +3014,10 @@ fn render_serialize_fn(
         let serialize_fn_name = field_name.prefix_name("__tsb__serialize_");
         let invocation = tr.invoke_with_name(field_name);
         let closure = tr.exposed_to_js_wrapped_closure(invocation);
+        let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
         Some(quote! {
             #[allow(non_snake_case)]
-            fn #serialize_fn_name<S>(#field_name: &std::rc::Rc<#tr>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+            fn #serialize_fn_name<S>(#field_name: &#rendered_type, serializer: S) -> std::result::Result<S::Ok, S::Error>
             where
                 S: serde::ser::Serializer,
             {
@@ -2684,6 +3038,33 @@ fn render_type_params(type_params: &[(String, TypeParamConfig)]) -> TokenStream2
         let n = to_camel_case_ident(n);
         quote! {
             #n
+        }
+    });
+    if type_params.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            <#(#type_param_toks),*>
+        }
+    }
+}
+
+fn render_type_params_with_constraints(
+    type_params: &[(String, TypeParamConfig)],
+    extra_constraints: Vec<TokenStream2>,
+) -> TokenStream2 {
+    let type_param_toks = type_params.iter().map(|(n, _t)| {
+        // TODO: deal with t.constraint
+        let constraints = if extra_constraints.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                : #(#extra_constraints)+*
+            }
+        };
+        let n = to_camel_case_ident(n);
+        quote! {
+            #n #constraints
         }
     });
     if type_params.is_empty() {
