@@ -39,6 +39,18 @@ impl Identifier {
         }
     }
 
+    pub fn in_namespace(&self, ns: &Identifier) -> Identifier {
+        Identifier {
+            type_parts: ns
+                .type_parts
+                .iter()
+                .chain(self.type_parts.iter())
+                .cloned()
+                .collect(),
+            type_params: self.type_params.clone(),
+        }
+    }
+
     pub fn prefix_name(&self, prefix: &str) -> Identifier {
         let mut type_parts = self.type_parts.clone();
         if let Some(last_part) = type_parts.pop() {
@@ -89,6 +101,13 @@ impl Identifier {
                     }
                 })
                 .collect(),
+        }
+    }
+
+    pub fn without_type_params(&self) -> Identifier {
+        Identifier {
+            type_parts: self.type_parts.clone(),
+            type_params: Default::default(),
         }
     }
 }

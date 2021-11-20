@@ -718,9 +718,9 @@ trait FnPrototypeExt {
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2;
 
-    fn fully_qualified_invoke_with_name<Name: ToTokens, SelfArg: ToTokens>(
+    fn fully_qualified_invoke_with_name<SelfArg: ToTokens>(
         &self,
-        name: Name,
+        name: &Identifier,
         self_arg: Option<SelfArg>,
     ) -> TokenStream2;
 
@@ -797,11 +797,12 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         }
     }
 
-    fn fully_qualified_invoke_with_name<Name: ToTokens, SelfArg: ToTokens>(
+    fn fully_qualified_invoke_with_name<SelfArg: ToTokens>(
         &self,
-        name: Name,
+        name: &Identifier,
         self_arg: Option<SelfArg>,
     ) -> TokenStream2 {
+        let name = name.without_type_params(); // we want A::whatever(), not A<T>::whatever() in rust
         let args = self.args().map(|p| p.rust_name()).map(|a| quote! { #a });
         let args: Box<dyn Iterator<Item = TokenStream2>> = if let Some(s) = self_arg {
             Box::new(iter::once(quote! { #s }).chain(args))
@@ -2508,9 +2509,7 @@ impl Traitable for Interface {
         let class_name = &member_defn_source.referent;
         let name = trait_member.name();
         let cn = member_defn_source.to_name().1;
-        let fq_name = quote! {
-            #cn::#name
-        };
+        let fq_name = &name.in_namespace(&cn);
         let slf = quote! { self };
         match trait_member {
             TraitMember::Constructor { ctor, .. } => {
@@ -2569,9 +2568,7 @@ impl Traitable for Class {
         let class_name = &member_defn_source.referent;
         let cn = member_defn_source.to_name().1;
         let name = trait_member.name();
-        let name = quote! {
-            #cn::#name
-        };
+        let name = &name.in_namespace(&cn);
         let slf = quote! { self };
         let target = quote! { target };
         match trait_member {
