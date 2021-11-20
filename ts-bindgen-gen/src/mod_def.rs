@@ -1,5 +1,5 @@
 use crate::identifier::{to_ns_name, to_snake_case_ident, Identifier};
-use crate::target_enriched_ir::{TargetEnrichedType, TypeIdent, TypeRef};
+use crate::ir::{TargetEnrichedType, TypeIdent, TypeRef};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -177,7 +177,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
 mod mod_def_tests {
     use super::*;
     use crate::identifier::to_ident;
-    use crate::target_enriched_ir::{Builtin, Context, TargetEnrichedTypeInfo};
+    use crate::ir::{Builtin, Context, TargetEnrichedTypeInfo};
     use std::cell::RefCell;
     use std::fs::{DirBuilder, File};
     use std::rc::Rc;

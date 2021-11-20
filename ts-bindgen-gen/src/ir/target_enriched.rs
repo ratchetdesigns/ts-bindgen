@@ -1,4 +1,4 @@
-use crate::flattened_ir::{
+use crate::ir::flattened::{
     Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor, Enum as FlattenedEnum,
     EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
     Indexer as FlattenedIndexer, Interface as FlattenedInterface,
@@ -7,7 +7,7 @@ use crate::flattened_ir::{
     TypeParamConfig as FlattenedTypeParamConfig, TypeRef as FlattenedTypeRef,
     Union as FlattenedUnion,
 };
-pub use crate::flattened_ir::{Builtin, TypeIdent};
+pub use crate::ir::flattened::{Builtin, TypeIdent};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;

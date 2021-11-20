@@ -1,6 +1,6 @@
-use crate::flattened_ir::{flatten_types, FlatType, TypeIdent as FlatTypeIdent};
-use crate::ir::{Type as TypeIR, TypeIdent as TypeIdentIR};
-use crate::target_enriched_ir::{
+use crate::ir::base::{Type as TypeIR, TypeIdent as TypeIdentIR};
+use crate::ir::flattened::{flatten_types, FlatType, TypeIdent as FlatTypeIdent};
+use crate::ir::target_enriched::{
     target_enrich, TargetEnrichedType, TypeIdent as TargetEnrichedTypeIdent,
 };
 use std::cell::RefCell;

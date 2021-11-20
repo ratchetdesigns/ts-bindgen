@@ -1,4 +1,4 @@
-use crate::ir::{
+use crate::ir::base::{
     Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
     LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
     PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,

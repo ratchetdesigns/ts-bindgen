@@ -2,13 +2,13 @@ use crate::identifier::{
     make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
     Identifier,
 };
-pub use crate::mod_def::ModDef;
-use crate::mod_def::ToModPathIter;
-use crate::target_enriched_ir::{
+use crate::ir::{
     Alias, Builtin, Class, Context, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
     Member, NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent,
     TypeParamConfig, TypeRef, TypesByIdentByPath, Union,
 };
+pub use crate::mod_def::ModDef;
+use crate::mod_def::ToModPathIter;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::borrow::Cow;

@@ -1,19 +1,11 @@
 mod codegen;
-mod flattened_ir;
 mod identifier;
 mod ir;
-mod ir_transform;
 mod mod_def;
 mod module_resolution;
 mod parse;
-mod target_enriched_ir;
 
-// TODO: aliases should point to modules
-// TODO: when generating code, use include_str! to make the compiler think we have a dependency on
-// any ts files we use so we recompile when they do:
-// https://github.com/rustwasm/wasm-bindgen/pull/1295/commits/b762948456617ee263de8e43b3636bd3a4d1da75
-
-use crate::ir_transform::to_final_ir;
+use crate::ir::to_final_ir;
 use codegen::ModDef;
 use parse::TsTypes;
 use proc_macro2::TokenStream as TokenStream2;

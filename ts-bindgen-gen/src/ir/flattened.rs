@@ -1,5 +1,5 @@
-pub use crate::ir::NamespaceImport;
-use crate::ir::{
+pub use crate::ir::base::NamespaceImport;
+use crate::ir::base::{
     Alias as AliasIR, BaseClass as BaseClassIR, BuiltinDate, BuiltinPromise, Class as ClassIR,
     Ctor as CtorIR, Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR,
     Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean,
