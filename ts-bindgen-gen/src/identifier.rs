@@ -13,17 +13,17 @@ pub struct Identifier {
 
 macro_rules! make_identifier {
     ($type_part:ident) => {
-        Identifier::new_ident(format_ident!(stringify!($type_part)))
+        Identifier::new_ident(quote::format_ident!(stringify!($type_part)))
     };
     ($($type_parts:ident)::*) => {
         Identifier {
-            type_parts: vec![$(format_ident!(stringify!($type_parts))),*],
+            type_parts: vec![$(quote::format_ident!(stringify!($type_parts))),*],
             type_params: Default::default(),
         }
     };
     ($($type_parts:ident)::*<$($type_params:ident),+>) => {
         Identifier {
-            type_parts: vec![$(format_ident!(stringify!($type_parts))),*],
+            type_parts: vec![$(quote::format_ident!(stringify!($type_parts))),*],
             type_params: vec![$(make_identifier!($type_params)),*],
         }
     };
@@ -84,22 +84,6 @@ impl Identifier {
                 .iter()
                 .chain(self.type_params.iter().skip(type_params.len()))
                 .cloned()
-                .collect(),
-        }
-    }
-
-    pub fn with_string_type_params(&self, type_params: &[String]) -> Identifier {
-        Self {
-            type_parts: self.type_parts.clone(),
-            type_params: type_params
-                .iter()
-                .map(|p| {
-                    let id = format_ident!("{}", p);
-                    Identifier {
-                        type_parts: vec![id],
-                        type_params: Default::default(),
-                    }
-                })
                 .collect(),
         }
     }
