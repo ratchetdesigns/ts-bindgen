@@ -16,14 +16,14 @@ export interface D<T> extends B<number>, C<string> {
   d: T;
 }
 
-export class BaseClass implements B<number>, C<string> {
+export class BaseClass<T> implements B<number>, C<string> {
   a: number;
   b: number;
   c: string;
-  base: number;
+  base: T;
 }
 
-export class DerivedClass extends BaseClass {
+export class DerivedClass extends BaseClass<number> {
   derived: number;
 }
 

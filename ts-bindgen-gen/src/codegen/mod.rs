@@ -7,17 +7,21 @@ mod traits;
 mod type_ref_like;
 
 use crate::codegen::funcs::{
-    fn_types, render_raw_return_to_js, Constructor, FnPrototypeExt, HasFnPrototype, InternalFunc,
-    WrapperFunc,
+    fn_types, render_raw_return_to_js, AccessType, Constructor, FnPrototypeExt, HasFnPrototype,
+    InternalFunc, PropertyAccessor, WrapperFunc,
 };
-use crate::codegen::generics::{apply_type_params, render_type_params, ResolveGeneric};
+use crate::codegen::generics::{
+    apply_type_params, render_type_params, render_type_params_with_constraints,
+    render_type_params_with_lifetimes, ResolveGeneric,
+};
 use crate::codegen::named::Named;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
 use crate::codegen::traits::render_trait_defn;
 use crate::codegen::type_ref_like::OwnedTypeRef;
 use crate::identifier::{
-    to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident, Identifier,
+    make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
+    Identifier,
 };
 use crate::ir::{
     Alias, Builtin, Class, Context, Enum, EnumMember, Func, Indexer, Interface, Intersection,
@@ -193,7 +197,7 @@ fn get_recursive_fields_with_type_params(
 ) -> HashMap<String, TypeRef> {
     let our_fields = fields
         .iter()
-        .map(|(n, t)| (n.clone(), t.resolve_generic_in_env(type_env).clone()));
+        .map(|(n, t)| (n.clone(), t.resolve_generic_in_env(type_env).into_owned()));
     let super_fields = extends
         .iter()
         .filter_map(|base| base.resolve_target_type().map(|t| (base, t)))
@@ -434,6 +438,10 @@ impl JsModulePath for Context {
     }
 }
 
+fn to_internal_class_name(name: &Identifier) -> Identifier {
+    name.suffix_name("_class")
+}
+
 impl ToTokens for TargetEnrichedType {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let (js_name, name) = self.name.to_name();
@@ -545,9 +553,6 @@ impl ToTokens for TargetEnrichedType {
                     #vis type #name #tps = #target;
                 }
             }
-            //TargetEnrichedTypeInfo::Ref(_) => panic!("ref isn't a top-level type"),
-            //TargetEnrichedTypeInfo::Array { .. } => panic!("Array isn't a top-level type"),
-            //TargetEnrichedTypeInfo::Optional { .. } => panic!("Optional isn't a top-level type"),
             TargetEnrichedTypeInfo::Union(u) => {
                 let (undefined_members, mut not_undefined_members) =
                     u.undefined_and_standard_members();
@@ -624,80 +629,195 @@ impl ToTokens for TargetEnrichedType {
                     type_params,
                     implements: _,
                 } = class;
+                let internal_class_name = to_internal_class_name(&name);
+                let full_type_params = render_type_params(type_params);
+                let full_type_params_deserializable = render_type_params_with_constraints(
+                    type_params,
+                    &[
+                        quote! { serde::ser::Serialize },
+                        quote! { serde::de::DeserializeOwned },
+                    ],
+                );
+                let wrapper_struct_members = if type_params.is_empty() {
+                    vec![quote! { #internal_class_name }]
+                } else {
+                    vec![
+                        quote! { #internal_class_name },
+                        quote! { std::marker::PhantomData #full_type_params },
+                    ]
+                };
+                let wrapper_from_internal_args = if type_params.is_empty() {
+                    vec![quote! { internal }]
+                } else {
+                    vec![quote! { internal }, quote! { std::marker::PhantomData }]
+                };
+                let type_params_with_de_lifetime =
+                    render_type_params_with_lifetimes(type_params, &["de"]);
+                let type_params_with_a_lifetime =
+                    render_type_params_with_lifetimes(type_params, &["a"]);
                 let path = context.js_module_path();
+                let mut super_as_ref_impls: Vec<TokenStream2> = Default::default();
                 let mut attrs = vec![quote! { js_name = #js_name }];
-                if let Some(TypeRef { referent, .. }) = super_class.as_ref() {
-                    let (_, super_name) = referent.to_name();
+                if let Some(super_ref) = super_class.as_ref() {
+                    let (_, super_name) = super_ref.to_name();
+                    let super_name_without_tps = super_name.without_type_params();
+                    let internal_super_name = to_internal_class_name(&super_name_without_tps);
+                    let super_wrapper_from_src_args = if super_ref.type_params.is_empty() {
+                        vec![quote! { src.clone() }]
+                    } else {
+                        vec![quote! { src.clone() }, quote! { std::marker::PhantomData }]
+                    };
 
                     attrs.push(quote! {
-                        extends = #super_name
+                        extends = #internal_super_name
+                    });
+
+                    super_as_ref_impls.push(quote! {
+                        impl #full_type_params std::convert::From<&#name #full_type_params> for #super_name {
+                            fn from(src: &#name #full_type_params) -> #super_name {
+                                let src: &#internal_super_name = src.0.as_ref();
+                                #super_name_without_tps(#(#super_wrapper_from_src_args),*)
+                            }
+                        }
+
+                        impl #full_type_params std::convert::From<&mut #name #full_type_params> for #super_name {
+                            fn from(src: &mut #name #full_type_params) -> #super_name {
+                                let src: &#internal_super_name = src.0.as_ref();
+                                #super_name_without_tps(#(#super_wrapper_from_src_args),*)
+                            }
+                        }
                     });
                 }
-
-                let member_defs = members.iter().map(|(member_js_name, member)| {
-                    let member_js_ident = format_ident!("{}", member_js_name);
-                    match member {
-                        Member::Constructor(ctor) => {
-                            let ctor = Constructor::new(
-                                Cow::Borrowed(ctor),
-                                TypeIdent::LocalName(js_name.to_string()),
-                            );
-                            let param_toks = ctor
-                                .params()
-                                .map(|p| p.as_exposed_to_rust_named_param_list());
-
-                            quote! {
-                                #[wasm_bindgen(constructor)]
-                                pub fn new(#(#param_toks),*) -> #name;
-                            }
-                        }
-                        Member::Method(func) => {
-                            let fn_name = InternalFunc::to_internal_rust_name(member_js_name);
-
-                            let f = func.exposed_to_js_fn_decl(fn_name);
-
-                            let mut attrs = vec![
-                                quote! {js_name = #member_js_ident},
-                                quote! {method},
-                                quote! {js_class = #js_name},
-                                quote! {catch},
-                            ];
-                            if func.is_variadic() {
-                                attrs.push(quote! { variadic });
-                            }
-
-                            quote! {
-                                #[wasm_bindgen(#(#attrs),*)]
-                                #f;
-                            }
-                        }
-                        Member::Property(typ) => {
-                            let member_name = to_snake_case_ident(member_js_name);
-                            let setter_name = format_ident!("set_{}", member_name.to_string());
-                            // TODO: don't add structural if the property is actually a
-                            // javascript getter/setter
-                            quote! {
-                                #[wasm_bindgen(method, structural, getter = #member_js_ident)]
-                                fn #member_name(this: &#name) -> #typ;
-
-                                #[wasm_bindgen(method, structural, setter = #member_js_ident)]
-                                fn #setter_name(this: &#name, value: #typ);
-                            }
-                        }
-                    }
-                });
-
-                let public_methods = members
+                let type_env: HashMap<_, _> = type_params
                     .iter()
-                    .filter_map(|(js_name, member)| match member {
-                        Member::Method(m) => Some((js_name, m)),
-                        _ => None,
+                    .map(|(n, _)| {
+                        (
+                            n.clone(),
+                            TypeRef {
+                                referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                                type_params: Default::default(),
+                                context: context.clone(),
+                            },
+                        )
                     })
-                    .map(|(js_name, method)| {
-                        let fn_name = to_snake_case_ident(js_name);
-                        let internal_fn_name = InternalFunc::to_internal_rust_name(js_name);
-                        method.exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name)
-                    });
+                    .collect();
+
+                let target = quote! { self.0 };
+                let (member_defs, public_methods): (Vec<TokenStream2>, Vec<TokenStream2>) = members.iter()
+                    .map(|(member_js_name, member)| {
+                        let member_js_ident = format_ident!("{}", member_js_name);
+                        let internal_fn_name = InternalFunc::to_internal_rust_name(member_js_name);
+                        match member {
+                            Member::Constructor(ctor) => {
+                                let ctor = ctor.resolve_generic_in_env(&type_env);
+                                let ctor = Constructor::new(
+                                    ctor,
+                                    TypeIdent::LocalName(js_name.to_string()),
+                                );
+                                let param_toks = ctor
+                                    .params()
+                                    .map(|p| p.as_exposed_to_rust_named_param_list());
+
+                                let member_def = quote! {
+                                    #[wasm_bindgen(constructor, js_class = #js_name)]
+                                    pub fn new(#(#param_toks),*) -> #internal_class_name;
+                                };
+                                let fq_internal_ctor = to_snake_case_ident("new").in_namespace(&internal_class_name);
+
+                                let res_converter = |res: TokenStream2| -> TokenStream2 {
+                                    let args = if type_params.is_empty() {
+                                        vec![quote! { #res }]
+                                    } else {
+                                        vec![
+                                            quote! { #res },
+                                            quote! { std::marker::PhantomData #full_type_params },
+                                        ]
+                                    };
+                                    quote! {
+                                        #name(#(#args),*)
+                                    }
+                                };
+                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&make_identifier!(new), None, &fq_internal_ctor, false, Some(&res_converter), &type_env);
+
+                                (member_def, pub_fn)
+                            }
+                            Member::Method(func) => {
+                                let func = {
+                                    // func.class_name refers to our wrapper, which is what we want
+                                    // other than when we're defining our actual methods
+                                    let mut func = func.clone();
+                                    func.class_name = func.class_name.map(|_| TypeIdent::ExactName(internal_class_name.to_string()));
+                                    func
+                                };
+                                let func = func.resolve_generic_in_env(&type_env);
+                                let fn_name = InternalFunc::to_internal_rust_name(member_js_name);
+
+                                let f = func.exposed_to_js_fn_decl(fn_name);
+
+                                let mut attrs = vec![
+                                    quote! {js_name = #member_js_ident},
+                                    quote! {method},
+                                    quote! {js_class = #js_name},
+                                    quote! {catch},
+                                ];
+                                if func.is_variadic() {
+                                    attrs.push(quote! { variadic });
+                                }
+
+                                let member_def = quote! {
+                                    #[wasm_bindgen(#(#attrs),*)]
+                                    #f;
+                                };
+
+                                let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
+                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env);
+
+                                (member_def, pub_fn)
+                            }
+                            Member::Property(typ) => {
+                                let resolved_type = typ.resolve_generic_in_env(&type_env);
+                                let member_name = to_snake_case_ident(member_js_name);
+                                let setter_name = format_ident!("set_{}", member_name.to_string());
+                                // TODO: don't add structural if the property is actually a
+                                // javascript getter/setter
+                                let member_def = quote! {
+                                    #[wasm_bindgen(method, structural, getter = #member_js_ident, js_class = #js_name)]
+                                    fn #member_name(this: &#internal_class_name) -> #resolved_type;
+
+                                    #[wasm_bindgen(method, structural, setter = #member_js_ident, js_class = #js_name)]
+                                    fn #setter_name(this: &#internal_class_name, value: #resolved_type);
+                                };
+
+                                let getter = PropertyAccessor {
+                                    property_name: member_name.clone(),
+                                    typ: typ.clone(),
+                                    class_name: self.name.clone(),
+                                    access_type: AccessType::Getter,
+                                }.getter_fn();
+
+                                let setter = PropertyAccessor {
+                                    property_name: member_name.clone(),
+                                    typ: typ.clone(),
+                                    class_name: self.name.clone(),
+                                    access_type: AccessType::Setter,
+                                }.setter_fn();
+
+                                let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
+                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &member_name, false, rc, &type_env);
+                                let setter_ident = Identifier::new_ident(setter_name);
+                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_ident, Some(&target), &setter_ident, false, rc, &type_env);
+
+                                let pub_fn = quote! {
+                                    #getter_fn
+
+                                    #setter_fn
+                                };
+
+                                (member_def, pub_fn)
+                            }
+                        }
+                    })
+                    .unzip();
 
                 let trait_defn =
                     render_trait_defn(&name, &js_name, &type_params, class, &class.context);
@@ -706,24 +826,68 @@ impl ToTokens for TargetEnrichedType {
                     #[wasm_bindgen(module = #path)]
                     extern "C" {
                         #[wasm_bindgen(#(#attrs),*)]
-                        #vis type #name;
+                        #vis type #internal_class_name;
 
                         #(#member_defs)*
                     }
 
-                    impl #name {
+                    #[derive(std::clone::Clone)]
+                    #vis struct #name #full_type_params(#(#wrapper_struct_members),*);
+
+                    #(#super_as_ref_impls)*
+
+                    impl #full_type_params_deserializable #name #full_type_params {
                         #(#public_methods)*
+                    }
+
+                    impl #full_type_params wasm_bindgen::describe::WasmDescribe for #name #full_type_params {
+                        fn describe() {
+                            <#internal_class_name as wasm_bindgen::describe::WasmDescribe>::describe()
+                        }
+                    }
+
+                    impl #full_type_params wasm_bindgen::convert::IntoWasmAbi for #name #full_type_params {
+                        type Abi = <#internal_class_name as wasm_bindgen::convert::IntoWasmAbi>::Abi;
+                        fn into_abi(self) -> Self::Abi {
+                            wasm_bindgen::convert::IntoWasmAbi::into_abi(self.0)
+                        }
+                    }
+
+                    impl #type_params_with_a_lifetime wasm_bindgen::convert::IntoWasmAbi for &'a #name #full_type_params {
+                        type Abi = <&'a #internal_class_name as wasm_bindgen::convert::IntoWasmAbi>::Abi;
+                        fn into_abi(self) -> Self::Abi {
+                            wasm_bindgen::convert::IntoWasmAbi::into_abi(&self.0)
+                        }
+                    }
+
+                    impl #full_type_params serde::ser::Serialize for #name #full_type_params {
+                        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+                        where
+                            S: serde::ser::Serializer,
+                        {
+                            serde::ser::Serialize::serialize(&self.0, serializer)
+                        }
+                    }
+
+                    impl #type_params_with_de_lifetime serde::de::Deserialize<'de> for #name #full_type_params {
+                        fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+                        where
+                            D: serde::de::Deserializer<'de>,
+                        {
+                            let internal: #internal_class_name = <#internal_class_name as serde::de::Deserialize>::deserialize(deserializer)?;
+                            std::result::Result::Ok(Self(#(#wrapper_from_internal_args),*))
+                        }
                     }
 
                     #trait_defn
 
-                    impl Clone for #name {
+                    impl std::clone::Clone for #internal_class_name {
                         fn clone(&self) -> Self {
-                            Self { obj: self.obj.clone() }
+                            Self { obj: std::clone::Clone::clone(&self.obj) }
                         }
                     }
 
-                    impl serde::ser::Serialize for #name {
+                    impl serde::ser::Serialize for #internal_class_name {
                         fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
                         where
                             S: serde::ser::Serializer,
@@ -732,7 +896,7 @@ impl ToTokens for TargetEnrichedType {
                         }
                     }
 
-                    impl<'de> serde::de::Deserialize<'de> for #name {
+                    impl<'de> serde::de::Deserialize<'de> for #internal_class_name {
                         fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
                         where
                             D: serde::de::Deserializer<'de>,
@@ -975,9 +1139,9 @@ impl ToTokens for TypeRef {
                 let params = self
                     .params()
                     .map(|p| p.as_exposed_to_rust_unnamed_param_list());
-                let ret = fn_types::exposed_to_rust_return_type(&self.return_type());
+                let ret = fn_types::exposed_to_rust_return_type(&self.return_type(), true);
                 quote! {
-                    dyn #name(#(#params),*) -> Result<#ret, JsValue>
+                    dyn #name(#(#params),*) -> #ret
                 }
             } else if matches!(&self.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid)) {
                 quote! { () }

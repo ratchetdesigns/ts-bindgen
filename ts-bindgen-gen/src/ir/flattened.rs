@@ -409,6 +409,8 @@ pub enum TypeIdent {
         file: PathBuf,
         name_parts: Vec<String>,
     },
+    /// ExactNames are passed through directly as identifiers, without mangling
+    ExactName(String),
 }
 
 impl ApplyNames for TypeIdent {

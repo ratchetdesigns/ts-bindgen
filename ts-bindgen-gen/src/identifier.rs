@@ -77,17 +77,6 @@ impl Identifier {
         }
     }
 
-    pub fn with_type_params(&self, type_params: &[Identifier]) -> Identifier {
-        Self {
-            type_parts: self.type_parts.clone(),
-            type_params: type_params
-                .iter()
-                .chain(self.type_params.iter().skip(type_params.len()))
-                .cloned()
-                .collect(),
-        }
-    }
-
     pub fn without_type_params(&self) -> Identifier {
         Identifier {
             type_parts: self.type_parts.clone(),

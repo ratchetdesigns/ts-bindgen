@@ -4,11 +4,13 @@ use crate::codegen::serialization_type::{SerializationType, SerializationTypeGet
 use crate::codegen::traits::TraitMember;
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::identifier::{to_snake_case_ident, Identifier};
-use crate::ir::{Builtin, Ctor, Func, Param, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use crate::ir::{Builtin, Context, Ctor, Func, Param, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::iter;
+use std::path::PathBuf;
 
 struct TransformedParam<'a, T: Fn(&TypeRef) -> TokenStream2>(&'a Param, T);
 
@@ -187,6 +189,37 @@ pub struct PropertyAccessor {
     pub access_type: AccessType,
 }
 
+impl PropertyAccessor {
+    pub fn getter_fn(&self) -> Func {
+        Func {
+            type_params: Default::default(),
+            params: Default::default(),
+            return_type: Box::new(self.typ.clone()),
+            class_name: Some(self.class_name.clone()),
+            context: self.typ.context.clone(),
+        }
+    }
+
+    pub fn setter_fn(&self) -> Func {
+        Func {
+            type_params: Default::default(),
+            params: vec![Param {
+                name: "value".to_string(),
+                type_info: self.typ.clone(),
+                is_variadic: false,
+                context: self.typ.context.clone(),
+            }],
+            return_type: Box::new(TypeRef {
+                referent: TypeIdent::Builtin(Builtin::PrimitiveVoid),
+                type_params: Default::default(),
+                context: self.typ.context.clone(),
+            }),
+            class_name: Some(self.class_name.clone()),
+            context: self.typ.context.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessType {
     Getter,
@@ -346,9 +379,17 @@ pub mod fn_types {
         exposed_to_rust_type(typ)
     }
 
-    pub fn exposed_to_rust_return_type(typ: &TypeRef) -> TokenStream2 {
+    pub fn exposed_to_rust_return_type(typ: &TypeRef, is_fallible: bool) -> TokenStream2 {
         let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
-        quote! { #rendered_type }
+        if is_fallible {
+            quote! {
+                std::result::Result<#rendered_type, JsValue>
+            }
+        } else {
+            quote! {
+                #rendered_type
+            }
+        }
     }
 }
 
@@ -370,7 +411,11 @@ pub trait FnPrototypeExt {
         self_arg: Option<SelfArg>,
     ) -> TokenStream2;
 
-    fn exposed_to_rust_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2;
+    fn exposed_to_rust_fn_decl<Name: ToTokens>(
+        &self,
+        name: Name,
+        is_fallible: bool,
+    ) -> TokenStream2;
 
     /// Returns a token stream defining local closures for any parameters
     /// such that the closures may be invoked by js, wrapping rust closures.
@@ -387,6 +432,23 @@ pub trait FnPrototypeExt {
         fn_name: &Identifier,
         internal_fn_name: &Identifier,
     ) -> TokenStream2;
+
+    fn exposed_to_rust_generic_wrapper_fn<ResConverter>(
+        &self,
+        fn_name: &Identifier,
+        internal_fn_target: Option<&TokenStream2>,
+        internal_fn_name: &Identifier,
+        is_fallible: bool,
+        result_converter: Option<&ResConverter>,
+        type_env: &HashMap<String, TypeRef>,
+    ) -> TokenStream2
+    where
+        ResConverter: Fn(TokenStream2) -> TokenStream2;
+}
+
+fn is_generic_type<T: ResolveTargetType>(t: &T) -> bool {
+    // TODO: this is obviously wrong...
+    t.resolve_target_type().is_none()
 }
 
 impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
@@ -460,13 +522,17 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         }
     }
 
-    fn exposed_to_rust_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
+    fn exposed_to_rust_fn_decl<Name: ToTokens>(
+        &self,
+        name: Name,
+        is_fallible: bool,
+    ) -> TokenStream2 {
         let params = self
             .params()
             .map(|p| p.as_exposed_to_rust_named_param_list());
-        let ret = fn_types::exposed_to_rust_return_type(&self.return_type());
+        let ret = fn_types::exposed_to_rust_return_type(&self.return_type(), is_fallible);
         quote! {
-            fn #name(#(#params),*) -> std::result::Result<#ret, JsValue>
+            fn #name(#(#params),*) -> #ret
         }
     }
 
@@ -500,10 +566,10 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let return_value = quote! {
             #self_access #internal_fn_name(#(#args),*)?
         };
-        let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value);
+        let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value, true);
         let wrapper_fns = self.exposed_to_rust_param_wrappers();
 
-        let f = self.exposed_to_rust_fn_decl(fn_name);
+        let f = self.exposed_to_rust_fn_decl(fn_name, true);
 
         quote! {
             #[allow(dead_code)]
@@ -513,7 +579,77 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
 
                 #wrapper_fns
 
-                Ok(#ret)
+                #ret
+            }
+        }
+    }
+
+    fn exposed_to_rust_generic_wrapper_fn<ResConverter>(
+        &self,
+        fn_name: &Identifier,
+        internal_fn_target: Option<&TokenStream2>,
+        internal_fn_name: &Identifier,
+        is_fallible: bool,
+        result_converter: Option<&ResConverter>,
+        type_env: &HashMap<String, TypeRef>,
+    ) -> TokenStream2
+    where
+        ResConverter: Fn(TokenStream2) -> TokenStream2,
+    {
+        let arg_converters = self.args().filter_map(|arg| {
+            let tr = arg.type_ref();
+            if is_generic_type(&tr) {
+                let a_name = arg.rust_name();
+                Some(quote! {
+                    let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).unwrap();
+                })
+            } else {
+                None
+            }
+        });
+        let ret_type = self.return_type();
+        let ret_converter = if is_generic_type(&ret_type) {
+            quote! {
+                let result = ts_bindgen_rt::jsvalue_serde::from_jsvalue(&result).unwrap();
+            }
+        } else {
+            quote! {}
+        };
+        let final_ret_converter = result_converter
+            .map(|conv| conv(quote! { result }))
+            .unwrap_or_else(|| quote! { result });
+        let args = self.args().map(|p| p.rust_to_js_conversion());
+        let internal_fn_target = internal_fn_target
+            .map(|t| quote! { #t.})
+            .unwrap_or_else(|| quote! {});
+        let return_value = quote! {
+            #internal_fn_target #internal_fn_name(#(#args),*)
+        };
+        let return_value = if is_fallible {
+            quote! {
+                #return_value?
+            }
+        } else {
+            return_value
+        };
+        let ret = render_wasm_bindgen_return_to_js(&ret_type, &return_value, is_fallible);
+        let wrapper_fns = self.exposed_to_rust_param_wrappers();
+
+        let f = self.exposed_to_rust_fn_decl(fn_name, is_fallible);
+
+        quote! {
+            #[allow(dead_code)]
+            pub #f {
+                #[allow(unused_imports)]
+                use ts_bindgen_rt::IntoSerdeOrDefault;
+
+                #(#arg_converters)*
+
+                #wrapper_fns
+
+                let result = #ret;
+                #ret_converter
+                #final_ret_converter
             }
         }
     }
@@ -567,6 +703,9 @@ pub trait ParamExt {
 
     /// Is the parameter the final parameter of a variadic function?
     fn is_variadic(&self) -> bool;
+
+    /// The TypeRef for this param
+    fn type_ref<'a>(&'a self) -> TypeRefLike<'a>;
 }
 
 pub trait WrappedParam {
@@ -720,6 +859,10 @@ impl<T: WrappedParam> ParamExt for T {
     fn is_variadic(&self) -> bool {
         WrappedParam::is_variadic(self)
     }
+
+    fn type_ref<'a>(&'a self) -> TypeRefLike<'a> {
+        self.wrapped_type()
+    }
 }
 
 impl ParamExt for SelfParam {
@@ -773,6 +916,18 @@ impl ParamExt for SelfParam {
     fn is_variadic(&self) -> bool {
         false
     }
+
+    fn type_ref<'a>(&'a self) -> TypeRefLike<'a> {
+        TypeRefLike::TypeRef(Cow::Owned(TypeRef {
+            referent: self.class_name.clone(),
+            type_params: Default::default(),
+            context: Context {
+                // we really have to get rid of this context bs
+                types_by_ident_by_path: Default::default(),
+                path: PathBuf::new(),
+            },
+        }))
+    }
 }
 
 pub struct InternalFunc<'a> {
@@ -803,9 +958,10 @@ impl<'a> ToTokens for InternalFunc<'a> {
 fn render_wasm_bindgen_return_to_js(
     return_type: &TypeRef,
     return_value: &TokenStream2,
+    is_fallible: bool,
 ) -> TokenStream2 {
     let serialization_type = return_type.serialization_type();
-    match serialization_type {
+    let res = match serialization_type {
         SerializationType::Raw | SerializationType::Ref => return_value.clone(),
         SerializationType::SerdeJson => {
             quote! {
@@ -816,6 +972,11 @@ fn render_wasm_bindgen_return_to_js(
             // TODO - should be a js_sys::Function that we wrap
             quote! { #return_value.into_serde().unwrap() }
         }
+    };
+    if is_fallible {
+        quote! { std::result::Result::Ok(#res) }
+    } else {
+        quote! { #res }
     }
 }
 

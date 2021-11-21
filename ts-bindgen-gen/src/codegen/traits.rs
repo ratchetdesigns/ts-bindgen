@@ -1,14 +1,12 @@
 use crate::codegen::funcs::{AccessType, Constructor, FnPrototypeExt, PropertyAccessor};
-use crate::codegen::generics::{
-    render_type_params, render_type_params_with_constraints, NameWithGenericEnv, WithTypeEnv,
-};
+use crate::codegen::generics::{render_type_params, render_type_params_with_constraints};
 use crate::codegen::generics::{ResolveGeneric, TypeEnvImplying};
 use crate::codegen::named::Named;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::identifier::{make_identifier, to_snake_case_ident, Identifier};
 use crate::ir::{
-    Builtin, Class, Context, Func, Interface, Member, Param, TargetEnrichedTypeInfo, TypeIdent,
-    TypeParamConfig, TypeRef,
+    Class, Context, Func, Interface, Member, TargetEnrichedTypeInfo, TypeIdent, TypeParamConfig,
+    TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -45,6 +43,15 @@ impl<'a> TraitMember<'a> {
             TraitMember::Setter { name, .. } => name,
         }
     }
+
+    fn is_fallible(&self) -> bool {
+        match self {
+            TraitMember::Constructor { .. } => false,
+            TraitMember::Method { .. } => true,
+            TraitMember::Getter { .. } => false,
+            TraitMember::Setter { .. } => false,
+        }
+    }
 }
 
 pub fn render_trait_defn<T>(
@@ -61,8 +68,14 @@ where
     let full_name = quote! {
         #name #tps
     };
-    let tps_with_constraints =
-        render_type_params_with_constraints(type_params, vec![quote! { std::clone::Clone }]);
+    let tps_with_constraints = render_type_params_with_constraints(
+        type_params,
+        &[
+            quote! { std::clone::Clone },
+            quote! { serde::ser::Serialize },
+            quote! { serde::de::DeserializeOwned },
+        ],
+    );
     let class_name = || TypeIdent::LocalName(js_name.to_string());
     let item_ref = TypeRef {
         referent: class_name(),
@@ -93,13 +106,13 @@ where
             Member::Property(t) => {
                 let getter = PropertyAccessor {
                     property_name: name.clone(),
-                    typ: t.resolve_generic_in_env(type_env).clone(),
+                    typ: t.resolve_generic_in_env(type_env).into_owned(),
                     class_name: class_name(),
                     access_type: AccessType::Getter,
                 };
                 let setter = PropertyAccessor {
                     property_name: name.clone(),
-                    typ: t.resolve_generic_in_env(type_env).clone(),
+                    typ: t.resolve_generic_in_env(type_env).into_owned(),
                     class_name: class_name(),
                     access_type: AccessType::Setter,
                 };
@@ -126,10 +139,7 @@ where
             let trait_name = tr.trait_name();
             let supers: Vec<_> = tr
                 .super_traits()
-                .map(|s| {
-                    s.trait_name()
-                        .name_with_generic_env(tr.type_params.as_slice())
-                })
+                .map(|s| s.resolve_generic_in_env(&tr.type_env()).trait_name())
                 .collect();
             let preds = if supers.is_empty() {
                 quote! {}
@@ -144,7 +154,8 @@ where
                     member_to_trait_member(&tr.type_env(), (n, m.clone())).into_iter()
                 })
                 .map(|trait_member| {
-                    let proto = trait_member.exposed_to_rust_fn_decl(trait_member.name());
+                    let proto = trait_member
+                        .exposed_to_rust_fn_decl(trait_member.name(), trait_member.is_fallible());
                     let imp = item.wrap_invocation(&i.implementor, &trait_member);
                     quote! {
                         #proto {
@@ -159,7 +170,7 @@ where
             }
         };
         let super_impls = item
-            .recursive_super_traits(item_ref.clone(), &vec![])
+            .recursive_super_traits(item_ref.clone(), &item_ref.type_env())
             .chain(Box::new(iter::once(Super {
                 item: item_ref.clone(),
                 implementor: item_ref.clone(),
@@ -177,7 +188,7 @@ where
     let method_decls = item
         .methods()
         .flat_map(|nm| member_to_trait_member(&Default::default(), nm))
-        .map(|f| f.exposed_to_rust_fn_decl(f.name()))
+        .map(|f| f.exposed_to_rust_fn_decl(f.name(), f.is_fallible()))
         .map(|t| {
             quote! {
                 #t;
@@ -232,12 +243,12 @@ pub trait Traitable {
     fn recursive_super_traits<'a>(
         &'a self,
         implementor: TypeRef,
-        type_env: &[TypeRef],
+        type_env: &HashMap<String, TypeRef>,
     ) -> BoxedSuperIter<'a> {
         Box::new(self.super_traits().fold(
             Box::new(iter::empty()) as BoxedSuperIter<'a>,
             |cur, s| {
-                let s = s.with_type_env(type_env);
+                let s = s.resolve_generic_in_env(type_env).into_owned();
                 let implementor = if s.contains_implementation() {
                     s.clone()
                 } else {
@@ -247,7 +258,7 @@ pub trait Traitable {
                     .resolve_target_type()
                     .map(|t| {
                         Box::new(
-                            t.recursive_super_traits(implementor.clone(), &s.type_params)
+                            t.recursive_super_traits(implementor.clone(), &s.type_env())
                                 .collect::<Vec<_>>()
                                 .into_iter(),
                         ) as BoxedSuperIter<'a>
@@ -308,14 +319,13 @@ impl Traitable for Interface {
             TraitMember::Getter { prop, .. } => {
                 let property_name = &prop.property_name;
                 quote! {
-                    std::result::Result::Ok(self.#property_name.clone())
+                    self.#property_name.clone()
                 }
             }
             TraitMember::Setter { prop, .. } => {
                 let property_name = &prop.property_name;
                 quote! {
                     self.#property_name = value;
-                    std::result::Result::Ok(())
                 }
             }
         }
@@ -356,7 +366,29 @@ impl Traitable for Class {
         let name = trait_member.name();
         let name = &name.in_namespace(&cn);
         let slf = quote! { self };
-        let target = quote! { target };
+        let target = quote! { &target };
+        let mut_target = quote! { &mut target };
+        let is_direct_member = member_defn_source
+            .resolve_target_type()
+            .map(|t| match t {
+                TargetEnrichedTypeInfo::Class(c) => c == *self,
+                _ => false,
+            })
+            .unwrap_or(false);
+        let tgt_mut = if matches!(trait_member, TraitMember::Setter { .. }) {
+            quote! { mut }
+        } else {
+            quote! {}
+        };
+        let conv = if is_direct_member {
+            quote! {
+                let #tgt_mut target = #slf;
+            }
+        } else {
+            quote! {
+                let #tgt_mut target: #member_defn_source = #slf.into();
+            }
+        };
         match trait_member {
             TraitMember::Constructor { ctor, .. } => {
                 Constructor::new(Cow::Borrowed(&ctor.ctor), class_name.clone())
@@ -365,46 +397,25 @@ impl Traitable for Class {
             TraitMember::Method { method, .. } => {
                 let inv = method.fully_qualified_invoke_with_name(name, Some(&target));
                 quote! {
-                    let #target: &#member_defn_source = #slf.as_ref();
+                    #conv
                     #inv
                 }
             }
             TraitMember::Getter { prop, .. } => {
-                let f = Func {
-                    type_params: Default::default(),
-                    params: Default::default(),
-                    return_type: Box::new(prop.typ.clone()),
-                    class_name: Some(class_name.clone()),
-                    context: prop.typ.context.clone(),
-                };
+                let f = prop.getter_fn();
+
                 let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
                 quote! {
-                    let #target: &#member_defn_source = #slf.as_ref();
-                    std::result::Result::Ok(#inv)
+                    #conv
+                    #inv
                 }
             }
             TraitMember::Setter { prop, .. } => {
-                let f = Func {
-                    type_params: Default::default(),
-                    params: vec![Param {
-                        name: "value".to_string(),
-                        type_info: prop.typ.clone(),
-                        is_variadic: false,
-                        context: prop.typ.context.clone(),
-                    }],
-                    return_type: Box::new(TypeRef {
-                        referent: TypeIdent::Builtin(Builtin::PrimitiveVoid),
-                        type_params: Default::default(),
-                        context: prop.typ.context.clone(),
-                    }),
-                    class_name: Some(class_name.clone()),
-                    context: prop.typ.context.clone(),
-                };
-                let inv = f.fully_qualified_invoke_with_name(name, Some(&target));
+                let f = prop.setter_fn();
+                let inv = f.fully_qualified_invoke_with_name(name, Some(&mut_target));
                 quote! {
-                    let #target: &#member_defn_source = #slf.as_ref();
-                    #inv;
-                    Ok(())
+                    #conv
+                    #inv
                 }
             }
         }

@@ -1,27 +1,126 @@
 use crate::codegen::named::Named;
+use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::codegen::ResolveTargetType;
-use crate::identifier::{to_camel_case_ident, Identifier};
-use crate::ir::{Interface, TargetEnrichedTypeInfo, TypeParamConfig, TypeRef};
+use crate::identifier::to_camel_case_ident;
+use crate::ir::{Ctor, Func, Interface, Param, TargetEnrichedTypeInfo, TypeParamConfig, TypeRef};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-pub trait ResolveGeneric {
+pub trait ResolveGeneric: Clone {
     /// resolve this possibly-generic-referencing type into a TypeRef
     /// in the given type_env.
-    fn resolve_generic_in_env<'a>(&'a self, type_env: &'a HashMap<String, TypeRef>) -> &'a TypeRef;
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self>;
 }
 
 impl ResolveGeneric for TypeRef {
-    fn resolve_generic_in_env<'a>(&'a self, type_env: &'a HashMap<String, TypeRef>) -> &'a TypeRef {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
         // TODO: type_envs and type_params should key off of something better than String...
-        type_env
+        let mut resolved = type_env
             .get(&self.referent.to_name().1.to_string())
             .unwrap_or(self)
+            .clone();
+        resolved.type_params = resolved
+            .type_params
+            .into_iter()
+            .map(|tp| tp.resolve_generic_in_env(type_env).into_owned())
+            .collect();
+        Cow::Owned(resolved)
+    }
+}
+
+impl<'b> ResolveGeneric for TypeRefLike<'b> {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
+        match self {
+            TypeRefLike::TypeRef(tr) => Cow::Owned(TypeRefLike::TypeRef(Cow::Owned(
+                tr.resolve_generic_in_env(type_env).into_owned(),
+            ))),
+            TypeRefLike::OwnedTypeRef(tr) => Cow::Owned(TypeRefLike::OwnedTypeRef(Cow::Owned(
+                tr.resolve_generic_in_env(type_env).into_owned(),
+            ))),
+        }
+    }
+}
+
+impl<'b> ResolveGeneric for OwnedTypeRef<'b> {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
+        Cow::Owned(OwnedTypeRef(Cow::Owned(
+            self.0.resolve_generic_in_env(type_env).into_owned(),
+        )))
+    }
+}
+
+impl ResolveGeneric for Func {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
+        Cow::Owned(Func {
+            type_params: self.type_params.clone(),
+            params: self
+                .params
+                .iter()
+                .map(|p| p.resolve_generic_in_env(type_env).into_owned())
+                .collect(),
+            return_type: Box::new(
+                self.return_type
+                    .resolve_generic_in_env(type_env)
+                    .into_owned(),
+            ),
+            class_name: self.class_name.clone(),
+            context: self.context.clone(),
+        })
+    }
+}
+
+impl ResolveGeneric for Ctor {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
+        Cow::Owned(Ctor {
+            params: self
+                .params
+                .iter()
+                .map(|p| p.resolve_generic_in_env(type_env).into_owned())
+                .collect(),
+            context: self.context.clone(),
+        })
+    }
+}
+
+impl ResolveGeneric for Param {
+    fn resolve_generic_in_env<'a>(
+        &'a self,
+        type_env: &'a HashMap<String, TypeRef>,
+    ) -> Cow<'a, Self> {
+        Cow::Owned(Param {
+            name: self.name.clone(),
+            type_info: self.type_info.resolve_generic_in_env(type_env).into_owned(),
+            is_variadic: self.is_variadic,
+            context: self.context.clone(),
+        })
     }
 }
 
 pub trait TypeEnvImplying {
+    /// type params are implied by mapping the type_params of self
+    /// to the type_params of the resolved type of self. So, if self
+    /// is a TypeRef of A<string> and self.resolve_target_type() yields
+    /// A<T>, we have the implied mapping of {T => string}.
     fn type_env(&self) -> HashMap<String, TypeRef>;
 }
 
@@ -64,7 +163,7 @@ where
             .or(cfg.default_type_arg)
             .unwrap()
             .resolve_generic_in_env(type_env)
-            .clone();
+            .into_owned();
         result.insert(type_param, type_value);
     }
 
@@ -107,43 +206,30 @@ impl RequiredTypeParams for Interface {
     }
 }
 
-pub trait WithTypeEnv {
-    fn with_type_env(&self, type_env: &[TypeRef]) -> Self;
-}
-
-impl WithTypeEnv for TypeRef {
-    fn with_type_env(&self, type_env: &[TypeRef]) -> Self {
-        let mut t = self.clone();
-        t.type_params = type_env
-            .iter()
-            .chain(t.type_params.iter().skip(type_env.len()))
-            .cloned()
-            .collect();
-        t
-    }
-}
-
-pub trait NameWithGenericEnv {
-    fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier;
-}
-
-impl NameWithGenericEnv for Identifier {
-    fn name_with_generic_env(&self, type_env: &[TypeRef]) -> Identifier {
-        let tps: Vec<_> = type_env.iter().map(|t| t.to_name().1).collect();
-        self.with_type_params(&tps)
-    }
-}
-
 pub fn render_type_params(type_params: &[(String, TypeParamConfig)]) -> TokenStream2 {
-    let type_param_toks = type_params.iter().map(|(n, _t)| {
-        let n = to_camel_case_ident(n);
-        quote! {
-            #n
-        }
-    });
-    if type_params.is_empty() {
+    render_type_params_with_lifetimes(type_params, &[])
+}
+
+pub fn render_type_params_with_lifetimes(
+    type_params: &[(String, TypeParamConfig)],
+    lifetimes: &[&str],
+) -> TokenStream2 {
+    if lifetimes.is_empty() && type_params.is_empty() {
         quote! {}
     } else {
+        let type_param_toks = lifetimes
+            .iter()
+            .map(|l| {
+                let l = format!("'{}", l);
+                let l = syn::Lifetime::new(&l, proc_macro2::Span::call_site());
+                quote! { #l }
+            })
+            .chain(type_params.iter().map(|(n, _t)| {
+                let n = to_camel_case_ident(n);
+                quote! {
+                    #n
+                }
+            }));
         quote! {
             <#(#type_param_toks),*>
         }
@@ -152,25 +238,39 @@ pub fn render_type_params(type_params: &[(String, TypeParamConfig)]) -> TokenStr
 
 pub fn render_type_params_with_constraints(
     type_params: &[(String, TypeParamConfig)],
-    extra_constraints: Vec<TokenStream2>,
+    extra_constraints: &[TokenStream2],
 ) -> TokenStream2 {
-    let type_param_toks = type_params.iter().map(|(n, _t)| {
-        // TODO: deal with t.constraint
-        let constraints = if extra_constraints.is_empty() {
-            quote! {}
-        } else {
-            quote! {
-                : #(#extra_constraints)+*
-            }
-        };
-        let n = to_camel_case_ident(n);
-        quote! {
-            #n #constraints
-        }
-    });
-    if type_params.is_empty() {
+    render_type_params_with_lifetimes_and_constraints(type_params, &[], extra_constraints)
+}
+
+pub fn render_type_params_with_lifetimes_and_constraints(
+    type_params: &[(String, TypeParamConfig)],
+    lifetimes: &[&str],
+    extra_constraints: &[TokenStream2],
+) -> TokenStream2 {
+    if lifetimes.is_empty() && type_params.is_empty() {
         quote! {}
     } else {
+        let type_param_toks = lifetimes
+            .iter()
+            .map(|l| {
+                let l = format!("'{}", l);
+                let l = syn::Lifetime::new(&l, proc_macro2::Span::call_site());
+                quote! { #l }
+            })
+            .chain(type_params.iter().map(|(n, _t)| {
+                let constraints = if extra_constraints.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {
+                        : #(#extra_constraints)+*
+                    }
+                };
+                let n = to_camel_case_ident(n);
+                quote! {
+                    #n #constraints
+                }
+            }));
         quote! {
             <#(#type_param_toks),*>
         }

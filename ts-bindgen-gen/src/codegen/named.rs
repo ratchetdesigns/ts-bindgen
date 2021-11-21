@@ -59,6 +59,7 @@ impl Named for TypeIdent {
                 let n = name_parts.last().expect("bad qualified name");
                 (n, to_camel_case_ident(n))
             }
+            TypeIdent::ExactName(n) => (n, to_ident(n)),
         }
     }
 }
