@@ -1,3 +1,4 @@
+use crate::fs::{Fs, StdFs};
 use serde_json::Value;
 use std::fs::File;
 use std::io::Result;
@@ -60,11 +61,11 @@ fn path_with_ext_appended(path: &Path, ext: &str) -> PathBuf {
     ))
 }
 
-fn get_file_with_any_ext(path: &Path) -> Result<PathBuf> {
-    let exts = vec!["d.ts", "ts", "tsx", "js", "jsx", "json"];
+fn get_file_with_any_ext<FS: Fs>(fs: &FS, path: &Path) -> Result<PathBuf> {
+    let exts = ["d.ts", "ts", "tsx", "js", "jsx", "json"];
     iter::once(path.to_path_buf())
         .chain(exts.iter().map(|ext| path_with_ext_appended(path, ext)))
-        .find(|path_with_ext| path_with_ext.is_file())
+        .find(|path_with_ext| fs.is_file(path_with_ext))
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -81,22 +82,23 @@ pub fn get_ts_path(
     import: &str,
     module_resolver: &dyn Fn(&Path, &Value) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
+    let fs = StdFs; // TODO: pass this in
     let cwd = module_base.unwrap_or(std::env::current_dir()?);
     let mut path = cwd.clone();
     let abs_import_path = Path::new(import);
 
     if abs_import_path.is_absolute() {
         if abs_import_path.is_dir() {
-            get_file_with_any_ext(&abs_import_path.join("index"))
+            get_file_with_any_ext(&fs, &abs_import_path.join("index"))
         } else {
-            get_file_with_any_ext(abs_import_path)
+            get_file_with_any_ext(&fs, abs_import_path)
         }
     } else if import.starts_with('.') {
         let import_path = path.join(import);
         if import_path.is_dir() {
-            get_file_with_any_ext(&import_path.join("index"))
+            get_file_with_any_ext(&fs, &import_path.join("index"))
         } else {
-            get_file_with_any_ext(&import_path)
+            get_file_with_any_ext(&fs, &import_path)
         }
     } else {
         loop {
@@ -115,7 +117,7 @@ pub fn get_ts_path(
                     break Ok(import_path);
                 } else {
                     // check with different file extensions
-                    if let Ok(import_path) = get_file_with_any_ext(&import_path) {
+                    if let Ok(import_path) = get_file_with_any_ext(&fs, &import_path) {
                         break Ok(import_path);
                     }
                     // fall through so that we iterate up the directory tree, looking for a higher-level node_modules folder
@@ -131,6 +133,104 @@ pub fn get_ts_path(
                     ),
                 ));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{get_file_with_any_ext, path_with_ext_appended};
+    use crate::fs::test::{Fs, TestFs};
+    use proptest::prelude::*;
+    use std::path::Path;
+
+    proptest! {
+        #[test]
+        fn test_path_with_ext_appended_prop(
+            prefix in "(/[a-zA-Z0-9-]+)*",
+            filename in "[a-zA-Z0-9-]+",
+            next_ext in "[a-zA-Z0-9.-]+",
+        ) {
+            let path = format!("{}/{}", prefix, filename);
+            let with_ext = path_with_ext_appended(Path::new(&path), &next_ext);
+            prop_assert_eq!(with_ext.to_string_lossy(), format!("{}/{}.{}", prefix, filename, next_ext));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_get_file_with_any_ext_success(
+            prefix in "(/[a-zA-Z0-9-]+)*",
+            path in "[a-zA-Z0-9-]+",
+            ext in prop_oneof![
+                Just("d.ts"),
+                Just("ts"),
+                Just("tsx"),
+                Just("js"),
+                Just("jsx"),
+                Just("json"),
+            ]
+        ) {
+            let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
+            let path_with_ext = Path::new(&path_with_ext);
+            let fs = {
+                let mut fs: TestFs = Default::default();
+                fs.add_file_at(&path_with_ext);
+                fs
+            };
+            let path_without_ext = format!("{}/{}", &prefix, &path);
+            let path_without_ext = Path::new(&path_without_ext);
+            prop_assert_eq!(get_file_with_any_ext(&fs, &path_without_ext)?, path_with_ext.to_path_buf());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_get_file_with_any_ext_vacuous_success(
+            prefix in "(/[a-zA-Z0-9-]+)*",
+            path in "[a-zA-Z0-9-]+",
+            ext in prop_oneof![
+                Just("d.ts"),
+                Just("ts"),
+                Just("tsx"),
+                Just("js"),
+                Just("jsx"),
+                Just("json"),
+            ]
+        ) {
+            let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
+            let path_with_ext = Path::new(&path_with_ext);
+            let fs = {
+                let mut fs: TestFs = Default::default();
+                fs.add_file_at(&path_with_ext);
+                fs
+            };
+            prop_assert_eq!(get_file_with_any_ext(&fs, &path_with_ext)?, path_with_ext.to_path_buf());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_get_file_with_any_ext_fail(
+            prefix in "(/[a-zA-Z0-9-]+)*",
+            path in "[a-zA-Z0-9-]+",
+            ext in "[\\w].*"
+        ) {
+            prop_assume!(
+                ["d.ts", "ts", "tsx", "js", "jsx", "json"]
+                    .iter()
+                    .all(|e| *e != ext)
+            );
+            let fs = {
+                let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
+                let path_with_ext = Path::new(&path_with_ext);
+                let mut fs: TestFs = Default::default();
+                fs.add_file_at(&path_with_ext);
+                fs
+            };
+            let path_without_ext = format!("{}/{}", &prefix, &path);
+            let path_without_ext = Path::new(&path_without_ext);
+            prop_assert!(matches!(get_file_with_any_ext(&fs, &path_without_ext), Err(_)));
         }
     }
 }

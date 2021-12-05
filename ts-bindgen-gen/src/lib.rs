@@ -1,4 +1,5 @@
 mod codegen;
+mod fs;
 mod identifier;
 mod ir;
 mod mod_def;
