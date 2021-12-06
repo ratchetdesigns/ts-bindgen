@@ -69,6 +69,10 @@ pub mod test {
         pub fn add_dir_at(&mut self, path: &Path) {
             self.paths.insert(path.to_path_buf(), FileEntry::Dir());
         }
+
+        pub fn rm_at(&mut self, path: &Path) {
+            self.paths.remove(path);
+        }
     }
 
     impl Fs for TestFs {

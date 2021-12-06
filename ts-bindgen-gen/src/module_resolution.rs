@@ -142,7 +142,9 @@ pub fn get_ts_path<FS: Fs>(
 
 #[cfg(test)]
 mod test {
-    use super::{get_file_with_any_ext, get_ts_path, path_with_ext_appended};
+    use super::{
+        get_file_with_any_ext, get_ts_path, path_with_ext_appended, typings_module_resolver,
+    };
     use crate::fs::test::TestFs;
     use proptest::bool::ANY;
     use proptest::collection::vec;
@@ -318,17 +320,112 @@ mod test {
                 (import_str.into_owned(), file_path)
             };
 
+            // sanity test since this test is a bit complex
             if use_abs {
                 prop_assert!(import_str.starts_with("/"));
             } else {
                 prop_assert!(import_str.starts_with("./"));
             };
 
+            // sanity test since this test is a bit complex
+            let full_ext = format!(".{}", &ext);
+            if use_dir {
+                prop_assert!(!import_str.ends_with(&full_ext));
+            } else {
+                prop_assert!(import_str.ends_with(&full_ext));
+            }
+
             let resolved_path = get_ts_path(
                 &fs,
                 module_base,
                 &import_str,
                 &|_fs, _path, _value| Err(Error::new(ErrorKind::InvalidData, "unexpected")),
+            );
+
+            prop_assert!(resolved_path.is_ok());
+
+            let resolved_path = resolved_path.unwrap();
+            prop_assert_eq!(resolved_path, expected_resolved_path);
+        }
+
+        #[test]
+        fn test_get_ts_path_for_node_mods(
+            mode in prop_oneof![
+                Just("full_path"),
+                Just("pkg_json"),
+                Just("file_without_ext")
+            ],
+            use_cwd in ANY,
+            node_modules_dir in arb_abs_path(),
+            node_modules_to_cwd_dir in arb_rel_path(),
+            import_str in arb_rel_path(),
+            typings_file in arb_path_part(),
+            ext in arb_ts_ext()
+        ) {
+            let mut fs: TestFs = Default::default();
+            let cwd = Path::new(&node_modules_dir).join(&node_modules_to_cwd_dir);
+            let module_base = if use_cwd {
+                fs.set_cwd(&cwd);
+                None
+            } else {
+                Some(cwd.to_path_buf())
+            };
+
+            let node_modules_dir = Path::new(&node_modules_dir).join("node_modules");
+            let import_path = node_modules_dir.join(&import_str);
+
+            {
+                // make all of the directories up from our import path
+                let mut dir_to_make = import_path.to_path_buf();
+                loop {
+                    fs.add_dir_at(&dir_to_make);
+                    if !dir_to_make.pop() {
+                        break;
+                    }
+                }
+            }
+
+            let (import_str, expected_resolved_path) = match mode {
+                "full_path" => {
+                    // import_str should point to a full path + extension relative to node_modules
+                    let file_path = path_with_ext_appended(&import_path, &ext);
+                    let import_str = path_with_ext_appended(Path::new(&import_str), &ext);
+                    let import_str = import_str.to_string_lossy().into_owned();
+
+                    (import_str, file_path.clone())
+                },
+                "pkg_json" => {
+                    // import_str should point to a directory containing a package.json with a
+                    // typings key pointing to a file relative to the package.json directory
+                    let pkg_json_path = import_path.join("package.json");
+
+                    fs.add_file_at(&pkg_json_path, format!("{{\"types\": \"{}.{}\"}}", &typings_file, &ext));
+
+                    let file_path = path_with_ext_appended(&import_path.join(&typings_file), &ext);
+
+                    (import_str, file_path)
+                },
+                "file_without_ext" => {
+                    // import_str should point to a file such that file + valid ext exists
+                    let file_path = path_with_ext_appended(&import_path, &ext);
+
+                    // resolution prefers directories if they exist so make sure the directory doesn't
+                    // exist so we can test the extension appending
+                    fs.rm_at(&import_path);
+
+                    (import_str, file_path.clone())
+                },
+                _ => unreachable!(),
+            };
+
+            println!("HERE {:?}", &expected_resolved_path);
+            fs.add_file_at(&expected_resolved_path, "".to_string());
+
+            let resolved_path = get_ts_path(
+                &fs,
+                module_base,
+                &import_str,
+                &typings_module_resolver,
             );
 
             prop_assert!(resolved_path.is_ok());
