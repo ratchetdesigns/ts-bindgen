@@ -1,3 +1,4 @@
+use crate::fs::StdFs;
 use crate::ir::base::{
     Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
     LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
@@ -580,7 +581,7 @@ impl TsTypes {
         module_base: Option<PathBuf>,
         module_name: &str,
     ) -> Result<PathBuf, swc_ecma_parser::error::Error> {
-        let ts_path = get_ts_path(module_base, module_name, &typings_module_resolver)
+        let ts_path = get_ts_path(&StdFs, module_base, module_name, &typings_module_resolver)
             .expect("TODO: Need to convert this exception type")
             .canonicalize()
             .expect("TODO: Need to convert this exception type");
