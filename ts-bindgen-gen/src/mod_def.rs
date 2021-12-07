@@ -1,7 +1,8 @@
-use crate::identifier::{to_ns_name, to_snake_case_ident, Identifier};
+use crate::identifier::{make_identifier, to_ns_name, to_snake_case_ident, Identifier};
 use crate::ir::{TargetEnrichedType, TypeIdent, TypeRef};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::iter;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
@@ -64,22 +65,33 @@ pub trait ToModPathIter {
 
 impl ToModPathIter for Path {
     fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
-        Box::new(
-            self.canonicalize()
-                .expect("canonicalize failed")
-                .components()
-                .filter_map(|c| match c {
-                    Component::Normal(s) => Some(s.to_string_lossy()),
-                    _ => None,
-                })
-                .rev()
-                .take_while(|p| p != "node_modules")
-                .map(|p| p.as_ref().to_string())
-                .collect::<Vec<String>>()
-                .into_iter()
-                .rev()
-                .map(|n| to_ns_name(&n)),
-        )
+        let mut rev_components = self
+            .components() // components does some normalization for us
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_string_lossy()),
+                _ => None,
+            })
+            .rev()
+            .take_while(|p| p != "node_modules")
+            .map(|p| p.as_ref().to_string())
+            .map(|n| to_ns_name(&n))
+            .collect::<Vec<_>>();
+
+        let mut components = {
+            rev_components.reverse();
+            rev_components
+        };
+
+        // get rid of a final index component (e.g. a/b/index means a/b in js-land)
+        if components
+            .last()
+            .map(|l| *l == make_identifier!(index))
+            .unwrap_or(false)
+        {
+            components.pop();
+        }
+
+        Box::new(components.into_iter())
     }
 }
 
@@ -95,7 +107,7 @@ impl ToModPathIter for TypeIdent {
                 ),
             ),
             TypeIdent::Name { file, .. } => file.to_mod_path_iter(),
-            _ => Box::new((vec![]).into_iter()),
+            _ => Box::new(iter::empty()),
         }
     }
 }
@@ -106,7 +118,6 @@ impl ToModPathIter for TypeRef {
     }
 }
 
-// TODO: maybe don't make "index" namespaces and put their types in the parent
 impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef {
     fn from(
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>,
@@ -176,11 +187,14 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
-    use crate::identifier::to_ident;
-    use crate::ir::{Builtin, Context, TargetEnrichedTypeInfo};
+    use crate::fs::test::TestFs;
+    use crate::identifier::{make_identifier, to_ident};
+    use crate::ir::{to_final_ir, Builtin, Context, TargetEnrichedTypeInfo};
+    use crate::parse::{ArcFs, TsTypes};
     use std::cell::RefCell;
     use std::fs::{DirBuilder, File};
     use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
@@ -248,6 +262,32 @@ mod mod_def_tests {
                 }]
             }
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn mod_def_with_index_removed() -> Result<(), swc_ecma_parser::error::Error> {
+        let mut fs: TestFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_dir_at(Path::new("/test"));
+        fs.add_file_at(
+            Path::new("/test/index.d.ts"),
+            r#"export type Test = number | string | null;"#.to_string(),
+        );
+
+        let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, "/test")?;
+        let tbnbf = tt.into_types_by_name_by_file();
+        let ir = to_final_ir(tbnbf);
+        let mods: ModDef = (&*ir.borrow()).into();
+
+        assert_eq!(mods.children.len(), 1);
+
+        let test_mod = mods.children.first().unwrap();
+        assert_eq!(test_mod.name, make_identifier!(test));
+
+        assert!(test_mod.children.is_empty());
+        assert!(!test_mod.types.is_empty());
 
         Ok(())
     }
