@@ -6,6 +6,9 @@ mod mod_def;
 mod module_resolution;
 mod parse;
 
+#[cfg(test)]
+mod generators;
+
 use crate::fs::StdFs;
 use crate::ir::to_final_ir;
 use codegen::ModDef;
