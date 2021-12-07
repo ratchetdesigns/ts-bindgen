@@ -418,7 +418,6 @@ mod test {
                 _ => unreachable!(),
             };
 
-            println!("HERE {:?}", &expected_resolved_path);
             fs.add_file_at(&expected_resolved_path, "".to_string());
 
             let resolved_path = get_ts_path(

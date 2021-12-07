@@ -281,7 +281,6 @@ impl FnParamExt for Pat {
             Pat::Rest(rest) => rest.to_param(ts_path, i, ts_types),
             // TODO: handle array
             _ => {
-                println!("HERE {:?}", self);
                 panic!("we only support ident params for methods")
             }
         }
@@ -601,9 +600,6 @@ impl TsTypes {
 
         let mut parser = Parser::new_from(lexer);
         let module = parser.parse_typescript_module()?;
-        if ts_path.to_string_lossy().contains("hello.d.ts") {
-            println!("MOD!, {:?}", module);
-        }
 
         Ok(module)
     }
@@ -632,9 +628,8 @@ impl TsTypes {
             module_name,
             &typings_module_resolver,
         )
-        .expect("TODO: Need to convert this exception type")
-        .canonicalize()
         .expect("TODO: Need to convert this exception type");
+        let ts_path = self.fs.normalize(&ts_path);
 
         match self.types_by_name_by_file.entry(ts_path.clone()) {
             Entry::Occupied(_) => return Ok(ts_path),
@@ -1393,5 +1388,36 @@ impl TsTypes {
                     self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), typ);
                 })
         };
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::fs::test::TestFs;
+
+    #[test]
+    fn test_basic_parsing() -> Result<(), swc_ecma_parser::error::Error> {
+        let mut fs: TestFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_file_at(
+            Path::new("/test.d.ts"),
+            r#"export type Test = number | string | null;"#.to_string(),
+        );
+
+        let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, "/test.d.ts")?;
+        let tbnbf = tt.into_types_by_name_by_file();
+
+        assert_eq!(tbnbf.len(), 1);
+
+        let types = tbnbf.get(Path::new("/test.d.ts"));
+
+        assert!(types.is_some());
+
+        let types = types.unwrap();
+
+        assert!(types.get(&TypeIdent::Name("Test".to_string())).is_some());
+
+        Ok(())
     }
 }
