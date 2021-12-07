@@ -13,16 +13,16 @@ pub struct Identifier {
 
 macro_rules! make_identifier {
     ($type_part:ident) => {
-        Identifier::new_ident(quote::format_ident!(stringify!($type_part)))
+        crate::identifier::Identifier::new_ident(quote::format_ident!(stringify!($type_part)))
     };
     ($($type_parts:ident)::*) => {
-        Identifier {
+        crate::identifier::Identifier {
             type_parts: vec![$(quote::format_ident!(stringify!($type_parts))),*],
             type_params: Default::default(),
         }
     };
     ($($type_parts:ident)::*<$($type_params:ident),+>) => {
-        Identifier {
+        crate::identifier::Identifier {
             type_parts: vec![$(quote::format_ident!(stringify!($type_parts))),*],
             type_params: vec![$(make_identifier!($type_params)),*],
         }
@@ -147,8 +147,13 @@ pub fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident
     // now, make sure we have a valid rust identifier (no keyword collissions)
     let reconstructed = first + &rest;
     let mut full_ident = map(&reconstructed);
-    while parse_syn_str::<syn::Ident>(&full_ident).is_err() {
+    if parse_syn_str::<syn::Ident>(&full_ident).is_err() {
+        // first append _s to try to make it an ident
         full_ident += "_";
+    }
+    if parse_syn_str::<syn::Ident>(&full_ident).is_err() {
+        // now, prepend underscores to try to make it an ident
+        full_ident = format!("_{}", full_ident);
     }
 
     format_ident!("{}", &full_ident).into()
