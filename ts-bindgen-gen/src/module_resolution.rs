@@ -4,7 +4,7 @@ use std::io::Result;
 use std::iter;
 use std::path::{Path, PathBuf};
 
-pub fn typings_module_resolver<FS: Fs>(
+pub fn typings_module_resolver<FS: Fs + ?Sized>(
     fs: &FS,
     import_path: &Path,
     pkg: &Value,
@@ -64,7 +64,7 @@ fn path_with_ext_appended(path: &Path, ext: &str) -> PathBuf {
     ))
 }
 
-fn get_file_with_any_ext<FS: Fs>(fs: &FS, path: &Path) -> Result<PathBuf> {
+fn get_file_with_any_ext<FS: Fs + ?Sized>(fs: &FS, path: &Path) -> Result<PathBuf> {
     let exts = ["d.ts", "ts", "tsx", "js", "jsx", "json"];
     iter::once(path.to_path_buf())
         .chain(exts.iter().map(|ext| path_with_ext_appended(path, ext)))
@@ -80,7 +80,7 @@ fn get_file_with_any_ext<FS: Fs>(fs: &FS, path: &Path) -> Result<PathBuf> {
         })
 }
 
-pub fn get_ts_path<FS: Fs>(
+pub fn get_ts_path<FS: Fs + ?Sized>(
     fs: &FS,
     module_base: Option<PathBuf>,
     import: &str,

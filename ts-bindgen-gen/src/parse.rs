@@ -1,4 +1,4 @@
-use crate::fs::StdFs;
+use crate::fs::Fs;
 use crate::ir::base::{
     Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
     LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
@@ -9,14 +9,19 @@ use crate::ir::base::{
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
 use std::path::{Path, PathBuf};
-use swc_common::{sync::Lrc, SourceMap};
+use std::sync::Arc;
+use std::{io, io::Read};
+use swc_common::{sync::Lrc, FileLoader, FilePathMapping, SourceMap};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 
-#[derive(Default, Debug)]
+pub type ArcFs = Arc<dyn Fs + Send + Sync>;
+
+#[derive(Debug)]
 pub struct TsTypes {
-    pub types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-    pub namespace_stack: Vec<Vec<String>>,
+    types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    namespace_stack: Vec<Vec<String>>,
+    fs: ArcFs,
 }
 
 trait TypeRefExt {
@@ -517,9 +522,40 @@ impl HasTypeParams for Option<TsTypeParamDecl> {
     }
 }
 
+struct FsFileLoader {
+    fs: ArcFs,
+}
+
+impl FsFileLoader {
+    fn new(fs: ArcFs) -> Self {
+        FsFileLoader { fs }
+    }
+}
+
+impl FileLoader for FsFileLoader {
+    fn file_exists(&self, path: &Path) -> bool {
+        self.fs.exists(path)
+    }
+
+    fn abs_path(&self, path: &Path) -> Option<PathBuf> {
+        Some(self.fs.normalize(path))
+    }
+
+    fn read_file(&self, path: &Path) -> Result<String, io::Error> {
+        let mut buf = String::new();
+        self.fs.open(path)?.read_to_string(&mut buf)?;
+        Ok(buf)
+    }
+}
+
 impl TsTypes {
-    pub fn try_new(module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
-        let mut tt: TsTypes = Default::default();
+    pub fn try_new(fs: ArcFs, module_name: &str) -> Result<TsTypes, swc_ecma_parser::error::Error> {
+        let mut tt = TsTypes {
+            types_by_name_by_file: Default::default(),
+            namespace_stack: Default::default(),
+            fs: Arc::clone(&fs),
+        };
+
         tt.process_module(None, module_name)?;
 
         let mut resolved_types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>> =
@@ -537,8 +573,17 @@ impl TsTypes {
         Ok(tt)
     }
 
+    pub fn into_types_by_name_by_file(self) -> HashMap<PathBuf, HashMap<TypeIdent, Type>> {
+        self.types_by_name_by_file
+    }
+
     fn load_module(&mut self, ts_path: &Path) -> Result<Module, swc_ecma_parser::error::Error> {
-        let cm: Lrc<SourceMap> = Default::default();
+        let file_loader =
+            Box::new(FsFileLoader::new(Arc::clone(&self.fs))) as Box<dyn FileLoader + Send + Sync>;
+        let cm: Lrc<SourceMap> = Lrc::new(SourceMap::with_file_loader(
+            file_loader,
+            FilePathMapping::empty(),
+        ));
         let fm = cm.load_file(ts_path).expect("Can't load file");
         let lexer = Lexer::new(
             Syntax::Typescript(TsConfig {
@@ -581,10 +626,15 @@ impl TsTypes {
         module_base: Option<PathBuf>,
         module_name: &str,
     ) -> Result<PathBuf, swc_ecma_parser::error::Error> {
-        let ts_path = get_ts_path(&StdFs, module_base, module_name, &typings_module_resolver)
-            .expect("TODO: Need to convert this exception type")
-            .canonicalize()
-            .expect("TODO: Need to convert this exception type");
+        let ts_path = get_ts_path(
+            &*self.fs,
+            module_base,
+            module_name,
+            &typings_module_resolver,
+        )
+        .expect("TODO: Need to convert this exception type")
+        .canonicalize()
+        .expect("TODO: Need to convert this exception type");
 
         match self.types_by_name_by_file.entry(ts_path.clone()) {
             Entry::Occupied(_) => return Ok(ts_path),

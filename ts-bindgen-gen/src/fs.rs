@@ -1,18 +1,33 @@
 use std::env::current_dir;
+use std::fmt::Debug;
 use std::fs;
 use std::io::{Error, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Filesystem abstraction
-pub trait Fs {
+pub trait Fs: Debug {
     fn is_file(&self, path: &Path) -> bool;
     fn is_dir(&self, path: &Path) -> bool;
     fn exists(&self, path: &Path) -> bool;
     fn open<'a>(&'a self, path: &Path) -> Result<Box<dyn Read + 'a>, Error>;
     fn cwd(&self) -> Result<PathBuf, Error>;
+
+    fn normalize(&self, path: &Path) -> PathBuf {
+        path.components()
+            .fold(PathBuf::new(), |cur, component| match component {
+                Component::Prefix(p) => Path::new(p.as_os_str()).to_path_buf(),
+                Component::RootDir => Path::new("/").to_path_buf(),
+                Component::CurDir => self.cwd().unwrap_or_else(|_| Path::new(".").to_path_buf()),
+                Component::ParentDir => {
+                    cur.parent().unwrap_or_else(|| Path::new("/")).to_path_buf()
+                }
+                Component::Normal(c) => cur.join(c),
+            })
+    }
 }
 
 /// Regular filesystem
+#[derive(Debug)]
 pub struct StdFs;
 
 impl Fs for StdFs {
@@ -45,12 +60,13 @@ pub mod test {
     use std::path::{Path, PathBuf};
 
     /// Testing filesystem
-    #[derive(Default)]
+    #[derive(Default, Debug)]
     pub struct TestFs {
         cwd: Option<PathBuf>,
         paths: HashMap<PathBuf, FileEntry>,
     }
 
+    #[derive(Debug)]
     enum FileEntry {
         File(String),
         Dir(),
