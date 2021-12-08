@@ -24,10 +24,9 @@ pub fn generate_rust_for_typescript<S: AsRef<str>>(module: S) -> TokenStream2 {
     let tbnbf = tt.into_types_by_name_by_file();
     let final_ir = to_final_ir(tbnbf);
     let mod_def = ModDef::new(&*arc_fs, &*final_ir.borrow());
-    let mod_def = WithFs {
-        data: &mod_def,
-        fs: &*arc_fs,
-    };
-
-    quote! { #mod_def }
+    let mod_defs = mod_def
+        .children
+        .iter()
+        .map(|data| WithFs { data, fs: &*arc_fs });
+    quote! { #(#mod_defs)* }
 }
