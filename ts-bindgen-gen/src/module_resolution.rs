@@ -145,7 +145,7 @@ mod test {
     use super::{
         get_file_with_any_ext, get_ts_path, path_with_ext_appended, typings_module_resolver,
     };
-    use crate::fs::test::TestFs;
+    use crate::fs::MemFs;
     use crate::generators::*;
     use proptest::bool::ANY;
     use proptest::prelude::*;
@@ -175,7 +175,7 @@ mod test {
             let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
             let path_with_ext = Path::new(&path_with_ext);
             let fs = {
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.add_file_at(&path_with_ext, "".to_string());
                 fs
             };
@@ -195,7 +195,7 @@ mod test {
             let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
             let path_with_ext = Path::new(&path_with_ext);
             let fs = {
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.add_file_at(&path_with_ext, "".to_string());
                 fs
             };
@@ -218,7 +218,7 @@ mod test {
             let fs = {
                 let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
                 let path_with_ext = Path::new(&path_with_ext);
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.add_file_at(&path_with_ext, "".to_string());
                 fs
             };
@@ -238,7 +238,7 @@ mod test {
             import_str in arb_abs_path(),
             ext in arb_ts_ext()
         ) {
-            let mut fs: TestFs = Default::default();
+            let mut fs: MemFs = Default::default();
             let cwd = Path::new(&cwd);
             let module_base = if use_cwd {
                 fs.set_cwd(cwd);
@@ -321,7 +321,7 @@ mod test {
             typings_file in arb_path_part(),
             ext in arb_ts_ext()
         ) {
-            let mut fs: TestFs = Default::default();
+            let mut fs: MemFs = Default::default();
             let cwd = Path::new(&node_modules_dir).join(&node_modules_to_cwd_dir);
             let module_base = if use_cwd {
                 fs.set_cwd(&cwd);

@@ -1,10 +1,9 @@
-use std::fs::File;
-use std::io::Write;
 use ts_bindgen_gen::generate_rust_for_typescript;
+use ts_bindgen_gen::StdFs;
 
 #[test]
 fn basic() -> std::io::Result<()> {
-    let r = generate_rust_for_typescript("./tests/examples/basic");
     // just making sure we don't crash for now...
+    generate_rust_for_typescript(StdFs, "./tests/examples/basic");
     Ok(())
 }

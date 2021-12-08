@@ -9,7 +9,7 @@ mod parse;
 #[cfg(test)]
 mod generators;
 
-use crate::fs::StdFs;
+pub use crate::fs::{Fs, MemFs, StdFs};
 use crate::ir::to_final_ir;
 use codegen::{ModDef, WithFs};
 use parse::{ArcFs, TsTypes};
@@ -17,8 +17,11 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use std::sync::Arc;
 
-pub fn generate_rust_for_typescript<S: AsRef<str>>(module: S) -> TokenStream2 {
-    let fs = StdFs;
+pub fn generate_rust_for_typescript<S, FS>(fs: FS, module: S) -> TokenStream2
+where
+    S: AsRef<str>,
+    FS: Fs + Send + Sync + 'static,
+{
     let arc_fs = Arc::new(fs) as ArcFs;
     let tt = TsTypes::try_new(arc_fs.clone(), module.as_ref()).expect("tt error");
     let tbnbf = tt.into_types_by_name_by_file();

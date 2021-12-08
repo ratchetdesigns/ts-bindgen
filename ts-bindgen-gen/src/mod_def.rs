@@ -200,7 +200,7 @@ impl ModDef {
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
-    use crate::fs::{test::TestFs, StdFs};
+    use crate::fs::{MemFs, StdFs};
     use crate::identifier::{make_identifier, to_ident};
     use crate::ir::{to_final_ir, Builtin, Context, TargetEnrichedTypeInfo};
     use crate::parse::{ArcFs, TsTypes};
@@ -281,7 +281,7 @@ mod mod_def_tests {
 
     #[test]
     fn mod_def_with_index_removed() -> Result<(), swc_ecma_parser::error::Error> {
-        let mut fs: TestFs = Default::default();
+        let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/"));
         fs.add_dir_at(Path::new("/test"));
         fs.add_file_at(
@@ -308,7 +308,7 @@ mod mod_def_tests {
 
     #[test]
     fn mod_def_with_cwd_prefix_removed() -> Result<(), swc_ecma_parser::error::Error> {
-        let mut fs: TestFs = Default::default();
+        let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/abc/def"));
         fs.add_dir_at(Path::new("/abc/def/test"));
         fs.add_file_at(

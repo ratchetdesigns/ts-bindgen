@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::env::current_dir;
 use std::fmt::Debug;
 use std::fs;
-use std::io::{Error, Read};
+use std::io::{Error, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
 /// Filesystem abstraction
@@ -52,73 +53,63 @@ impl Fs for StdFs {
     }
 }
 
-#[cfg(test)]
-pub mod test {
-    pub use super::Fs;
-    use std::collections::HashMap;
-    use std::io::{Error, ErrorKind, Read};
-    use std::path::{Path, PathBuf};
+/// Testing filesystem
+#[derive(Default, Debug)]
+pub struct MemFs {
+    cwd: Option<PathBuf>,
+    paths: HashMap<PathBuf, FileEntry>,
+}
 
-    /// Testing filesystem
-    #[derive(Default, Debug)]
-    pub struct TestFs {
-        cwd: Option<PathBuf>,
-        paths: HashMap<PathBuf, FileEntry>,
+#[derive(Debug)]
+enum FileEntry {
+    File(String),
+    Dir(),
+}
+
+impl MemFs {
+    pub fn set_cwd(&mut self, path: &Path) {
+        self.cwd = Some(path.to_path_buf());
     }
 
-    #[derive(Debug)]
-    enum FileEntry {
-        File(String),
-        Dir(),
+    pub fn add_file_at(&mut self, path: &Path, contents: String) {
+        self.paths
+            .insert(path.to_path_buf(), FileEntry::File(contents));
     }
 
-    impl TestFs {
-        pub fn set_cwd(&mut self, path: &Path) {
-            self.cwd = Some(path.to_path_buf());
-        }
+    pub fn add_dir_at(&mut self, path: &Path) {
+        self.paths.insert(path.to_path_buf(), FileEntry::Dir());
+    }
 
-        pub fn add_file_at(&mut self, path: &Path, contents: String) {
-            self.paths
-                .insert(path.to_path_buf(), FileEntry::File(contents));
-        }
+    pub fn rm_at(&mut self, path: &Path) {
+        self.paths.remove(path);
+    }
+}
 
-        pub fn add_dir_at(&mut self, path: &Path) {
-            self.paths.insert(path.to_path_buf(), FileEntry::Dir());
-        }
+impl Fs for MemFs {
+    fn is_file(&self, path: &Path) -> bool {
+        matches!(self.paths.get(path), Some(FileEntry::File(_)))
+    }
 
-        pub fn rm_at(&mut self, path: &Path) {
-            self.paths.remove(path);
+    fn is_dir(&self, path: &Path) -> bool {
+        matches!(self.paths.get(path), Some(FileEntry::Dir()))
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        self.paths.get(path).is_some()
+    }
+
+    fn open<'a>(&'a self, path: &Path) -> Result<Box<dyn Read + 'a>, Error> {
+        match self.paths.get(path) {
+            Some(FileEntry::File(contents)) => Ok(Box::new(contents.as_bytes()) as Box<dyn Read>),
+            _ => Err(Error::new(ErrorKind::NotFound, "not found")),
         }
     }
 
-    impl Fs for TestFs {
-        fn is_file(&self, path: &Path) -> bool {
-            matches!(self.paths.get(path), Some(FileEntry::File(_)))
-        }
-
-        fn is_dir(&self, path: &Path) -> bool {
-            matches!(self.paths.get(path), Some(FileEntry::Dir()))
-        }
-
-        fn exists(&self, path: &Path) -> bool {
-            self.paths.get(path).is_some()
-        }
-
-        fn open<'a>(&'a self, path: &Path) -> Result<Box<dyn Read + 'a>, Error> {
-            match self.paths.get(path) {
-                Some(FileEntry::File(contents)) => {
-                    Ok(Box::new(contents.as_bytes()) as Box<dyn Read>)
-                }
-                _ => Err(Error::new(ErrorKind::NotFound, "not found")),
-            }
-        }
-
-        fn cwd(&self) -> Result<PathBuf, Error> {
-            Ok(self
-                .cwd
-                .as_ref()
-                .ok_or_else(|| Error::new(ErrorKind::NotFound, "not found"))?
-                .clone())
-        }
+    fn cwd(&self) -> Result<PathBuf, Error> {
+        Ok(self
+            .cwd
+            .as_ref()
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "not found"))?
+            .clone())
     }
 }

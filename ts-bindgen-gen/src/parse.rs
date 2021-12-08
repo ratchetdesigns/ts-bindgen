@@ -1394,11 +1394,11 @@ impl TsTypes {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::fs::test::TestFs;
+    use crate::fs::MemFs;
 
     #[test]
     fn test_basic_parsing() -> Result<(), swc_ecma_parser::error::Error> {
-        let mut fs: TestFs = Default::default();
+        let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/"));
         fs.add_file_at(
             Path::new("/test.d.ts"),

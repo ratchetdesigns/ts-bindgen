@@ -234,7 +234,7 @@ where
 #[cfg(test)]
 mod test {
     use super::ToNsPath;
-    use crate::fs::test::TestFs;
+    use crate::fs::MemFs;
     use crate::generators::*;
     use crate::identifier::{make_identifier, to_ns_name};
     use crate::ir::TypeIdent;
@@ -248,7 +248,7 @@ mod test {
             ns_rest in arb_rel_path(),
         ) {
             let fs = {
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.set_cwd(Path::new("/"));
                 fs
             };
@@ -276,7 +276,7 @@ mod test {
             ns_rest in arb_rel_path(),
         ) {
             let fs = {
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.set_cwd(Path::new("/"));
                 fs
             };
@@ -306,7 +306,7 @@ mod test {
             target_rest in arb_rel_path(),
         ) {
             let fs = {
-                let mut fs: TestFs = Default::default();
+                let mut fs: MemFs = Default::default();
                 fs.set_cwd(Path::new("/"));
                 fs
             };

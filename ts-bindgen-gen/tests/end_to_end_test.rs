@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::tempdir;
 use ts_bindgen_gen::generate_rust_for_typescript;
+use ts_bindgen_gen::StdFs;
 
 #[test]
 fn end_to_end() -> std::io::Result<()> {
@@ -145,7 +146,7 @@ fn generate_ts_bindgen_file<Src: AsRef<Path>, Dest: AsRef<Path>>(
     src: Src,
     dest: Dest,
 ) -> std::io::Result<()> {
-    let rust = generate_rust_for_typescript(src.as_ref().to_string_lossy());
+    let rust = generate_rust_for_typescript(StdFs, src.as_ref().to_string_lossy());
     write_file(dest.as_ref(), rust.to_string().as_bytes())?;
 
     Ok(())
