@@ -4,7 +4,7 @@ use crate::ir::{
     TypesByIdentByPath,
 };
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::Path;
 use std::rc::Rc;
 
 pub trait ResolveTargetType {
@@ -30,7 +30,7 @@ macro_rules! if_requires_resolution {
 
 fn resolve_type(
     types_by_ident_by_path: &Rc<RefCell<TypesByIdentByPath>>,
-    path: &PathBuf,
+    path: &Path,
     id: &TypeIdent,
 ) -> Option<TargetEnrichedTypeInfo> {
     let ti = RefCell::borrow(types_by_ident_by_path)
@@ -40,7 +40,7 @@ fn resolve_type(
                 // TODO: Name and Local are interchangable. should be resolved as part of ir
                 // transformation...
                 TypeIdent::LocalName(n) => t_by_id.get(&TypeIdent::Name {
-                    file: path.clone(),
+                    file: path.to_path_buf(),
                     name: n.clone(),
                 }),
                 TypeIdent::Name { file: _, name } => {
@@ -51,7 +51,7 @@ fn resolve_type(
         })
         .map(|t| t.info.clone());
     match ti {
-        None => return None,
+        None => None,
         Some(t) => if_requires_resolution!(
             t,
             x
@@ -70,10 +70,10 @@ impl ResolveTargetType for TypeRef {
                 &self.referent,
             ),
             TypeIdent::Name { file, name: _ } => {
-                resolve_type(&self.context.types_by_ident_by_path, &file, &self.referent)
+                resolve_type(&self.context.types_by_ident_by_path, file, &self.referent)
             }
             TypeIdent::DefaultExport(path) => {
-                resolve_type(&self.context.types_by_ident_by_path, &path, &self.referent)
+                resolve_type(&self.context.types_by_ident_by_path, path, &self.referent)
             }
             TypeIdent::QualifiedName { file, name_parts } => {
                 let mut final_file = file.clone();

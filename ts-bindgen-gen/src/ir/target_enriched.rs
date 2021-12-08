@@ -512,7 +512,7 @@ pub enum NamespaceImport {
 impl From<WithContext<FlattenedNamespaceImport>> for NamespaceImport {
     fn from(src: WithContext<FlattenedNamespaceImport>) -> NamespaceImport {
         let value = src.value;
-        let context = src.context.clone();
+        let context = src.context;
         match value {
             FlattenedNamespaceImport::Default { src } => NamespaceImport::Default { src, context },
             FlattenedNamespaceImport::All { src } => NamespaceImport::All { src, context },

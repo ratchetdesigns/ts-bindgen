@@ -517,7 +517,7 @@ impl HasTypeParams for Option<TsTypeParamDecl> {
                     })
                     .collect()
             })
-            .unwrap_or_else(|| Default::default())
+            .unwrap_or_default()
     }
 }
 

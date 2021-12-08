@@ -135,7 +135,7 @@ impl TypeEnvImplying for TypeRef {
                         .collect()
                 })
             })
-            .unwrap_or_else(|| Default::default())
+            .unwrap_or_default()
     }
 }
 
@@ -159,7 +159,7 @@ where
     for (i, (type_param, cfg)) in required.into_iter().enumerate() {
         let type_value = provided
             .get(i)
-            .map(|p| p.clone())
+            .cloned()
             .or(cfg.default_type_arg)
             .unwrap()
             .resolve_generic_in_env(type_env)
@@ -172,22 +172,22 @@ where
 
 pub trait ProvidedTypeParams {
     /// Get the provided type parameters for this reference
-    fn provided_type_params<'a>(&'a self) -> &'a [TypeRef];
+    fn provided_type_params(&self) -> &'_ [TypeRef];
 }
 
 impl ProvidedTypeParams for TypeRef {
-    fn provided_type_params<'a>(&'a self) -> &'a [TypeRef] {
+    fn provided_type_params(&self) -> &'_ [TypeRef] {
         self.type_params.as_slice()
     }
 }
 
 pub trait RequiredTypeParams {
     /// Get the required type parameters for instantiations of self
-    fn required_type_params<'a>(&'a self) -> Option<&'a [(String, TypeParamConfig)]>;
+    fn required_type_params(&self) -> Option<&'_ [(String, TypeParamConfig)]>;
 }
 
 impl RequiredTypeParams for TargetEnrichedTypeInfo {
-    fn required_type_params<'a>(&'a self) -> Option<&'a [(String, TypeParamConfig)]> {
+    fn required_type_params(&self) -> Option<&'_ [(String, TypeParamConfig)]> {
         match self {
             TargetEnrichedTypeInfo::Func(f) => Some(f.type_params.as_slice()),
             // TODO: do refs need provided and required type params?
@@ -201,7 +201,7 @@ impl RequiredTypeParams for TargetEnrichedTypeInfo {
 }
 
 impl RequiredTypeParams for Interface {
-    fn required_type_params<'a>(&'a self) -> Option<&'a [(String, TypeParamConfig)]> {
+    fn required_type_params(&self) -> Option<&'_ [(String, TypeParamConfig)]> {
         Some(self.type_params.as_slice())
     }
 }

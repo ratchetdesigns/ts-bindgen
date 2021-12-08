@@ -314,7 +314,7 @@ mod effect_mappers {
                 typ,
                 generated_name_id,
             } => Effect::CreateType {
-                name: prefix.as_ref().to_title_case().to_string() + &name,
+                name: prefix.as_ref().to_title_case() + &name,
                 typ,
                 generated_name_id,
             },

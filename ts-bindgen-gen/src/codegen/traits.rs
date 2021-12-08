@@ -150,9 +150,7 @@ where
             };
             let method_impls = tr
                 .methods()
-                .flat_map(|(n, m)| {
-                    member_to_trait_member(&tr.type_env(), (n, m.clone())).into_iter()
-                })
+                .flat_map(|(n, m)| member_to_trait_member(&tr.type_env(), (n, m)).into_iter())
                 .map(|trait_member| {
                     let proto = trait_member
                         .exposed_to_rust_fn_decl(trait_member.name(), trait_member.is_fallible());
@@ -228,9 +226,9 @@ type BoxedMemberIter<'a> = Box<dyn Iterator<Item = (String, Member)> + 'a>;
 pub trait Traitable {
     fn has_super_traits(&self) -> bool;
 
-    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a>;
+    fn super_traits(&self) -> BoxedTypeRefIter<'_>;
 
-    fn methods<'a>(&'a self) -> BoxedMemberIter<'a>;
+    fn methods(&self) -> BoxedMemberIter<'_>;
 
     fn contains_implementation(&self) -> bool;
 
@@ -240,13 +238,13 @@ pub trait Traitable {
         trait_member: &TraitMember,
     ) -> TokenStream2;
 
-    fn recursive_super_traits<'a>(
-        &'a self,
+    fn recursive_super_traits(
+        &self,
         implementor: TypeRef,
         type_env: &HashMap<String, TypeRef>,
-    ) -> BoxedSuperIter<'a> {
+    ) -> BoxedSuperIter<'_> {
         Box::new(self.super_traits().fold(
-            Box::new(iter::empty()) as BoxedSuperIter<'a>,
+            Box::new(iter::empty()) as BoxedSuperIter<'_>,
             |cur, s| {
                 let s = s.resolve_generic_in_env(type_env).into_owned();
                 let implementor = if s.contains_implementation() {
@@ -261,17 +259,17 @@ pub trait Traitable {
                             t.recursive_super_traits(implementor.clone(), &s.type_env())
                                 .collect::<Vec<_>>()
                                 .into_iter(),
-                        ) as BoxedSuperIter<'a>
+                        ) as BoxedSuperIter<'_>
                     })
-                    .unwrap_or_else(|| Box::new(iter::empty()) as BoxedSuperIter<'a>);
+                    .unwrap_or_else(|| Box::new(iter::empty()) as BoxedSuperIter<'_>);
                 let s_iter = Box::new(iter::once(Super {
                     item: s.clone(),
                     implementor,
-                })) as BoxedSuperIter<'a>;
+                })) as BoxedSuperIter<'_>;
 
-                Box::new(cur.chain(s_iter).chain(supers)) as BoxedSuperIter<'a>
+                Box::new(cur.chain(s_iter).chain(supers)) as BoxedSuperIter<'_>
             },
-        )) as BoxedSuperIter<'a>
+        )) as BoxedSuperIter<'_>
     }
 }
 
@@ -280,11 +278,11 @@ impl Traitable for Interface {
         !self.extends.is_empty()
     }
 
-    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
-        Box::new(self.extends.iter().cloned()) as BoxedTypeRefIter<'a>
+    fn super_traits(&self) -> BoxedTypeRefIter<'_> {
+        Box::new(self.extends.iter().cloned()) as BoxedTypeRefIter<'_>
     }
 
-    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+    fn methods(&self) -> BoxedMemberIter<'_> {
         Box::new(
             self.fields
                 .iter()
@@ -337,18 +335,18 @@ impl Traitable for Class {
         self.super_class.is_some() || !self.implements.is_empty()
     }
 
-    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+    fn super_traits(&self) -> BoxedTypeRefIter<'_> {
         let super_class = self
             .super_class
             .as_ref()
-            .map(|s| Box::new(iter::once(s).cloned()) as BoxedTypeRefIter<'a>)
-            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>);
+            .map(|s| Box::new(iter::once(s).cloned()) as BoxedTypeRefIter<'_>)
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'_>);
         let implements = self.implements.iter().cloned();
 
         Box::new(super_class.chain(implements))
     }
 
-    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+    fn methods(&self) -> BoxedMemberIter<'_> {
         Box::new(self.members.iter().map(|(n, m)| (n.clone(), m.clone())))
     }
 
@@ -437,21 +435,21 @@ impl Traitable for TargetEnrichedTypeInfo {
         delegate_traitable_for_type_info!(self, x, x.has_super_traits(), false)
     }
 
-    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+    fn super_traits(&self) -> BoxedTypeRefIter<'_> {
         delegate_traitable_for_type_info!(
             self,
             x,
             x.super_traits(),
-            Box::new(iter::empty()) as BoxedTypeRefIter<'a>,
+            Box::new(iter::empty()) as BoxedTypeRefIter<'_>,
         )
     }
 
-    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+    fn methods(&self) -> BoxedMemberIter<'_> {
         delegate_traitable_for_type_info!(
             self,
             x,
             x.methods(),
-            Box::new(iter::empty()) as BoxedMemberIter<'a>,
+            Box::new(iter::empty()) as BoxedMemberIter<'_>,
         )
     }
 
@@ -481,18 +479,18 @@ impl Traitable for TypeRef {
             .unwrap_or(false)
     }
 
-    fn super_traits<'a>(&'a self) -> BoxedTypeRefIter<'a> {
+    fn super_traits(&self) -> BoxedTypeRefIter<'_> {
         self.resolve_target_type()
             .map(|t| {
-                Box::new(t.super_traits().collect::<Vec<_>>().into_iter()) as BoxedTypeRefIter<'a>
+                Box::new(t.super_traits().collect::<Vec<_>>().into_iter()) as BoxedTypeRefIter<'_>
             })
-            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'a>)
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedTypeRefIter<'_>)
     }
 
-    fn methods<'a>(&'a self) -> BoxedMemberIter<'a> {
+    fn methods(&self) -> BoxedMemberIter<'_> {
         self.resolve_target_type()
-            .map(|t| Box::new(t.methods().collect::<Vec<_>>().into_iter()) as BoxedMemberIter<'a>)
-            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedMemberIter<'a>)
+            .map(|t| Box::new(t.methods().collect::<Vec<_>>().into_iter()) as BoxedMemberIter<'_>)
+            .unwrap_or_else(|| Box::new(iter::empty()) as BoxedMemberIter<'_>)
     }
 
     fn contains_implementation(&self) -> bool {

@@ -41,8 +41,8 @@ type BoxedParamExtIter<'a> = Box<dyn Iterator<Item = Box<dyn ParamExt>> + 'a>;
 
 pub trait HasFnPrototype {
     fn return_type(&self) -> TypeRef;
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a>;
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a>;
+    fn params(&self) -> BoxedParamExtIter<'_>;
+    fn args(&self) -> BoxedParamExtIter<'_>;
     fn is_member(&self) -> bool;
     fn is_variadic(&self) -> bool {
         self.params().any(|p| p.is_variadic())
@@ -64,7 +64,7 @@ impl HasFnPrototype for TypeRef {
             })
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         Box::new(
             self.type_params
                 .iter()
@@ -81,7 +81,7 @@ impl HasFnPrototype for TypeRef {
         )
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         // args and params are the same for non-members
         self.params()
     }
@@ -96,11 +96,11 @@ impl<'b> HasFnPrototype for OwnedTypeRef<'b> {
         self.0.return_type()
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         self.0.params()
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         self.0.args()
     }
 
@@ -129,7 +129,7 @@ impl HasFnPrototype for Func {
         (*self.return_type).clone()
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         let reg_params = self.args();
 
         if let Some(class_name) = &self.class_name {
@@ -145,7 +145,7 @@ impl HasFnPrototype for Func {
         }
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         Box::new(
             self.params
                 .iter()
@@ -163,7 +163,7 @@ impl<'b> HasFnPrototype for Constructor<'b> {
         (*self.class).clone()
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         Box::new(
             self.ctor
                 .params
@@ -172,7 +172,7 @@ impl<'b> HasFnPrototype for Constructor<'b> {
         )
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         self.params()
     }
 
@@ -238,11 +238,11 @@ impl HasFnPrototype for PropertyAccessor {
         }
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&'_ self) -> BoxedParamExtIter<'_> {
         let self_param = Box::new(iter::once(Box::new(SelfParam {
             class_name: self.class_name.clone(),
             is_mut: self.access_type == AccessType::Setter,
-        }) as Box<dyn ParamExt>)) as BoxedParamExtIter<'a>;
+        }) as Box<dyn ParamExt>)) as BoxedParamExtIter<'_>;
 
         match self.access_type {
             AccessType::Getter => self_param,
@@ -251,11 +251,11 @@ impl HasFnPrototype for PropertyAccessor {
                 type_ref: OwnedTypeRef(Cow::Owned(self.typ.clone())),
                 is_variadic: false,
             })
-                as Box<dyn ParamExt>))) as BoxedParamExtIter<'a>,
+                as Box<dyn ParamExt>))) as BoxedParamExtIter<'_>,
         }
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         self.params()
     }
 
@@ -275,7 +275,7 @@ impl<'a> Constructor<'a> {
         let class_ref = TypeRef {
             referent: class_name,
             type_params: Default::default(),
-            context: (&*ctor).context.clone(),
+            context: (*ctor).context.clone(),
         };
         Constructor {
             class: Cow::Owned(class_ref),
@@ -292,14 +292,14 @@ impl<'b> HasFnPrototype for TypeRefLike<'b> {
         }
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         match self {
             TypeRefLike::TypeRef(t) => t.params(),
             TypeRefLike::OwnedTypeRef(t) => t.params(),
         }
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         match self {
             TypeRefLike::TypeRef(t) => t.args(),
             TypeRefLike::OwnedTypeRef(t) => t.args(),
@@ -705,11 +705,11 @@ pub trait ParamExt {
     fn is_variadic(&self) -> bool;
 
     /// The TypeRef for this param
-    fn type_ref<'a>(&'a self) -> TypeRefLike<'a>;
+    fn type_ref(&self) -> TypeRefLike<'_>;
 }
 
 pub trait WrappedParam {
-    fn wrapped_type<'a>(&'a self) -> TypeRefLike<'a>;
+    fn wrapped_type(&self) -> TypeRefLike<'_>;
 
     fn name(&self) -> &str;
 
@@ -717,7 +717,7 @@ pub trait WrappedParam {
 }
 
 impl WrappedParam for Param {
-    fn wrapped_type<'a>(&'a self) -> TypeRefLike<'a> {
+    fn wrapped_type(&self) -> TypeRefLike<'_> {
         (&self.type_info).into()
     }
 
@@ -731,12 +731,12 @@ impl WrappedParam for Param {
 }
 
 impl<'a> WrappedParam for OwnedParam<'a> {
-    fn wrapped_type<'b>(&'b self) -> TypeRefLike<'b> {
+    fn wrapped_type(&self) -> TypeRefLike<'_> {
         (&self.type_ref).into()
     }
 
     fn name(&self) -> &str {
-        &self.name
+        self.name
     }
 
     fn is_variadic(&self) -> bool {
@@ -860,7 +860,7 @@ impl<T: WrappedParam> ParamExt for T {
         WrappedParam::is_variadic(self)
     }
 
-    fn type_ref<'a>(&'a self) -> TypeRefLike<'a> {
+    fn type_ref(&self) -> TypeRefLike<'_> {
         self.wrapped_type()
     }
 }
@@ -917,7 +917,7 @@ impl ParamExt for SelfParam {
         false
     }
 
-    fn type_ref<'a>(&'a self) -> TypeRefLike<'a> {
+    fn type_ref(&self) -> TypeRefLike<'_> {
         TypeRefLike::TypeRef(Cow::Owned(TypeRef {
             referent: self.class_name.clone(),
             type_params: Default::default(),
@@ -1074,11 +1074,11 @@ impl<'b> HasFnPrototype for TraitMember<'b> {
         impl_fn_proto_for_trait_member!(self, return_type)
     }
 
-    fn params<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn params(&self) -> BoxedParamExtIter<'_> {
         impl_fn_proto_for_trait_member!(self, params)
     }
 
-    fn args<'a>(&'a self) -> BoxedParamExtIter<'a> {
+    fn args(&self) -> BoxedParamExtIter<'_> {
         impl_fn_proto_for_trait_member!(self, args)
     }
 

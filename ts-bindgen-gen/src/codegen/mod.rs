@@ -380,12 +380,12 @@ impl IsUninhabited for TargetEnrichedTypeInfo {
 
 impl IsUninhabited for TypeRef {
     fn is_uninhabited(&self) -> bool {
-        match self.referent {
-            TypeIdent::Builtin(Builtin::PrimitiveNull) => true,
-            TypeIdent::Builtin(Builtin::PrimitiveUndefined) => true,
-            TypeIdent::Builtin(Builtin::PrimitiveVoid) => true,
-            _ => false,
-        }
+        matches!(
+            self.referent,
+            TypeIdent::Builtin(Builtin::PrimitiveNull)
+                | TypeIdent::Builtin(Builtin::PrimitiveUndefined)
+                | TypeIdent::Builtin(Builtin::PrimitiveVoid),
+        )
     }
 }
 
@@ -408,10 +408,8 @@ fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
         let p = current_path
             .map(|cp| cp.join(component))
             .unwrap_or_else(|| (component.as_ref() as &Path).to_path_buf());
-        if p.is_dir() {
-            if p.join("Cargo.toml").exists() {
-                best = Some(p.clone());
-            }
+        if p.is_dir() && p.join("Cargo.toml").exists() {
+            best = Some(p.clone());
         }
         current_path = Some(p);
     }
@@ -420,7 +418,7 @@ fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-fn trim_after_dot<'a>(s: &'a str) -> &'a str {
+fn trim_after_dot(s: &str) -> &str {
     let idx = s.find('.');
     &s[0..idx.unwrap_or_else(|| s.len())]
 }
@@ -669,7 +667,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     });
                 }
                 let trait_defn =
-                    render_trait_defn(&name, &js_name, type_params, iface, &iface.context);
+                    render_trait_defn(&name, js_name, type_params, iface, &iface.context);
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -971,7 +969,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .unzip();
 
                 let trait_defn =
-                    render_trait_defn(&name, &js_name, &type_params, class, &class.context);
+                    render_trait_defn(&name, js_name, type_params, class, &class.context);
 
                 quote! {
                     #[wasm_bindgen(module = #path)]
@@ -1112,7 +1110,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     } else {
                         // TODO: this is weird, do we ever run into trouble with this?
                         let mut typ = (*typ).clone();
-                        typ.info = first_type.clone();
+                        typ.info = first_type;
                         let typ = WithFs {
                             data: &typ,
                             fs: *fs,

@@ -8,19 +8,19 @@ pub trait Named {
 impl Named for Builtin {
     fn to_name(&self) -> (&str, Identifier) {
         match self {
-            Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue").into()),
-            Builtin::PrimitiveNumber => ("f64", to_ident("f64").into()),
+            Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue")),
+            Builtin::PrimitiveNumber => ("f64", to_ident("f64")),
             // TODO: make a wrapper in rt to allow objects to be null or undefined
             Builtin::PrimitiveObject => (
                 "std::collections::HashMap<String, JsValue>",
                 make_identifier!(std::collections::HashMap<String, JsValue>),
             ),
-            Builtin::PrimitiveBoolean => ("bool", to_ident("bool").into()),
-            Builtin::PrimitiveBigInt => ("u64", to_ident("u64").into()),
-            Builtin::PrimitiveString => ("String", to_ident("String").into()),
+            Builtin::PrimitiveBoolean => ("bool", to_ident("bool")),
+            Builtin::PrimitiveBigInt => ("u64", to_ident("u64")),
+            Builtin::PrimitiveString => ("String", to_ident("String")),
             Builtin::PrimitiveSymbol => ("js_sys::Symbol", make_identifier!(js_sys::Symbol)),
             // TODO: is this correct?
-            Builtin::PrimitiveVoid => ("()", to_ident("()").into()),
+            Builtin::PrimitiveVoid => ("()", to_ident("()")),
             Builtin::PrimitiveUndefined => (
                 "ts_bindgen_rt::Undefined",
                 make_identifier!(ts_bindgen_rt::Undefined),
@@ -33,14 +33,14 @@ impl Named for Builtin {
             Builtin::LitBoolean => Builtin::PrimitiveBoolean.to_name(),
             Builtin::LitString => Builtin::PrimitiveString.to_name(),
             Builtin::BuiltinPromise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
-            Builtin::Array => ("Vec", to_ident("Vec").into()),
-            Builtin::Fn => ("Fn", to_ident("Fn").into()),
+            Builtin::Array => ("Vec", to_ident("Vec")),
+            Builtin::Fn => ("Fn", to_ident("Fn")),
             Builtin::Map => (
                 "std::collections::HashMap",
                 make_identifier!(std::collections::HashMap),
             ),
-            Builtin::Optional => ("Option", to_ident("Option").into()),
-            Builtin::Variadic => ("", to_ident("").into()),
+            Builtin::Optional => ("Option", to_ident("Option")),
+            Builtin::Variadic => ("", to_ident("")),
         }
     }
 }
