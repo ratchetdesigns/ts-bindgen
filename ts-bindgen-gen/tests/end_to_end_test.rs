@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::{copy as copy_file, create_dir_all, read_dir, remove_file, write as write_file};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::symlink;
@@ -22,7 +23,11 @@ fn end_to_end() -> std::io::Result<()> {
     let ts_index = target_dir.join("ts").join("index");
     npm_ci(&target_dir)?;
     build_ts(&target_dir, &ts_index)?;
+
+    let cwd = env::current_dir()?;
+    env::set_current_dir(&target_dir)?;
     generate_ts_bindgen_file(&ts_index, target_dir.join("src").join("js_lib.rs"))?;
+    env::set_current_dir(&cwd)?;
 
     run_cargo_test(target_dir)?;
 

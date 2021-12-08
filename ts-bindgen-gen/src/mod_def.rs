@@ -1,3 +1,4 @@
+use crate::fs::Fs;
 use crate::identifier::{make_identifier, to_ns_name, to_snake_case_ident, Identifier};
 use crate::ir::{TargetEnrichedType, TypeIdent, TypeRef};
 use std::cell::RefCell;
@@ -60,20 +61,31 @@ pub struct ModDef {
 }
 
 pub trait ToModPathIter {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>>;
+    fn to_mod_path_iter<FS: Fs + ?Sized>(&self, fs: &FS) -> Box<dyn Iterator<Item = Identifier>>;
 }
 
 impl ToModPathIter for Path {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
+    fn to_mod_path_iter<FS: Fs + ?Sized>(&self, fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
+        let cwd = fs.cwd().unwrap();
+        let cwd_components: Vec<_> = cwd.components().collect();
         let mut rev_components = self
             .components() // components does some normalization for us
+            .enumerate()
+            .skip_while(|(i, c)| {
+                cwd_components
+                    .get(*i)
+                    .map(|cwd_part| cwd_part == c)
+                    .unwrap_or(false)
+            })
+            .map(|(_, c)| c)
             .filter_map(|c| match c {
                 Component::Normal(s) => Some(s.to_string_lossy()),
                 _ => None,
             })
+            .collect::<Vec<_>>()
+            .iter()
             .rev()
-            .take_while(|p| p != "node_modules")
-            .map(|p| p.as_ref().to_string())
+            .take_while(|p| *p != "node_modules")
             .map(|n| to_ns_name(&n))
             .collect::<Vec<_>>();
 
@@ -96,30 +108,31 @@ impl ToModPathIter for Path {
 }
 
 impl ToModPathIter for TypeIdent {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
+    fn to_mod_path_iter<FS: Fs + ?Sized>(&self, fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
         match self {
             TypeIdent::QualifiedName { file, name_parts } => Box::new(
-                file.to_mod_path_iter().chain(
+                file.to_mod_path_iter(fs).chain(
                     (&name_parts[..name_parts.len() - 1])
                         .to_vec()
                         .into_iter()
                         .map(|n| to_snake_case_ident(&n)),
                 ),
             ),
-            TypeIdent::Name { file, .. } => file.to_mod_path_iter(),
+            TypeIdent::Name { file, .. } => file.to_mod_path_iter(fs),
             _ => Box::new(iter::empty()),
         }
     }
 }
 
 impl ToModPathIter for TypeRef {
-    fn to_mod_path_iter(&self) -> Box<dyn Iterator<Item = Identifier>> {
-        self.referent.to_mod_path_iter()
+    fn to_mod_path_iter<FS: Fs + ?Sized>(&self, fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
+        self.referent.to_mod_path_iter(fs)
     }
 }
 
-impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef {
-    fn from(
+impl ModDef {
+    pub fn new<FS: Fs + ?Sized>(
+        fs: &FS,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>,
     ) -> Self {
         let root = Rc::new(RefCell::new(MutModDef {
@@ -135,7 +148,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
                 // over [a, b, c].
-                let mod_path = path.to_mod_path_iter().collect::<Vec<Identifier>>();
+                let mod_path = path.to_mod_path_iter(fs).collect::<Vec<Identifier>>();
                 let last_idx = mod_path.len() - 1;
 
                 mod_path
@@ -158,7 +171,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
                     .iter()
                     .filter_map(|(name, typ)| {
                         if let TypeIdent::QualifiedName { .. } = name {
-                            Some((name.to_mod_path_iter().collect::<Vec<Identifier>>(), typ))
+                            Some((name.to_mod_path_iter(fs).collect::<Vec<Identifier>>(), typ))
                         } else {
                             None
                         }
@@ -187,7 +200,7 @@ impl From<&HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>> for ModDef 
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
-    use crate::fs::test::TestFs;
+    use crate::fs::{test::TestFs, StdFs};
     use crate::identifier::{make_identifier, to_ident};
     use crate::ir::{to_final_ir, Builtin, Context, TargetEnrichedTypeInfo};
     use crate::parse::{ArcFs, TsTypes};
@@ -233,7 +246,7 @@ mod mod_def_tests {
             tbn
         });
 
-        let mods: ModDef = (&tbnbf).into();
+        let mods = ModDef::new(&StdFs, &tbnbf);
         assert_eq!(
             mods,
             ModDef {
@@ -276,10 +289,38 @@ mod mod_def_tests {
             r#"export type Test = number | string | null;"#.to_string(),
         );
 
-        let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, "/test")?;
+        let arc_fs = Arc::new(fs) as ArcFs;
+        let tt = TsTypes::try_new(arc_fs.clone(), "/test")?;
         let tbnbf = tt.into_types_by_name_by_file();
         let ir = to_final_ir(tbnbf);
-        let mods: ModDef = (&*ir.borrow()).into();
+        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
+
+        assert_eq!(mods.children.len(), 1);
+
+        let test_mod = mods.children.first().unwrap();
+        assert_eq!(test_mod.name, make_identifier!(test));
+
+        assert!(test_mod.children.is_empty());
+        assert!(!test_mod.types.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn mod_def_with_cwd_prefix_removed() -> Result<(), swc_ecma_parser::error::Error> {
+        let mut fs: TestFs = Default::default();
+        fs.set_cwd(Path::new("/abc/def"));
+        fs.add_dir_at(Path::new("/abc/def/test"));
+        fs.add_file_at(
+            Path::new("/abc/def/test/index.d.ts"),
+            r#"export type Test = number | string | null;"#.to_string(),
+        );
+
+        let arc_fs = Arc::new(fs) as ArcFs;
+        let tt = TsTypes::try_new(arc_fs.clone(), "/abc/def/test")?;
+        let tbnbf = tt.into_types_by_name_by_file();
+        let ir = to_final_ir(tbnbf);
+        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
 

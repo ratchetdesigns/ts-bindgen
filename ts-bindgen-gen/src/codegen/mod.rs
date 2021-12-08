@@ -19,6 +19,7 @@ use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
 use crate::codegen::traits::render_trait_defn;
 use crate::codegen::type_ref_like::OwnedTypeRef;
+use crate::fs::Fs;
 use crate::identifier::{
     make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
     Identifier,
@@ -113,13 +114,20 @@ impl ToTokens for Identifier {
     }
 }
 
-impl ToTokens for ModDef {
-    fn to_tokens(&self, toks: &mut TokenStream2) {
-        let mod_name = &self.name;
-        let types = &self.types;
-        let children = &self.children;
+pub struct WithFs<'a, T, FS: Fs + ?Sized> {
+    pub data: &'a T,
+    pub fs: &'a FS,
+}
 
-        let imports = if types.is_empty() {
+impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, ModDef, FS> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let mod_def = self.data;
+        let fs = self.fs;
+        let mod_name = &mod_def.name;
+        let types = mod_def.types.iter().map(|data| WithFs { data, fs });
+        let children = mod_def.children.iter().map(|data| WithFs { data, fs });
+
+        let imports = if mod_def.types.is_empty() {
             quote! {}
         } else {
             quote! {
@@ -127,8 +135,6 @@ impl ToTokens for ModDef {
             }
         };
 
-        // TODO: would be nice to do something like use super::super::... as ts_bindgen_root and be
-        // able to refer to it in future use clauses. just need to get the nesting level here
         let our_toks = quote! {
             #[cfg(target_arch = "wasm32")]
             pub mod #mod_name {
@@ -163,7 +169,7 @@ impl ToTokens for EnumMember {
 }
 
 trait ToNsPath<T: ?Sized> {
-    fn to_ns_path(&self, current_mod: &T) -> Vec<Identifier>;
+    fn to_ns_path<FS: Fs + ?Sized>(&self, fs: &FS, current_mod: &T) -> Vec<Identifier>;
 }
 
 impl<T, U> ToNsPath<T> for U
@@ -171,9 +177,9 @@ where
     T: ToModPathIter + ?Sized + std::fmt::Debug,
     U: ToModPathIter + ?Sized + std::fmt::Debug,
 {
-    fn to_ns_path(&self, current_mod: &T) -> Vec<Identifier> {
-        let mut cur_mod_path = current_mod.to_mod_path_iter();
-        let mut target_mod_path = self.to_mod_path_iter();
+    fn to_ns_path<FS: Fs + ?Sized>(&self, fs: &FS, current_mod: &T) -> Vec<Identifier> {
+        let mut cur_mod_path = current_mod.to_mod_path_iter(fs);
+        let mut target_mod_path = self.to_mod_path_iter(fs);
 
         let mut ns: Vec<Identifier> = Default::default();
 
@@ -228,11 +234,11 @@ where
 #[cfg(test)]
 mod test {
     use super::ToNsPath;
+    use crate::fs::test::TestFs;
     use crate::generators::*;
     use crate::identifier::{make_identifier, to_ns_name};
     use crate::ir::TypeIdent;
     use proptest::prelude::*;
-    use quote::quote;
     use std::path::Path;
 
     proptest! {
@@ -241,6 +247,11 @@ mod test {
             prefix in arb_abs_path(),
             ns_rest in arb_rel_path(),
         ) {
+            let fs = {
+                let mut fs: TestFs = Default::default();
+                fs.set_cwd(Path::new("/"));
+                fs
+            };
             let prefix_path = Path::new(&prefix);
             let cur = TypeIdent::Name {
                 file: prefix_path.join(&ns_rest).to_path_buf(),
@@ -252,7 +263,7 @@ mod test {
                 .collect();
 
             prop_assert_eq!(
-                cur.to_ns_path(prefix_path),
+                cur.to_ns_path(&fs, prefix_path),
                 expected
             );
         }
@@ -264,6 +275,11 @@ mod test {
             prefix in arb_abs_path(),
             ns_rest in arb_rel_path(),
         ) {
+            let fs = {
+                let mut fs: TestFs = Default::default();
+                fs.set_cwd(Path::new("/"));
+                fs
+            };
             let prefix_path = Path::new(&prefix);
             let full_path = prefix_path.join(&ns_rest);
             let cur = TypeIdent::Name {
@@ -272,11 +288,11 @@ mod test {
             };
 
             let expected: Vec<_> = ns_rest.split("/")
-                .map(|p| make_identifier!(super))
+                .map(|_| make_identifier!(super))
                 .collect();
 
             prop_assert_eq!(
-                cur.to_ns_path(full_path.as_path()),
+                cur.to_ns_path(&fs, full_path.as_path()),
                 expected
             );
         }
@@ -289,6 +305,11 @@ mod test {
             cur_rest in arb_rel_path(),
             target_rest in arb_rel_path(),
         ) {
+            let fs = {
+                let mut fs: TestFs = Default::default();
+                fs.set_cwd(Path::new("/"));
+                fs
+            };
             let prefix_path = Path::new(&prefix);
             let cur = TypeIdent::Name {
                 file: prefix_path.join(&cur_rest).to_path_buf(),
@@ -299,10 +320,10 @@ mod test {
             let cur_path = Path::new(&cur_rest);
             let tar_path = Path::new(&target_rest);
 
-            let expected = cur_path.to_ns_path(tar_path);
+            let expected = cur_path.to_ns_path(&fs, tar_path);
 
             prop_assert_eq!(
-                cur.to_ns_path(full_path.as_path()),
+                cur.to_ns_path(&fs, full_path.as_path()),
                 expected
             );
         }
@@ -569,17 +590,20 @@ fn to_internal_class_name(name: &Identifier) -> Identifier {
     name.suffix_name("_class")
 }
 
-impl ToTokens for TargetEnrichedType {
+impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let (js_name, name) = self.name.to_name();
-        let vis = if self.is_exported {
+        let WithFs { data: typ, fs } = self;
+        let type_name = &typ.name;
+        let is_exported = typ.is_exported;
+        let (js_name, name) = type_name.to_name();
+        let vis = if is_exported {
             let vis = format_ident!("pub");
             quote! { #vis }
         } else {
             quote! {}
         };
 
-        let our_toks = match &self.info {
+        let our_toks = match &typ.info {
             TargetEnrichedTypeInfo::Interface(iface) => {
                 let Interface {
                     indexer,
@@ -918,14 +942,14 @@ impl ToTokens for TargetEnrichedType {
                                 let getter = PropertyAccessor {
                                     property_name: member_name.clone(),
                                     typ: typ.clone(),
-                                    class_name: self.name.clone(),
+                                    class_name: type_name.clone(),
                                     access_type: AccessType::Getter,
                                 }.getter_fn();
 
                                 let setter = PropertyAccessor {
                                     property_name: member_name.clone(),
                                     typ: typ.clone(),
-                                    class_name: self.name.clone(),
+                                    class_name: type_name.clone(),
                                     access_type: AccessType::Setter,
                                 }.setter_fn();
 
@@ -1066,8 +1090,8 @@ impl ToTokens for TargetEnrichedType {
                             .next();
 
                         let typ = TargetEnrichedType {
-                            name: self.name.clone(),
-                            is_exported: self.is_exported,
+                            name: type_name.clone(),
+                            is_exported,
                             info: TargetEnrichedTypeInfo::Interface(Interface {
                                 indexer,
                                 fields,
@@ -1077,14 +1101,22 @@ impl ToTokens for TargetEnrichedType {
                             }),
                             context: isect.context.clone(),
                         };
+                        let typ = WithFs {
+                            data: &typ,
+                            fs: *fs,
+                        };
 
                         quote! {
                             #typ
                         }
                     } else {
                         // TODO: this is weird, do we ever run into trouble with this?
-                        let mut typ = self.clone();
+                        let mut typ = (*typ).clone();
                         typ.info = first_type.clone();
+                        let typ = WithFs {
+                            data: &typ,
+                            fs: *fs,
+                        };
                         quote! {
                             #typ
                         }
@@ -1113,7 +1145,7 @@ impl ToTokens for TargetEnrichedType {
                 type_info: Box<TypeInfo>,
             },*/
             TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src, .. }) => {
-                let ns = src.as_path().to_ns_path(&self.name);
+                let ns = src.as_path().to_ns_path(*fs, type_name);
                 if ns.len() == 1 {
                     // we already have the module defined locally
                     //
@@ -1130,8 +1162,8 @@ impl ToTokens for TargetEnrichedType {
                 }
             }
             TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Default { src, .. }) => {
-                let ns = src.as_path().to_ns_path(&self.name);
-                let vis = if self.is_exported {
+                let ns = src.as_path().to_ns_path(*fs, type_name);
+                let vis = if is_exported {
                     let vis = format_ident!("pub");
                     quote! { #vis }
                 } else {
@@ -1148,8 +1180,8 @@ impl ToTokens for TargetEnrichedType {
                 name: item_name,
                 ..
             }) => {
-                let ns = src.as_path().to_ns_path(&self.name);
-                let vis = if self.is_exported {
+                let ns = src.as_path().to_ns_path(*fs, type_name);
+                let vis = if is_exported {
                     let vis = format_ident!("pub");
                     quote! { #vis }
                 } else {
