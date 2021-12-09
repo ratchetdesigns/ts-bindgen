@@ -25,6 +25,17 @@ pub trait Fs: Debug {
                 Component::Normal(c) => cur.join(c),
             })
     }
+
+    fn is_absolute_path(&self, path: &Path) -> bool {
+        if cfg!(target_family = "wasm") {
+            // wasm is_absolute checks path.has_root && path.prefix().is_some()
+            // because the prefix check is only skipped for unix.
+            // we don't care about the prefix.
+            path.has_root()
+        } else {
+            path.is_absolute()
+        }
+    }
 }
 
 /// Regular filesystem

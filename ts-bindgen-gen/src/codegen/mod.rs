@@ -136,7 +136,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, ModDef, FS> {
         };
 
         let our_toks = quote! {
-            #[cfg(target_arch = "wasm32")]
+            #[cfg(target_family = "wasm")]
             pub mod #mod_name {
                 #imports
 

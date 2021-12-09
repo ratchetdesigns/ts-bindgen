@@ -90,7 +90,7 @@ pub fn get_ts_path<FS: Fs + ?Sized>(
     let mut path = cwd.clone();
     let abs_import_path = Path::new(import);
 
-    if abs_import_path.is_absolute() {
+    if fs.is_absolute_path(abs_import_path) {
         if fs.is_dir(abs_import_path) {
             get_file_with_any_ext(fs, &abs_import_path.join("index"))
         } else {
