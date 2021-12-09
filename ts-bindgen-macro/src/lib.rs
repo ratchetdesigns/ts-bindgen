@@ -10,7 +10,7 @@ use std::fs::File;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, LitStr, Result as ParseResult, Token};
-use ts_bindgen_gen::generate_rust_for_typescript;
+use ts_bindgen_gen::{generate_rust_for_typescript, StdFs};
 
 #[proc_macro]
 pub fn import_ts(input: TokenStream) -> TokenStream {
@@ -19,7 +19,7 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         .modules
         .iter()
         .map(|module| {
-            let mod_toks = generate_rust_for_typescript(module);
+            let mod_toks = generate_rust_for_typescript(StdFs, module);
 
             let mut file = File::create("output.rs").expect("failed to create file");
             std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes())
