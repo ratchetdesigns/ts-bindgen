@@ -1,0 +1,15 @@
+[package]
+name = "ts-bindgen-web"
+version = "0.1.0"
+description = "Web interface for generating rust bindings for typescript definitions"
+authors = ["Adam Berger <adam@ratchetdesigns.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+monaco = { version = "0.3.0", features = ["yew-components"], git = "https://github.com/siku2/rust-monaco", rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe" }
+wasm-bindgen = "0.2.63"
+yew = "0.19.3"
