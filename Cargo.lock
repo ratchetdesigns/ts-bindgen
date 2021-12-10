@@ -1276,6 +1276,7 @@ name = "ts-bindgen-web"
 version = "0.1.0"
 dependencies = [
  "monaco",
+ "ts-bindgen",
  "wasm-bindgen",
  "yew",
 ]

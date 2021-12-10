@@ -10,6 +10,10 @@ edition = "2018"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-monaco = { version = "0.3.0", features = ["yew-components"], git = "https://github.com/siku2/rust-monaco", rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe" }
+monaco.version = "0.3.0"
+monaco.features = ["yew-components"]
+monaco.git = "https://github.com/siku2/rust-monaco"
+monaco.rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe"
 wasm-bindgen = "0.2.63"
 yew = "0.19.3"
+ts-bindgen = { version = "0.1.0", path = "../ts-bindgen" }

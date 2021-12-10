@@ -1,38 +1,74 @@
-use monaco::{api::CodeEditorOptions, sys::editor::BuiltinTheme, yew::CodeEditor};
+use monaco::{
+    api::CodeEditorOptions,
+    sys::editor::BuiltinTheme,
+    yew::{CodeEditor, CodeEditorLink},
+};
 use std::rc::Rc;
+use ts_bindgen::generate_rust_text_for_typescript_string;
 use wasm_bindgen::prelude::*;
 use yew::{html, Component, Context, Html};
 
-const CONTENT: &str = include_str!("lib.rs");
-
 fn get_options(lang: &str) -> CodeEditorOptions {
-    CodeEditorOptions::default()
+    let opts = CodeEditorOptions::default()
         .with_language(lang.to_owned())
-        .with_value(CONTENT.to_owned())
-        .with_builtin_theme(BuiltinTheme::VsDark)
+        .with_builtin_theme(BuiltinTheme::VsDark);
+    if lang == "typescript" {
+        opts.with_value(
+            r#"
+        type MyType = number | string | null;
+        "#
+            .to_owned(),
+        )
+    } else {
+        opts
+    }
 }
 
 struct App {
     ts_options: Rc<CodeEditorOptions>,
+    ts_link: CodeEditorLink,
     rust_options: Rc<CodeEditorOptions>,
+    rust_link: CodeEditorLink,
+}
+
+enum Msg {
+    Generate,
 }
 
 impl Component for App {
-    type Message = ();
+    type Message = Msg;
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
         Self {
             ts_options: Rc::new(get_options("typescript")),
+            ts_link: Default::default(),
             rust_options: Rc::new(get_options("rust")),
+            rust_link: Default::default(),
         }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, _msg: Self::Message) -> bool {
+    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        match msg {
+            Msg::Generate => {
+                self.ts_link.with_editor(|model| {
+                    let ts = model
+                        .get_model()
+                        .map(|m| m.get_value())
+                        .unwrap_or_else(|| String::from(""));
+                    let rust = generate_rust_text_for_typescript_string(ts);
+                    self.rust_link.with_editor(|rs_model| {
+                        rs_model.get_model().map(|m| m.set_value(&rust));
+                    });
+                });
+            }
+        }
         false
     }
 
-    fn view(&self, _ctx: &Context<Self>) -> Html {
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let on_generate = ctx.link().callback(|_| Msg::Generate);
+
         html! {
             <>
                 <div class="top-bar">
@@ -44,16 +80,16 @@ impl Component for App {
                     <div class="pane">
                         <div class="file-header">
                             <div class="title">{"Input typescript definitions (.d.ts)"}</div>
-                            <button class="top-bar-btn">{"Generate"}</button>
+                            <button onclick={on_generate} class="top-bar-btn">{"Generate"}</button>
                         </div>
-                        <CodeEditor options={Rc::clone(&self.ts_options)} />
+                        <CodeEditor options={Rc::clone(&self.ts_options)} link={self.ts_link.clone()}/>
                     </div>
                     <div class="separator" />
                     <div class="pane">
                         <div class="file-header">
                             <div class="title">{"Rust wasm-bindgen bindings"}</div>
                         </div>
-                        <CodeEditor options={Rc::clone(&self.rust_options)} />
+                        <CodeEditor options={Rc::clone(&self.rust_options)} link={self.rust_link.clone()} />
                     </div>
                 </div>
             </>
