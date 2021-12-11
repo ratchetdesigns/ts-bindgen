@@ -5,6 +5,7 @@ description = "Web interface for generating rust bindings for typescript definit
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
