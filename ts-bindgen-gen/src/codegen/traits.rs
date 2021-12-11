@@ -9,7 +9,7 @@ use crate::ir::{
     TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{quote, format_ident};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::iter;
@@ -58,6 +58,7 @@ pub fn render_trait_defn<T>(
     name: &Identifier,
     js_name: &str,
     type_params: &[(String, TypeParamConfig)],
+    is_public: bool,
     item: &T,
     ctx: &Context,
 ) -> TokenStream2
@@ -194,9 +195,15 @@ where
         });
 
     let trait_name = name.trait_name();
+    let vis = if is_public {
+        let vis = format_ident!("pub");
+        quote! { #vis }
+    } else {
+        quote! {}
+    };
 
     quote! {
-        trait #trait_name #tps #super_decl {
+        #vis trait #trait_name #tps #super_decl {
             #(#method_decls)*
         }
 

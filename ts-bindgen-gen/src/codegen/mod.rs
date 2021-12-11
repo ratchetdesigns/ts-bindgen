@@ -667,7 +667,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     });
                 }
                 let trait_defn =
-                    render_trait_defn(&name, js_name, type_params, iface, &iface.context);
+                    render_trait_defn(&name, js_name, type_params, is_exported, iface, &iface.context);
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -969,7 +969,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .unzip();
 
                 let trait_defn =
-                    render_trait_defn(&name, js_name, type_params, class, &class.context);
+                    render_trait_defn(&name, js_name, type_params, is_exported, class, &class.context);
 
                 quote! {
                     #[wasm_bindgen(module = #path)]
