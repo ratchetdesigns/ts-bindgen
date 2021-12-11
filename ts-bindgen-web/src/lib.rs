@@ -1,3 +1,6 @@
+mod fmt;
+
+use fmt::rust_fmt;
 use monaco::{
     api::CodeEditorOptions,
     sys::editor::BuiltinTheme,
@@ -57,6 +60,10 @@ impl Component for App {
                         .map(|m| m.get_value())
                         .unwrap_or_else(|| String::from(""));
                     let rust = generate_rust_text_for_typescript_string(ts);
+                    let rust = rust_fmt(rust).unwrap_or_else(|_| {
+                        // TODO: alert error
+                        String::from("")
+                    });
                     self.rust_link.with_editor(|rs_model| {
                         rs_model.get_model().map(|m| m.set_value(&rust));
                     });
@@ -73,7 +80,7 @@ impl Component for App {
             <>
                 <div class="top-bar">
                     <a class="top-bar-logo" href="https://ratchetdesigns.com">
-                        <img src="logo.png" />
+                        <img alt="Ratchet Designs" src="logo.png" />
                     </a>
                 </div>
                 <div class="main-area">
