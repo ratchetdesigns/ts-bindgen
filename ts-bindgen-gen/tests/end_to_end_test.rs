@@ -11,7 +11,8 @@ use ts_bindgen_gen::StdFs;
 #[test]
 fn end_to_end() -> std::io::Result<()> {
     let cargo_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let target_dir = Path::new("/tmp/test"); //tempdir()?;
+    let target_dir = tempdir()?;
+    let target_dir = target_dir.path();
     let test_template_path = cargo_dir.join("tests/end_to_end_template");
 
     copy_dir(&test_template_path, &target_dir)?;
@@ -57,7 +58,6 @@ fn npm_ci<T: AsRef<Path>>(dir: T) -> std::io::Result<()> {
         .env("HOME", env!("HOME"))
         .env("PATH", env!("PATH"))
         .env("USER", env!("USER"))
-        .env("HOSTNAME", env!("HOSTNAME"))
         .spawn()?
         .wait()?;
 
@@ -84,10 +84,8 @@ fn build_ts<Dir: AsRef<Path>, Ts: AsRef<Path>>(dir: Dir, ts_path: Ts) -> std::io
         .env("HOME", env!("HOME"))
         .env("PATH", env!("PATH"))
         .env("USER", env!("USER"))
-        .env("HOSTNAME", env!("HOSTNAME"))
         .env("CARGO_HOME", env!("CARGO_HOME"))
         .env("RUSTUP_HOME", env!("RUSTUP_HOME"))
-        .env("RUST_VERSION", env!("RUST_VERSION"))
         .spawn()?
         .wait()?;
 
@@ -106,14 +104,13 @@ fn run_cargo_test<Dir: AsRef<Path>>(dir: Dir) -> std::io::Result<()> {
         .current_dir(dir.as_ref())
         .arg("test")
         .arg("--node")
+        .arg("--locked")
         .env_clear()
         .env("HOME", env!("HOME"))
         .env("PATH", env!("PATH"))
         .env("USER", env!("USER"))
-        .env("HOSTNAME", env!("HOSTNAME"))
         .env("CARGO_HOME", env!("CARGO_HOME"))
         .env("RUSTUP_HOME", env!("RUSTUP_HOME"))
-        .env("RUST_VERSION", env!("RUST_VERSION"))
         .spawn()?
         .wait()?;
 

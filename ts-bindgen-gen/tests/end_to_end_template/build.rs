@@ -7,7 +7,6 @@ fn main() -> std::io::Result<()> {
         .env("HOME", env!("HOME"))
         .env("PATH", env!("PATH"))
         .env("USER", env!("USER"))
-        .env("HOSTNAME", env!("HOSTNAME"))
         .spawn()?
         .wait()?;
 
