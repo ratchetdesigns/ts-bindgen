@@ -1,6 +1,6 @@
 use std::path::Path;
 use ts_bindgen_gen::{generate_rust_for_typescript, Fs, MemFs};
-#[cfg(target_family = "wasm")]
+#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
 use wasm_bindgen::prelude::*;
 
 pub fn generate_rust_text_for_typescript<FS, S>(fs: FS, module: S) -> String
@@ -12,7 +12,7 @@ where
     toks.to_string() // TODO: rustfmt
 }
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen)]
+#[cfg_attr(any(target_arch = "wasm32", target_arch = "wasm64"), wasm_bindgen)]
 pub fn generate_rust_text_for_typescript_string(ts: String) -> String {
     let file = "/work.d.ts";
 
@@ -27,7 +27,7 @@ pub fn generate_rust_text_for_typescript_string(ts: String) -> String {
 mod test {
     use super::*;
 
-    #[cfg(target_family = "wasm")]
+    #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
     use wasm_bindgen_test::*;
 
     fn remove_whitespace(mut s: String) -> String {
@@ -35,8 +35,8 @@ mod test {
         s
     }
 
-    #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-    #[cfg_attr(not(target_family = "wasm"), test)]
+    #[cfg_attr(any(target_arch = "wasm32", target_arch = "wasm64"), wasm_bindgen_test)]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
     fn test_generate_rust_text_for_typescript_string() {
         let ts = r#"
             interface Abc {

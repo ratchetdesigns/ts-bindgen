@@ -21,3 +21,15 @@ default-features = false
 features = ["yew-components"]
 git = "https://github.com/siku2/rust-monaco"
 rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe"
+
+[dependencies.rustfmt]
+package = "rustfmt-nightly"
+git = "https://github.com/rust-lang/rustfmt"
+rev = "3d9b57a22e85a02edef13b8aff15ab800410ebad"
+
+# would like this to be [patch.crates-io.getrandom] since we don't actually need
+# this dependency but want to override a transitive dependency to add the "js"
+# feature
+[dependencies.getrandom]
+version = "^0.2.0"
+features = ["js"]

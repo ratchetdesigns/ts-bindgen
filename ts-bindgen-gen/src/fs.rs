@@ -27,7 +27,7 @@ pub trait Fs: Debug {
     }
 
     fn is_absolute_path(&self, path: &Path) -> bool {
-        if cfg!(target_family = "wasm") {
+        if cfg!(any(target_arch = "wasm32", target_arch = "wasm64")) {
             // wasm is_absolute checks path.has_root && path.prefix().is_some()
             // because the prefix check is only skipped for unix.
             // we don't care about the prefix.

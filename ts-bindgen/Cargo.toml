@@ -12,8 +12,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ts-bindgen-gen = { version = "0.1.0", path = "../ts-bindgen-gen" }
 
-[target.'cfg(target_family = "wasm")'.dependencies]
+[target.'cfg(any(target_arch = "wasm32", target_arch = "wasm64"))'.dependencies]
 wasm-bindgen = "0.2.63"
 
-[target.'cfg(target_family = "wasm")'.dev-dependencies]
+[target.'cfg(any(target_arch = "wasm32", target_arch = "wasm64"))'.dev-dependencies]
 wasm-bindgen-test = "0.3.13"
