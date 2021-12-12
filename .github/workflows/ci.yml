@@ -22,6 +22,10 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - name: Node setup
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
       - name: Build
         uses: actions-rs/cargo@v1
         with:
