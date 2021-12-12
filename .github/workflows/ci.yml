@@ -6,6 +6,9 @@ jobs:
   build_and_test:
     name: Build and test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        wasm_project: [ts-bindgen, ts-bindgen-web]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -51,3 +54,13 @@ jobs:
         with:
           command: doc
           args: --locked --all-features
+      - name: Wasm web builds
+        run: wasm-pack build --target web
+        working-directory: ${{ matrix.wasm_project }}
+        env:
+          CFG_RELEASE: nightly
+      - name: Wasm tests
+        run: wasm-pack test --node
+        working-directory: ${{ matrix.wasm_project }}
+        env:
+          CFG_RELEASE: nightly

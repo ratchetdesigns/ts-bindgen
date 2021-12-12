@@ -1,8 +1,8 @@
-use ::rustfmt::{format, Config, FormatReport, Input};
+use ::rustfmt::{format, Config, Input};
 use std::error::Error;
 
 pub fn rust_fmt(s: String) -> Result<String, Box<dyn Error>> {
-    let mut config = Config::default();
+    let config = Config::default();
     let report = format(Input::Text(s), &config, Default::default())?;
     let result = report
         .format_result()

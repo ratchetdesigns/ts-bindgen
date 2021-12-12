@@ -35,3 +35,6 @@ rev = "3d9b57a22e85a02edef13b8aff15ab800410ebad"
 [dependencies.getrandom]
 version = "^0.2.0"
 features = ["js"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.2"
