@@ -6,9 +6,6 @@ jobs:
   build_and_test:
     name: Build and test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        wasm_project: [ts-bindgen, ts-bindgen-web]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -54,6 +51,44 @@ jobs:
         with:
           command: doc
           args: --locked --all-features
+  build_and_test_wasm:
+    name: Build and test wasm
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        wasm_project: [ts-bindgen, ts-bindgen-web]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Build cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+            ./target
+          key: ${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+      - name: Rust stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          default: true
+      - name: Rust nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2021-04-26
+          target: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: wasm-pack --version=0.10.0
+      - name: Node setup
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
       - name: Wasm web builds
         run: wasm-pack build --target web
         working-directory: ${{ matrix.wasm_project }}
