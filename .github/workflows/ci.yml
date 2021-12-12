@@ -24,9 +24,10 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
       - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.3.0
+        uses: actions-rs/cargo@v1
         with:
-          version: '0.10.0'
+          command: install
+          args: wasm-pack --version=0.10.0
       - name: Node setup
         uses: actions/setup-node@v2
         with:
