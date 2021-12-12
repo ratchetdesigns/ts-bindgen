@@ -1,0 +1,5 @@
+[env]
+# unfortunately, env only works in cargo >1.56 https://github.com/rust-lang/cargo/pull/9411
+# put this here so we can eventually remove the need to build with
+# CFG_RELEASE=nightly wasm-pack build
+CFG_RELEASE = "nightly"
