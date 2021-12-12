@@ -1460,8 +1460,7 @@ dependencies = [
 [[package]]
 name = "rustc-ap-rustc_target"
 version = "717.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1091b575258702bfa242da2acc565720863d1f67ea29375fe9fa15246a9957c"
+source = "git+https://github.com/ratchetdesigns/rustc-ap-rustc_target?rev=7a7f1f9469ac213e05cf0330a5e7d9eaf631007c#7a7f1f9469ac213e05cf0330a5e7d9eaf631007c"
 dependencies = [
  "bitflags",
  "rustc-ap-rustc_data_structures",

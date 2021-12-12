@@ -36,5 +36,10 @@ rev = "3d9b57a22e85a02edef13b8aff15ab800410ebad"
 version = "^0.2.0"
 features = ["js"]
 
+[patch.crates-io.rustc-ap-rustc_target]
+version = "717.0.0"
+git = "https://github.com/ratchetdesigns/rustc-ap-rustc_target"
+rev = "7a7f1f9469ac213e05cf0330a5e7d9eaf631007c"
+
 [dev-dependencies]
 wasm-bindgen-test = "0.2"
