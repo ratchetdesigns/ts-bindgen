@@ -236,7 +236,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: de::Visitor<'de>,
     {
-        drop(self);
         visitor.visit_unit()
     }
 
