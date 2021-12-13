@@ -3,7 +3,7 @@ mod fmt;
 use fmt::rust_fmt;
 use monaco::{
     api::CodeEditorOptions,
-    sys::editor::BuiltinTheme,
+    sys::editor::{BuiltinTheme, IStandaloneCodeEditor},
     yew::{CodeEditor, CodeEditorLink},
 };
 use std::rc::Rc;
@@ -36,6 +36,15 @@ struct App {
 
 enum Msg {
     Generate,
+}
+
+fn set_auto_layout(editor: &CodeEditorLink) {
+    editor.with_editor(|model| {
+        let editor: &IStandaloneCodeEditor = model.as_ref();
+        let opts = editor.get_raw_options();
+        opts.set_automatic_layout(Some(true));
+        editor.update_options_editor(&opts);
+    });
 }
 
 impl Component for App {
@@ -72,6 +81,14 @@ impl Component for App {
         }
         false
     }
+
+    fn rendered(&mut self, _ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            set_auto_layout(&self.ts_link);
+            set_auto_layout(&self.rust_link);
+        }
+    }
+
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let on_generate = ctx.link().callback(|_| Msg::Generate);
