@@ -703,9 +703,33 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
             }) => {
                 let tps = render_type_params(type_params);
 
+                let is_class = target 
+                    .resolve_target_type()
+                    .map(|t| {
+                        matches!(t, TargetEnrichedTypeInfo::Class(_))
+                    })
+                    .unwrap_or(false);
+
+                // would like to alias traits here if
+                // target.resolve_target_type().map(IsTraitable::is_traitable)
+                // but trait aliases are useless.
+
+                let class_alias = if is_class {
+                    let target_class_name = to_internal_class_name(&target.to_name().1);
+                    let class_name = to_internal_class_name(&name);
+                    quote! {
+                        #[allow(dead_code, non_camel_case_types)]
+                        #vis type #class_name = #target_class_name;
+                    }
+                } else {
+                    quote! {}
+                };
+
                 quote! {
-                    #[allow(dead_code)]
+                    #[allow(dead_code, non_camel_case_types)]
                     #vis type #name #tps = #target;
+
+                    #class_alias
                 }
             }
             TargetEnrichedTypeInfo::Union(u) => {
@@ -1171,29 +1195,42 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     }
                 }
             }
-            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Default { src, .. }) => {
-                let ns = src.as_path().to_ns_path(*fs, type_name);
-                let vis = if is_exported {
-                    let vis = format_ident!("pub");
-                    quote! { #vis }
-                } else {
-                    quote! {}
+            TargetEnrichedTypeInfo::NamespaceImport(import) => {
+                let (src, import_name) = match import {
+                    NamespaceImport::Default { src, context } => {
+                        // we generally can't rely on a type default = ...
+                        // type alias because we can't use type aliases
+                        // as a trait, struct, etc.
+                        // so we need to check if our default name is an
+                        // alias and resolve it ourselves
+                        let import_name = context.types_by_ident_by_path
+                            .borrow()
+                            .get(src)
+                            .and_then(|types_by_ident| {
+                                types_by_ident.get(&TypeIdent::DefaultExport(src.clone()))
+                            })
+                            .map(|t| {
+                                if let TargetEnrichedTypeInfo::Alias(a) = &t.info {
+                                    a.target.to_name().1
+                                } else {
+                                    to_ident("default")
+                                }
+                            }).unwrap_or_else(|| to_ident("default"));
+                        (src, import_name)
+                    },
+                    NamespaceImport::Named {
+                        src,
+                        name: item_name,
+                        ..
+                    } => {
+                        (src, to_camel_case_ident(item_name))
+                    },
+                    NamespaceImport::All { .. } => {
+                        // handled above
+                        unreachable!();
+                    },
                 };
-                let default_export = to_ident("default");
 
-                quote! {
-                    #vis use #(#ns)::* ::#default_export as #name;
-                }
-            }
-            TargetEnrichedTypeInfo::NamespaceImport(
-                import
-                @
-                NamespaceImport::Named {
-                    src,
-                    name: item_name,
-                    ..
-                },
-            ) => {
                 let ns = src.as_path().to_ns_path(*fs, type_name);
                 let vis = if is_exported {
                     let vis = format_ident!("pub");
@@ -1201,7 +1238,6 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 } else {
                     quote! {}
                 };
-                let item_name = to_camel_case_ident(item_name);
 
                 let (is_traitable, is_class) = import
                     .resolve_target_type()
@@ -1214,27 +1250,32 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .unwrap_or((false, false));
 
                 let trait_import = if is_traitable {
-                    let trait_name = item_name.trait_name();
+                    // traits can't be referenced through an alias so we need
+                    // to get the actual trait name
+                    let trait_name = import_name.trait_name();
+                    let imported_trait_name = name.trait_name();
                     quote! {
-                        #[allow(unused)]
-                        #vis use #(#ns)::* ::#trait_name as #trait_name;
+                        #[allow(unused, non_camel_case_types)]
+                        #vis use #(#ns)::* ::#trait_name as #imported_trait_name;
                     }
                 } else {
                     quote! {}
                 };
 
                 let class_import = if is_class {
-                    let cls_name = to_internal_class_name(&item_name);
+                    let cls_name = to_internal_class_name(&import_name);
+                    let imported_cls_name = to_internal_class_name(&name);
                     quote! {
-                        #[allow(unused)]
-                        #vis use #(#ns)::* ::#cls_name as #cls_name;
+                        #[allow(unused, non_camel_case_types)]
+                        #vis use #(#ns)::* ::#cls_name as #imported_cls_name;
                     }
                 } else {
                     quote! {}
                 };
 
                 quote! {
-                    #vis use #(#ns)::* ::#item_name as #name;
+                    #[allow(unused)]
+                    #vis use #(#ns)::* ::#import_name as #name;
                     #trait_import
                     #class_import
                 }
@@ -1268,7 +1309,7 @@ impl ToTokens for TargetEnrichedTypeInfo {
                 }
             }
             TargetEnrichedTypeInfo::Alias(Alias { target, .. }) => {
-                // TODO: we should get the name of the alias, not the ponited-to name
+                // TODO: we should get the name of the alias, not the pointed-to name
                 quote! { #target }
             }
             TargetEnrichedTypeInfo::Array { item_type, .. } => {

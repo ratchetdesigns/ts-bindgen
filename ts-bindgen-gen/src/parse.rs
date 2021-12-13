@@ -1314,11 +1314,15 @@ impl TsTypes {
             return;
         }
 
-        let src = src.as_ref().expect("need a src").value.to_string();
-        let dir = ts_path.parent().expect("All files must have a parent");
-        let file = self
-            .process_module(Some(dir.to_path_buf()), &src)
-            .expect("failed to process module");
+        let file = match src.as_ref() {
+            Some(src) => {
+                let src = src.value.to_string();
+                let dir = ts_path.parent().expect("All files must have a parent");
+                self.process_module(Some(dir.to_path_buf()), &src)
+                    .expect("failed to process module")
+            },
+            None => ts_path.to_path_buf(),
+        };
 
         specifiers
             .iter()
@@ -1330,7 +1334,7 @@ impl TsTypes {
                     ),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::Named {
-                        src: file.to_path_buf(),
+                        src: file.clone(),
                         name: orig.sym.to_string(),
                     }),
                 },
@@ -1338,14 +1342,14 @@ impl TsTypes {
                     name: TypeName::for_name(ts_path, &exported.sym.to_string()),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::Default {
-                        src: file.to_path_buf(),
+                        src: file.clone(),
                     }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
                     name: TypeName::for_name(ts_path, &name.sym.to_string()),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::All {
-                        src: file.to_path_buf(),
+                        src: file.clone(),
                     }),
                 },
             })
@@ -1354,14 +1358,82 @@ impl TsTypes {
             });
     }
 
+    fn process_default_alias(
+        &mut self,
+        ts_path: &Path,
+        referent: TypeName,
+    ) {
+        let alias = Type {
+            name: TypeName::default_export_for(ts_path.to_path_buf()),
+            is_exported: true,
+            info: TypeInfo::Alias(Alias {
+                target: Box::new(TypeInfo::Ref(TypeRef {
+                    referent,
+                    type_params: Default::default(),
+                })),
+                type_params: Default::default(),
+            }),
+        };
+        self.set_type_for_name_for_file(ts_path, TypeIdent::DefaultExport(), alias);
+    }
+
+    fn process_default_export(
+        &mut self,
+        ts_path: &Path,
+        def_decl: &DefaultDecl,
+    ) {
+        let mut name_for_ident_with_default_alias = |ident: &Option<Ident>| -> TypeName {
+            match ident {
+                Some(ident) => {
+                    let name = ident.sym.to_string();
+                    let type_name = TypeName::for_name(ts_path, &name);
+                    self.process_default_alias(ts_path, type_name.clone());
+                    type_name
+                },
+                None => {
+                    TypeName::default_export_for(ts_path.to_path_buf())
+                },
+            }
+        };
+
+        match def_decl {
+            DefaultDecl::Class(class_expr) => {
+                let name = name_for_ident_with_default_alias(&class_expr.ident);
+                let info = self.process_class(ts_path, &name, &class_expr.class);
+                let type_id = name.name.clone();
+                let typ = Type {
+                    name,
+                    is_exported: true,
+                    info: info,
+                };
+                self.set_type_for_name_for_file(ts_path, type_id, typ);
+            },
+            DefaultDecl::TsInterfaceDecl(interface_decl) => {
+                let mut iface = self.process_ts_interface(ts_path, interface_decl);
+                iface.is_exported = true;
+                self.set_type_for_name_for_file(ts_path, iface.name.name.clone(), iface.clone());
+                self.process_default_alias(ts_path, iface.name.clone());
+            },
+            DefaultDecl::Fn(fn_expr) => {
+                let name = name_for_ident_with_default_alias(&fn_expr.ident);
+                let info = fn_expr.function.to_type_info(ts_path, self);
+                let type_id = name.name.clone();
+                let typ = Type {
+                    name,
+                    is_exported: true,
+                    info: info,
+                };
+                self.set_type_for_name_for_file(ts_path, type_id, typ);
+            },
+        }
+    }
+
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(ts_path, decl),
             ModuleDecl::ExportDecl(decl) => self.process_export_decl(ts_path, decl),
             ModuleDecl::ExportNamed(decl) => self.process_named_export(ts_path, decl),
-            ModuleDecl::ExportDefaultDecl(_decl) => {
-                println!("DEFAULT DECL, {:?}", _decl);
-            }
+            ModuleDecl::ExportDefaultDecl(decl) => self.process_default_export(ts_path, &decl.decl),
             ModuleDecl::ExportDefaultExpr(_decl) => {
                 println!("export default expr, {:?}", _decl);
             }
