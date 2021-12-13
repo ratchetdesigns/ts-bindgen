@@ -17,7 +17,7 @@ use crate::codegen::generics::{
 use crate::codegen::named::Named;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
-use crate::codegen::traits::render_trait_defn;
+use crate::codegen::traits::{render_trait_defn, IsTraitable, TraitName};
 use crate::codegen::type_ref_like::OwnedTypeRef;
 use crate::fs::Fs;
 use crate::identifier::{
@@ -666,8 +666,14 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         pub #extra_fields_name: std::collections::HashMap<String, #value_type>
                     });
                 }
-                let trait_defn =
-                    render_trait_defn(&name, js_name, type_params, is_exported, iface, &iface.context);
+                let trait_defn = render_trait_defn(
+                    &name,
+                    js_name,
+                    type_params,
+                    is_exported,
+                    iface,
+                    &iface.context,
+                );
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -788,11 +794,11 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     ],
                 );
                 let wrapper_struct_members = if type_params.is_empty() {
-                    vec![quote! { #internal_class_name }]
+                    vec![quote! { pub #internal_class_name }]
                 } else {
                     vec![
-                        quote! { #internal_class_name },
-                        quote! { std::marker::PhantomData #full_type_params },
+                        quote! { pub #internal_class_name },
+                        quote! { pub std::marker::PhantomData #full_type_params },
                     ]
                 };
                 let wrapper_from_internal_args = if type_params.is_empty() {
@@ -968,8 +974,14 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     })
                     .unzip();
 
-                let trait_defn =
-                    render_trait_defn(&name, js_name, type_params, is_exported, class, &class.context);
+                let trait_defn = render_trait_defn(
+                    &name,
+                    js_name,
+                    type_params,
+                    is_exported,
+                    class,
+                    &class.context,
+                );
 
                 quote! {
                     #[wasm_bindgen(module = #path)]
@@ -1173,11 +1185,15 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     #vis use #(#ns)::* ::#default_export as #name;
                 }
             }
-            TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::Named {
-                src,
-                name: item_name,
-                ..
-            }) => {
+            TargetEnrichedTypeInfo::NamespaceImport(
+                import
+                @
+                NamespaceImport::Named {
+                    src,
+                    name: item_name,
+                    ..
+                },
+            ) => {
                 let ns = src.as_path().to_ns_path(*fs, type_name);
                 let vis = if is_exported {
                     let vis = format_ident!("pub");
@@ -1187,8 +1203,40 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 };
                 let item_name = to_camel_case_ident(item_name);
 
+                let (is_traitable, is_class) = import
+                    .resolve_target_type()
+                    .map(|t| {
+                        (
+                            t.is_traitable(),
+                            matches!(t, TargetEnrichedTypeInfo::Class(_)),
+                        )
+                    })
+                    .unwrap_or((false, false));
+
+                let trait_import = if is_traitable {
+                    let trait_name = item_name.trait_name();
+                    quote! {
+                        #[allow(unused)]
+                        #vis use #(#ns)::* ::#trait_name as #trait_name;
+                    }
+                } else {
+                    quote! {}
+                };
+
+                let class_import = if is_class {
+                    let cls_name = to_internal_class_name(&item_name);
+                    quote! {
+                        #[allow(unused)]
+                        #vis use #(#ns)::* ::#cls_name as #cls_name;
+                    }
+                } else {
+                    quote! {}
+                };
+
                 quote! {
                     #vis use #(#ns)::* ::#item_name as #name;
+                    #trait_import
+                    #class_import
                 }
             }
             _ => {

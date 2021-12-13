@@ -9,7 +9,7 @@ use crate::ir::{
     TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::iter;
@@ -203,6 +203,7 @@ where
     };
 
     quote! {
+        #[allow(non_camel_case_types)]
         #vis trait #trait_name #tps #super_decl {
             #(#method_decls)*
         }
@@ -229,6 +230,20 @@ pub struct Super {
 type BoxedSuperIter<'a> = Box<dyn Iterator<Item = Super> + 'a>;
 type BoxedTypeRefIter<'a> = Box<dyn Iterator<Item = TypeRef> + 'a>;
 type BoxedMemberIter<'a> = Box<dyn Iterator<Item = (String, Member)> + 'a>;
+
+pub trait IsTraitable {
+    fn is_traitable(&self) -> bool;
+}
+
+impl IsTraitable for TargetEnrichedTypeInfo {
+    fn is_traitable(&self) -> bool {
+        match self {
+            TargetEnrichedTypeInfo::Interface(_) => true,
+            TargetEnrichedTypeInfo::Class(_) => true,
+            _ => false,
+        }
+    }
+}
 
 pub trait Traitable {
     fn has_super_traits(&self) -> bool;
@@ -517,13 +532,13 @@ impl Traitable for TypeRef {
     }
 }
 
-trait TraitName {
+pub trait TraitName {
     fn trait_name(&self) -> Identifier;
 }
 
 impl TraitName for Identifier {
     fn trait_name(&self) -> Identifier {
-        self.suffix_name("Trait")
+        self.suffix_name("_Trait")
     }
 }
 
