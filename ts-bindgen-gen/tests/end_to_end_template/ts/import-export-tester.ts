@@ -3,6 +3,11 @@ import Interface from './default-interface-export';
 import Class from './default-class-export';
 export { default as f } from './default-fn-export';
 
+interface SameNameExport {}
+interface RenamedExport {}
+
+export { SameNameExport, RenamedExport as DifferentNameExport };
+
 export interface Iface2 extends IFace {
   b: number;
 }

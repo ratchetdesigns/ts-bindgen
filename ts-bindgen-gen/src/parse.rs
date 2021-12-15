@@ -644,7 +644,7 @@ impl TsTypes {
         Ok(ts_path)
     }
 
-    fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
+    fn get_possibly_ns_qualified_name(&mut self, name: TypeIdent) -> TypeIdent {
         match self.namespace_stack.last() {
             Some(ns) => {
                 let mut ns = ns.clone();
@@ -658,20 +658,19 @@ impl TsTypes {
                     }
                 }
 
-                self.types_by_name_by_file
-                    .entry(file.to_path_buf())
-                    .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-                        names_to_types.insert(TypeIdent::QualifiedName(ns), typ);
-                    });
+                TypeIdent::QualifiedName(ns)
             }
-            None => {
-                self.types_by_name_by_file
-                    .entry(file.to_path_buf())
-                    .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-                        names_to_types.insert(name.clone(), typ);
-                    });
-            }
+            None => name,
         }
+    }
+
+    fn set_type_for_name_for_file(&mut self, file: &Path, name: TypeIdent, typ: Type) {
+        let name = self.get_possibly_ns_qualified_name(name);
+        self.types_by_name_by_file
+            .entry(file.to_path_buf())
+            .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                names_to_types.insert(name, typ);
+            });
     }
 
     fn process_import_decl(
@@ -1319,18 +1318,62 @@ impl TsTypes {
             src, specifiers, ..
         }: &NamedExport,
     ) {
-        if src.is_none() && specifiers.is_empty() {
+        if src.is_none() {
+            // export { x as y };
+            // we need to create an alias for the name
+            specifiers.iter().for_each(|spec| match spec {
+                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
+                    let orig = orig.sym.to_string();
+                    let orig = TypeIdent::Name(orig);
+
+                    if exported.is_none() {
+                        // export { x };
+                        // we need to just mark the name as exported
+                        let name = self.get_possibly_ns_qualified_name(orig);
+                        self.types_by_name_by_file
+                            .entry(ts_path.to_path_buf())
+                            .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                                names_to_types.entry(name).and_modify(|typ: &mut Type| {
+                                    typ.is_exported = true;
+                                });
+                            });
+                    } else {
+                        // export { x as y };
+                        // create an exported alias from y to x
+                        let exported = exported.as_ref().unwrap();
+
+                        let typ = Type {
+                            name: TypeName::for_name(ts_path, &exported.sym.to_string()),
+                            is_exported: true,
+                            info: TypeInfo::Alias(Alias {
+                                target: Box::new(TypeInfo::Ref(TypeRef {
+                                    referent: TypeName {
+                                        file: ts_path.to_path_buf(),
+                                        name: orig,
+                                    },
+                                    type_params: Default::default(),
+                                })),
+                                type_params: Default::default(),
+                            }),
+                        };
+                        self.set_type_for_name_for_file(ts_path, typ.name.name.clone(), typ);
+                    }
+                }
+                _ => {
+                    println!("we don't support unnamed export statements");
+                    panic!("unnamed export");
+                }
+            });
+
             return;
         }
 
-        let file = match src.as_ref() {
-            Some(src) => {
-                let src = src.value.to_string();
-                let dir = ts_path.parent().expect("All files must have a parent");
-                self.process_module(Some(dir.to_path_buf()), &src)
-                    .expect("failed to process module")
-            }
-            None => ts_path.to_path_buf(),
+        let src = src.as_ref().unwrap();
+        let file = {
+            let src = src.value.to_string();
+            let dir = ts_path.parent().expect("All files must have a parent");
+            self.process_module(Some(dir.to_path_buf()), &src)
+                .expect("failed to process module")
         };
 
         specifiers
@@ -1339,7 +1382,7 @@ impl TsTypes {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
                     let imported_name = orig.sym.to_string();
                     let info = if imported_name == "default" {
-                        // import { default as X } from '...'
+                        // export { default as X } from '...'
                         TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() })
                     } else {
                         TypeInfo::NamespaceImport(NamespaceImport::Named {
