@@ -14,7 +14,7 @@ use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
     render_type_params_with_lifetimes, ResolveGeneric,
 };
-use crate::codegen::named::Named;
+use crate::codegen::named::{CasedTypeIdent, Named, SimpleNamed};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
 use crate::codegen::traits::{render_trait_defn, IsTraitable, TraitName};
@@ -131,6 +131,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, ModDef, FS> {
             quote! {}
         } else {
             quote! {
+                #[allow(unused)]
                 use wasm_bindgen::prelude::*;
             }
         };
@@ -593,7 +594,11 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
         let WithFs { data: typ, fs } = self;
         let type_name = &typ.name;
         let is_exported = typ.is_exported;
-        let (js_name, name) = type_name.to_name();
+        let cased_type_name = CasedTypeIdent {
+            type_ident: type_name,
+            type_info: &typ.info,
+        };
+        let (js_name, name) = cased_type_name.to_name();
         let vis = if is_exported {
             let vis = format_ident!("pub");
             quote! { #vis }
@@ -703,11 +708,9 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
             }) => {
                 let tps = render_type_params(type_params);
 
-                let is_class = target 
+                let is_class = target
                     .resolve_target_type()
-                    .map(|t| {
-                        matches!(t, TargetEnrichedTypeInfo::Class(_))
-                    })
+                    .map(|t| matches!(t, TargetEnrichedTypeInfo::Class(_)))
                     .unwrap_or(false);
 
                 // would like to alias traits here if
@@ -725,11 +728,17 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     quote! {}
                 };
 
-                quote! {
-                    #[allow(dead_code, non_camel_case_types)]
-                    #vis type #name #tps = #target;
+                if matches!(type_name, TypeIdent::DefaultExport(_)) {
+                    // we don't emit default export aliases. we look them up
+                    // when referenced.
+                    quote! {}
+                } else {
+                    quote! {
+                        #[allow(dead_code, non_camel_case_types)]
+                        #vis type #name #tps = #target;
 
-                    #class_alias
+                        #class_alias
+                    }
                 }
             }
             TargetEnrichedTypeInfo::Union(u) => {
@@ -1203,7 +1212,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         // as a trait, struct, etc.
                         // so we need to check if our default name is an
                         // alias and resolve it ourselves
-                        let import_name = context.types_by_ident_by_path
+                        let import_name = context
+                            .types_by_ident_by_path
                             .borrow()
                             .get(src)
                             .and_then(|types_by_ident| {
@@ -1215,20 +1225,29 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 } else {
                                     to_ident("default")
                                 }
-                            }).unwrap_or_else(|| to_ident("default"));
+                            })
+                            .unwrap_or_else(|| to_ident("default"));
                         (src, import_name)
-                    },
+                    }
                     NamespaceImport::Named {
                         src,
                         name: item_name,
-                        ..
+                        context,
                     } => {
-                        (src, to_camel_case_ident(item_name))
-                    },
+                        let tr = TypeRef {
+                            referent: TypeIdent::Name {
+                                file: src.to_path_buf(),
+                                name: item_name.clone(),
+                            },
+                            type_params: Default::default(),
+                            context: context.clone(),
+                        };
+                        (src, tr.to_name().1)
+                    }
                     NamespaceImport::All { .. } => {
                         // handled above
                         unreachable!();
-                    },
+                    }
                 };
 
                 let ns = src.as_path().to_ns_path(*fs, type_name);
@@ -1298,12 +1317,8 @@ impl ToTokens for TargetEnrichedTypeInfo {
             TargetEnrichedTypeInfo::Enum(_) => {
                 panic!("enum in type info");
             }
-            TargetEnrichedTypeInfo::Ref(TypeRef {
-                referent,
-                type_params: _,
-                ..
-            }) => {
-                let (_, local_name) = referent.to_name();
+            TargetEnrichedTypeInfo::Ref(type_ref) => {
+                let local_name = type_ref.to_simple_name();
                 quote! {
                     #local_name
                 }
@@ -1389,8 +1404,8 @@ impl ToTokens for TargetEnrichedTypeInfo {
 impl ToTokens for TypeRef {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = {
-            let (_, name) = self.referent.to_name();
             if matches!(&self.referent, TypeIdent::Builtin(Builtin::Fn)) {
+                let name = self.to_simple_name();
                 let params = self
                     .params()
                     .map(|p| p.as_exposed_to_rust_unnamed_param_list());
@@ -1400,11 +1415,9 @@ impl ToTokens for TypeRef {
                 }
             } else if matches!(&self.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid)) {
                 quote! { () }
-            } else if self.type_params.is_empty() {
-                quote! { #name }
             } else {
-                let type_params = self.type_params.iter().map(|p| quote! { #p });
-                quote! { #name<#(#type_params),*> }
+                let (_, name) = self.to_name();
+                quote! { #name }
             }
         };
 
@@ -1424,8 +1437,7 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         let js_field_name = self.js_field_name;
         let field_name = to_snake_case_ident(js_field_name);
         let typ = self.typ;
-        let (_, type_name) = typ.referent.to_name();
-        let type_name = type_name.to_string();
+        let type_name = typ.to_simple_name().to_string();
         let type_param = self.type_params.get(&type_name);
         let mut serde_attrs = vec![quote! { rename = #js_field_name }];
         if type_param.is_some() {

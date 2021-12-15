@@ -143,7 +143,7 @@ impl ResolveTargetType for NamespaceImport {
             ),
             NamespaceImport::All { src: _, context: _ } => {
                 // TODO
-                unimplemented!()
+                None
             }
         }
     }

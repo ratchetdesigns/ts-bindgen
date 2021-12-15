@@ -1,16 +1,18 @@
-use crate::codegen::named::Named;
+use crate::codegen::named::{CasedTypeIdent, Named};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
 use crate::codegen::traits::TraitMember;
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::identifier::{to_snake_case_ident, Identifier};
-use crate::ir::{Builtin, Context, Ctor, Func, Param, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use crate::ir::{
+    Builtin, Class, Context, Ctor, Func, Param, TargetEnrichedTypeInfo, TypeIdent, TypeRef,
+};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::iter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct TransformedParam<'a, T: Fn(&TypeRef) -> TokenStream2>(&'a Param, T);
 
@@ -871,12 +873,27 @@ impl ParamExt for SelfParam {
     }
 
     fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
-        let (_, class_name) = self.class_name.to_name();
-        quote! { this: &#class_name }
+        let class_name = self.as_exposed_to_js_unnamed_param_list();
+        quote! { this: #class_name }
     }
 
     fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
-        let (_, class_name) = self.class_name.to_name();
+        // TODO: this is very ugly... would love to just pass in the "type"
+        // instead of an instance of type info.
+        let class_name = CasedTypeIdent {
+            type_ident: &self.class_name,
+            type_info: &TargetEnrichedTypeInfo::Class(Class {
+                super_class: None,
+                members: Default::default(),
+                type_params: Default::default(),
+                implements: Default::default(),
+                context: Context {
+                    types_by_ident_by_path: Default::default(),
+                    path: Path::new("/").to_path_buf(),
+                },
+            }),
+        };
+        let class_name = class_name.to_name().1;
         quote! { &#class_name}
     }
 

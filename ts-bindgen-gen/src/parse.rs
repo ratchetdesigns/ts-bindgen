@@ -692,16 +692,25 @@ impl TsTypes {
             ImportSpecifier::Named(ImportNamedSpecifier {
                 local, imported, ..
             }) => {
+                let name = imported.as_ref().unwrap_or(local).sym.to_string();
+                let info = if name == "default" {
+                    // import { default as X } from '...'
+                    TypeInfo::NamespaceImport(NamespaceImport::Default {
+                        src: file.to_path_buf(),
+                    })
+                } else {
+                    TypeInfo::NamespaceImport(NamespaceImport::Named {
+                        src: file.to_path_buf(),
+                        name,
+                    })
+                };
                 self.set_type_for_name_for_file(
                     ts_path,
                     TypeIdent::Name(local.sym.to_string()),
                     Type {
                         name: TypeName::for_name(ts_path, &local.sym.to_string()),
                         is_exported: false,
-                        info: TypeInfo::NamespaceImport(NamespaceImport::Named {
-                            src: file.to_path_buf(),
-                            name: imported.as_ref().unwrap_or(local).sym.to_string(),
-                        }),
+                        info,
                     },
                 );
             }
@@ -1320,37 +1329,43 @@ impl TsTypes {
                 let dir = ts_path.parent().expect("All files must have a parent");
                 self.process_module(Some(dir.to_path_buf()), &src)
                     .expect("failed to process module")
-            },
+            }
             None => ts_path.to_path_buf(),
         };
 
         specifiers
             .iter()
             .map(|spec| match spec {
-                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => Type {
-                    name: TypeName::for_name(
-                        ts_path,
-                        &exported.as_ref().unwrap_or(orig).sym.to_string(),
-                    ),
-                    is_exported: true,
-                    info: TypeInfo::NamespaceImport(NamespaceImport::Named {
-                        src: file.clone(),
-                        name: orig.sym.to_string(),
-                    }),
-                },
+                ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
+                    let imported_name = orig.sym.to_string();
+                    let info = if imported_name == "default" {
+                        // import { default as X } from '...'
+                        TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() })
+                    } else {
+                        TypeInfo::NamespaceImport(NamespaceImport::Named {
+                            src: file.clone(),
+                            name: imported_name,
+                        })
+                    };
+
+                    Type {
+                        name: TypeName::for_name(
+                            ts_path,
+                            &exported.as_ref().unwrap_or(orig).sym.to_string(),
+                        ),
+                        is_exported: true,
+                        info,
+                    }
+                }
                 ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Type {
                     name: TypeName::for_name(ts_path, &exported.sym.to_string()),
                     is_exported: true,
-                    info: TypeInfo::NamespaceImport(NamespaceImport::Default {
-                        src: file.clone(),
-                    }),
+                    info: TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
                     name: TypeName::for_name(ts_path, &name.sym.to_string()),
                     is_exported: true,
-                    info: TypeInfo::NamespaceImport(NamespaceImport::All {
-                        src: file.clone(),
-                    }),
+                    info: TypeInfo::NamespaceImport(NamespaceImport::All { src: file.clone() }),
                 },
             })
             .for_each(|typ| {
@@ -1358,11 +1373,7 @@ impl TsTypes {
             });
     }
 
-    fn process_default_alias(
-        &mut self,
-        ts_path: &Path,
-        referent: TypeName,
-    ) {
+    fn process_default_alias(&mut self, ts_path: &Path, referent: TypeName) {
         let alias = Type {
             name: TypeName::default_export_for(ts_path.to_path_buf()),
             is_exported: true,
@@ -1377,11 +1388,7 @@ impl TsTypes {
         self.set_type_for_name_for_file(ts_path, TypeIdent::DefaultExport(), alias);
     }
 
-    fn process_default_export(
-        &mut self,
-        ts_path: &Path,
-        def_decl: &DefaultDecl,
-    ) {
+    fn process_default_export(&mut self, ts_path: &Path, def_decl: &DefaultDecl) {
         let mut name_for_ident_with_default_alias = |ident: &Option<Ident>| -> TypeName {
             match ident {
                 Some(ident) => {
@@ -1389,10 +1396,8 @@ impl TsTypes {
                     let type_name = TypeName::for_name(ts_path, &name);
                     self.process_default_alias(ts_path, type_name.clone());
                     type_name
-                },
-                None => {
-                    TypeName::default_export_for(ts_path.to_path_buf())
-                },
+                }
+                None => TypeName::default_export_for(ts_path.to_path_buf()),
             }
         };
 
@@ -1407,13 +1412,13 @@ impl TsTypes {
                     info: info,
                 };
                 self.set_type_for_name_for_file(ts_path, type_id, typ);
-            },
+            }
             DefaultDecl::TsInterfaceDecl(interface_decl) => {
                 let mut iface = self.process_ts_interface(ts_path, interface_decl);
                 iface.is_exported = true;
                 self.set_type_for_name_for_file(ts_path, iface.name.name.clone(), iface.clone());
                 self.process_default_alias(ts_path, iface.name.clone());
-            },
+            }
             DefaultDecl::Fn(fn_expr) => {
                 let name = name_for_ident_with_default_alias(&fn_expr.ident);
                 let info = fn_expr.function.to_type_info(ts_path, self);
@@ -1424,7 +1429,7 @@ impl TsTypes {
                     info: info,
                 };
                 self.set_type_for_name_for_file(ts_path, type_id, typ);
-            },
+            }
         }
     }
 

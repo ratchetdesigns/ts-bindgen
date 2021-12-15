@@ -1,4 +1,4 @@
-use crate::codegen::named::Named;
+use crate::codegen::named::SimpleNamed;
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::codegen::ResolveTargetType;
 use crate::identifier::to_camel_case_ident;
@@ -24,7 +24,7 @@ impl ResolveGeneric for TypeRef {
     ) -> Cow<'a, Self> {
         // TODO: type_envs and type_params should key off of something better than String...
         let mut resolved = type_env
-            .get(&self.referent.to_name().1.to_string())
+            .get(&self.to_simple_name().to_string())
             .unwrap_or(self)
             .clone();
         resolved.type_params = resolved

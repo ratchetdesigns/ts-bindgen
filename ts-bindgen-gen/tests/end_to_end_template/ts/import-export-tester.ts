@@ -1,6 +1,7 @@
 import { IFace, Cls } from './trait-import';
 import Interface from './default-interface-export';
 import Class from './default-class-export';
+export { default as f } from './default-fn-export';
 
 export interface Iface2 extends IFace {
   b: number;
