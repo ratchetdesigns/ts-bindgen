@@ -49,14 +49,14 @@ mod test {
             "pub struct Abc",
             "pub world: String",
             "pub hello: f64",
-            "pub trait AbcTrait",
+            "pub trait Abc_Trait",
         ];
 
         let result = remove_whitespace(generate_rust_text_for_typescript_string(ts.to_string()));
-        let result_ok = expected_contents.iter()
+        let result_ok = expected_contents
+            .iter()
             .all(|c| result.contains(&remove_whitespace(c.to_string())));
 
-        println!("HERE {:?}", &result);
         assert!(result_ok);
     }
 }
