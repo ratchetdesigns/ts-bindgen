@@ -586,7 +586,7 @@ impl JsModulePath for Context {
 }
 
 fn to_internal_class_name(name: &Identifier) -> Identifier {
-    name.suffix_name("_class")
+    name.suffix_name("_Class")
 }
 
 impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
