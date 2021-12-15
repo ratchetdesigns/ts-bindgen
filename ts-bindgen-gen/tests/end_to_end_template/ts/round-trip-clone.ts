@@ -58,7 +58,6 @@ export type AnyType = A | MyEnum | Base | Derived | Abc | Def | MaybeNumber | My
 
 export type RoundTripCloneFn = (input: AnyType) => AnyType;
 
-// TODO: because we serialize to json, we turn undefined into a missing key
 function without<T, P extends keyof T>(obj: T, prop: P): Omit<T, P> {
   let o = { ...obj };
   delete o[prop];
