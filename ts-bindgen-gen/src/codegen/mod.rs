@@ -802,6 +802,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 quote! {
                     #[wasm_bindgen(module=#path)]
                     extern "C" {
+                        #[allow(non_snake_case)]
                         #[wasm_bindgen(#(#attrs),*)]
                         #internal_func
                     }
@@ -953,6 +954,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }
 
                                 let member_def = quote! {
+                                    #[allow(non_snake_case)]
                                     #[wasm_bindgen(#(#attrs),*)]
                                     #f;
                                 };

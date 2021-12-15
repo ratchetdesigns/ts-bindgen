@@ -544,6 +544,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             let f = p.js_wrapper_fn();
             f.map(|f| {
                 quote! {
+                    #[allow(non_snake_case)]
                     let #name = #f;
                 }
             })
@@ -803,7 +804,7 @@ impl<T: WrappedParam> ParamExt for T {
     }
 
     fn local_fn_name(&self) -> Identifier {
-        to_snake_case_ident(format!("__tsb_local_{}", self.name()))
+        to_snake_case_ident(self.name()).prefix_name("__TSB_Local_")
     }
 
     fn rust_to_js_conversion(&self) -> TokenStream2 {
@@ -954,7 +955,7 @@ pub struct InternalFunc<'a> {
 
 impl<'a> InternalFunc<'a> {
     pub fn to_internal_rust_name(js_name: &str) -> Identifier {
-        to_snake_case_ident(format!("__tsb_{}", js_name))
+        to_snake_case_ident(js_name).prefix_name("__TSB_")
     }
 }
 
