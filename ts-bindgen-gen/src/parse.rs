@@ -261,8 +261,7 @@ impl FnParamExt for TsFnParam {
             TsFnParam::Ident(ident) => ident.to_param(ts_path, i, ts_types),
             TsFnParam::Object(obj) => obj.to_param(ts_path, i, ts_types),
             TsFnParam::Rest(rest) => rest.to_param(ts_path, i, ts_types),
-            // TODO: handle array
-            _ => panic!("we only support ident params for methods"),
+            TsFnParam::Array(array) => array.to_param(ts_path, i, ts_types),
         }
     }
 }
@@ -279,10 +278,8 @@ impl FnParamExt for Pat {
             Pat::Ident(ident) => ident.to_param(ts_path, i, ts_types),
             Pat::Object(obj) => obj.to_param(ts_path, i, ts_types),
             Pat::Rest(rest) => rest.to_param(ts_path, i, ts_types),
-            // TODO: handle array
-            _ => {
-                panic!("we only support ident params for methods")
-            }
+            Pat::Array(array) => array.to_param(ts_path, i, ts_types),
+            _ => panic!("unhandled param pattern"),
         }
     }
 }
@@ -336,6 +333,22 @@ impl FnParamExt for RestPat {
                     _ => t,
                 })
                 .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
+        }
+    }
+}
+
+impl FnParamExt for ArrayPat {
+    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Param {
+        Param {
+            name: format!("arg{}", i),
+            is_variadic: false,
+            type_info: self
+                .type_ann
+                .as_ref()
+                .map(|t| ts_types.process_type(ts_path, &t.type_ann))
+                .unwrap_or(TypeInfo::Array {
+                    item_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+                }),
         }
     }
 }
@@ -1668,7 +1681,7 @@ mod test {
 
         if let TypeInfo::Func(f) = &f.info {
             assert_eq!(f.params.len(), 1);
-            assert_eq!(f.params.first().unwrap(), expected_param,);
+            assert_eq!(f.params.first().unwrap(), expected_param);
         } else {
             assert!(false);
         }
@@ -1679,10 +1692,10 @@ mod test {
     #[test]
     fn test_fn_param_array_destructure() -> Result<(), swc_ecma_parser::error::Error> {
         test_first_fn_param(
-            r#"export declare function arrayPat(a: [string, number]);"#,
+            r#"export declare function arrayPat([a, b]: [string, number]);"#,
             "arrayPat",
             &Param {
-                name: "a".to_string(),
+                name: "arg0".to_string(),
                 type_info: TypeInfo::Tuple(Tuple {
                     types: vec![
                         TypeInfo::PrimitiveString(PrimitiveString()),
