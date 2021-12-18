@@ -1844,4 +1844,24 @@ mod test {
             }
         )
     }
+
+    #[test]
+    fn test_interface_indexer() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export interface A {
+                [n: string]: number;
+            }"#,
+            "A",
+            TypeInfo::Interface(i),
+            {
+                assert!(i.fields.is_empty());
+                assert!(i.indexer.is_some());
+                let indexer = i.indexer.as_ref().unwrap();
+                assert_eq!(
+                    *indexer.type_info,
+                    TypeInfo::PrimitiveNumber(PrimitiveNumber())
+                );
+            }
+        )
+    }
 }
