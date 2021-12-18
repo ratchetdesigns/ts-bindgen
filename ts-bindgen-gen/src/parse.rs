@@ -1187,10 +1187,18 @@ impl TsTypes {
                         Member::Method(method.to_member_func(ts_path, self, name)),
                     )),
                     ClassMember::PrivateMethod(_) => None,
-                    ClassMember::ClassProp(prop) => Some((
-                        prop.key().expect("we only handle some prop key types"),
-                        Member::Property(prop.to_type_info(ts_path, self)),
-                    )),
+                    ClassMember::ClassProp(prop)
+                        if prop
+                            .accessibility
+                            .map(|a| a != Accessibility::Private)
+                            .unwrap_or(true) =>
+                    {
+                        Some((
+                            prop.key().expect("we only handle some prop key types"),
+                            Member::Property(prop.to_type_info(ts_path, self)),
+                        ))
+                    }
+                    ClassMember::ClassProp(_) => None,
                     ClassMember::PrivateProp(_) => None,
                     ClassMember::TsIndexSignature(_) => None,
                     ClassMember::Empty(_) => None,
