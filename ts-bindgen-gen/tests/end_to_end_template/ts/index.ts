@@ -6,6 +6,7 @@ import {AInt, testObj as genericTestObj, testString as genericTestString, testGe
 import './import-export-tester';
 export * as TypeOps from './type-operators';
 export * as destructureParamTest from './destructure-param-test';
+export * as interfaceTest from './interface-test';
 
 export function runTest<G>(
   cloneFn: RoundTripCloneFn,

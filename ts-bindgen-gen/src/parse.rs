@@ -181,6 +181,18 @@ impl ExprKeyed for TsMethodSignature {
     }
 }
 
+impl ExprKeyed for TsGetterSignature {
+    fn expr_key(&self) -> &Expr {
+        &*self.key
+    }
+}
+
+impl ExprKeyed for TsSetterSignature {
+    fn expr_key(&self) -> &Expr {
+        &*self.key
+    }
+}
+
 impl ExprKeyed for ClassProp {
     fn expr_key(&self) -> &Expr {
         &*self.key
@@ -1095,6 +1107,18 @@ impl TsTypes {
                     method.to_type_info(ts_path, self),
                 )),
                 TsTypeElement::TsIndexSignature(TsIndexSignature { .. }) => None,
+                TsTypeElement::TsGetterSignature(getter) => Some((
+                    getter.key().expect("bad getter key"),
+                    getter
+                        .type_ann
+                        .as_ref()
+                        .map(|t| self.process_type(ts_path, &*t.type_ann))
+                        .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                )),
+                TsTypeElement::TsSetterSignature(setter) => Some((
+                    setter.key().expect("bad setter key"),
+                    setter.param.to_param(ts_path, 0, self).type_info,
+                )),
                 // TODO: add other variants
                 _ => {
                     println!("unknown_variant: {:?}", el);
@@ -1781,6 +1805,42 @@ mod test {
             TypeInfo::Interface(i),
             {
                 assert_eq!(i.fields.len(), 1);
+                let n = i.fields.get("n");
+                assert!(n.is_some());
+                let n = n.unwrap();
+                assert_eq!(*n, TypeInfo::PrimitiveNumber(PrimitiveNumber()));
+            }
+        )
+    }
+
+    #[test]
+    fn test_interface_computed_props() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export interface A {
+                get num(): number;
+                set num(n: number);
+                get getter(): string;
+                set setter(s: string);
+            }"#,
+            "A",
+            TypeInfo::Interface(i),
+            {
+                assert_eq!(i.fields.len(), 3);
+
+                let num = i.fields.get("num");
+                assert!(num.is_some());
+                let num = num.unwrap();
+                assert_eq!(*num, TypeInfo::PrimitiveNumber(PrimitiveNumber()));
+
+                let getter = i.fields.get("getter");
+                assert!(getter.is_some());
+                let getter = getter.unwrap();
+                assert_eq!(*getter, TypeInfo::PrimitiveString(PrimitiveString()));
+
+                let setter = i.fields.get("setter");
+                assert!(setter.is_some());
+                let setter = setter.unwrap();
+                assert_eq!(*setter, TypeInfo::PrimitiveString(PrimitiveString()));
             }
         )
     }
