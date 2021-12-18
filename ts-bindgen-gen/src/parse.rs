@@ -872,29 +872,33 @@ impl TsTypes {
         ts_path: &Path,
         TsTypeLit { members, .. }: &TsTypeLit,
     ) -> TypeInfo {
-        // TODO: anonymous interfaces show up as a type lit
-        // e.g. function(a: {p: number})
-        if members.len() != 1 || !members.first().expect("no members").is_ts_index_signature() {
-            panic!("Bad type lit, {:?}, in {:?}", members, ts_path);
+        if members.len() == 1 && members.first().unwrap().is_ts_index_signature() {
+            // mapped param, e.g. function f(a: {[n: string]: string]});
+            let mem = members.first().unwrap();
+            if let TsTypeElement::TsIndexSignature(index_sig) = mem {
+                return TypeInfo::Mapped {
+                    value_type: Box::new(
+                        self.process_type(
+                            ts_path,
+                            &index_sig
+                                .type_ann
+                                .as_ref()
+                                .expect("Need a type for a mapped type")
+                                .type_ann,
+                        ),
+                    ),
+                };
+            } else {
+                panic!("bad members for mapped type, {:?}", members);
+            }
         }
 
-        let mem = members.first().expect("no members for mapped type");
-        if let TsTypeElement::TsIndexSignature(index_sig) = mem {
-            TypeInfo::Mapped {
-                value_type: Box::new(
-                    self.process_type(
-                        ts_path,
-                        &index_sig
-                            .type_ann
-                            .as_ref()
-                            .expect("Need a type for a mapped type")
-                            .type_ann,
-                    ),
-                ),
-            }
-        } else {
-            panic!("bad members for mapped type, {:?}", members);
-        }
+        TypeInfo::Interface(Interface {
+            indexer: self.process_interface_indexer(ts_path, members),
+            extends: Default::default(),
+            fields: self.process_interface_members(ts_path, members),
+            type_params: Default::default(),
+        })
     }
 
     fn process_literal_type(
@@ -1050,6 +1054,43 @@ impl TsTypes {
         }
     }
 
+    fn process_interface_indexer(
+        &mut self,
+        ts_path: &Path,
+        members: &[TsTypeElement],
+    ) -> Option<Indexer> {
+        members.iter().find_map(|el| match el {
+            TsTypeElement::TsIndexSignature(indexer) => Some(indexer.to_indexer(ts_path, self)),
+            _ => None,
+        })
+    }
+
+    fn process_interface_members(
+        &mut self,
+        ts_path: &Path,
+        members: &[TsTypeElement],
+    ) -> HashMap<String, TypeInfo> {
+        members
+            .iter()
+            .filter_map(|el| match el {
+                TsTypeElement::TsPropertySignature(prop) => Some((
+                    prop.key().expect("bad prop key"),
+                    prop.to_type_info(ts_path, self),
+                )),
+                TsTypeElement::TsMethodSignature(method) => Some((
+                    method.key().expect("bad method key"),
+                    method.to_type_info(ts_path, self),
+                )),
+                TsTypeElement::TsIndexSignature(TsIndexSignature { .. }) => None,
+                // TODO: add other variants
+                _ => {
+                    println!("unknown_variant: {:?}", el);
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn process_ts_interface(
         &mut self,
         ts_path: &Path,
@@ -1065,36 +1106,12 @@ impl TsTypes {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
             info: TypeInfo::Interface(Interface {
-                indexer: body.body.iter().find_map(|el| match el {
-                    TsTypeElement::TsIndexSignature(indexer) => {
-                        Some(indexer.to_indexer(ts_path, self))
-                    }
-                    _ => None,
-                }),
+                indexer: self.process_interface_indexer(ts_path, &body.body),
                 extends: extends
                     .iter()
                     .map(|e| BaseClass::Unresolved(Source::from(self, ts_path, e).into()))
                     .collect(),
-                fields: body
-                    .body
-                    .iter()
-                    .filter_map(|el| match el {
-                        TsTypeElement::TsPropertySignature(prop) => Some((
-                            prop.key().expect("bad prop key"),
-                            prop.to_type_info(ts_path, self),
-                        )),
-                        TsTypeElement::TsMethodSignature(method) => Some((
-                            method.key().expect("bad method key"),
-                            method.to_type_info(ts_path, self),
-                        )),
-                        TsTypeElement::TsIndexSignature(TsIndexSignature { .. }) => None,
-                        // TODO: add other variants
-                        _ => {
-                            println!("unknown_variant: {:?}", el);
-                            None
-                        }
-                    })
-                    .collect(),
+                fields: self.process_interface_members(ts_path, &body.body),
                 type_params: type_params.type_param_config(),
             }),
         }
@@ -1689,6 +1706,36 @@ mod test {
                 type_info: TypeInfo::Mapped {
                     value_type: Box::new(TypeInfo::PrimitiveString(PrimitiveString())),
                 },
+                is_variadic: false,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fn_param_obj_destructure() -> Result<(), swc_ecma_parser::error::Error> {
+        let mut fields: HashMap<String, TypeInfo> = HashMap::new();
+        fields.insert(
+            "a".to_string(),
+            TypeInfo::PrimitiveNumber(PrimitiveNumber()),
+        );
+        fields.insert(
+            "b".to_string(),
+            TypeInfo::PrimitiveString(PrimitiveString()),
+        );
+
+        test_first_fn_param(
+            r#"export declare function objPat(o: {a: number, b: string});"#,
+            "objPat",
+            &Param {
+                name: "o".to_string(),
+                type_info: TypeInfo::Interface(Interface {
+                    indexer: None,
+                    extends: Default::default(),
+                    fields,
+                    type_params: Default::default(),
+                }),
                 is_variadic: false,
             },
         )?;
