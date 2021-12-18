@@ -1591,6 +1591,38 @@ mod test {
         Ok(types.unwrap())
     }
 
+    macro_rules! test_exported_type {
+        ($code:literal, $name:literal, $expected_info:pat, $assertions:block) => {
+            {
+                let code = $code;
+                let name = $name;
+                test_exported_type!(
+                    code,
+                    name,
+                    $expected_info,
+                    $assertions
+                )
+            }
+        };
+        ($code:ident, $name:ident, $expected_info:pat, $assertions:block) => {
+            {
+                let types = get_types_for_code($code)?;
+
+                let ty = types.get(&TypeIdent::Name($name.to_string()));
+                assert!(ty.is_some());
+
+                let ty = ty.unwrap();
+                assert!(ty.is_exported);
+
+                if let $expected_info = &ty.info $assertions else {
+                    assert!(false);
+                }
+
+                Ok(())
+            }
+        };
+    }
+
     #[test]
     fn test_basic_parsing() -> Result<(), swc_ecma_parser::error::Error> {
         let types = get_types_for_code(r#"export type Test = number | string | null;"#)?;
@@ -1602,38 +1634,29 @@ mod test {
 
     #[test]
     fn test_class_skip_private_properties() -> Result<(), swc_ecma_parser::error::Error> {
-        let types = get_types_for_code(
+        test_exported_type!(
             r#"export class A {
                 private n: number;
                 x: string;
                 public y: number;
                 protected z: string;
             }"#,
-        )?;
-
-        let a = types.get(&TypeIdent::Name("A".to_string()));
-        assert!(a.is_some());
-
-        let a = a.unwrap();
-        assert!(a.is_exported);
-
-        if let TypeInfo::Class(c) = &a.info {
-            assert!(c.super_class.is_none());
-            assert_eq!(c.members.len(), 3);
-            assert!(c.members.contains_key("x"));
-            assert!(c.members.contains_key("y"));
-            assert!(c.members.contains_key("z"));
-            assert!(!c.members.contains_key("n"));
-        } else {
-            assert!(false);
-        }
-
-        Ok(())
+            "A",
+            TypeInfo::Class(c),
+            {
+                assert!(c.super_class.is_none());
+                assert_eq!(c.members.len(), 3);
+                assert!(c.members.contains_key("x"));
+                assert!(c.members.contains_key("y"));
+                assert!(c.members.contains_key("z"));
+                assert!(!c.members.contains_key("n"));
+            }
+        )
     }
 
     #[test]
     fn test_class_property_parsing() -> Result<(), swc_ecma_parser::error::Error> {
-        let types = get_types_for_code(
+        test_exported_type!(
             r#"export declare class A {
                 private n: number;
 
@@ -1641,29 +1664,20 @@ mod test {
 
                 set thing(n: number);
             }"#,
-        )?;
-
-        let a = types.get(&TypeIdent::Name("A".to_string()));
-        assert!(a.is_some());
-
-        let a = a.unwrap();
-        assert!(a.is_exported);
-
-        if let TypeInfo::Class(c) = &a.info {
-            assert!(c.super_class.is_none());
-            assert_eq!(c.members.len(), 1);
-            let thing = c.members.get("thing");
-            assert!(thing.is_some());
-            let thing = thing.unwrap();
-            assert_eq!(
-                *thing,
-                Member::Property(TypeInfo::PrimitiveNumber(PrimitiveNumber()))
-            );
-        } else {
-            assert!(false);
-        }
-
-        Ok(())
+            "A",
+            TypeInfo::Class(c),
+            {
+                assert!(c.super_class.is_none());
+                assert_eq!(c.members.len(), 1);
+                let thing = c.members.get("thing");
+                assert!(thing.is_some());
+                let thing = thing.unwrap();
+                assert_eq!(
+                    *thing,
+                    Member::Property(TypeInfo::PrimitiveNumber(PrimitiveNumber()))
+                );
+            }
+        )
     }
 
     fn test_first_fn_param(
@@ -1671,22 +1685,10 @@ mod test {
         fn_name: &str,
         expected_param: &Param,
     ) -> Result<(), swc_ecma_parser::error::Error> {
-        let types = get_types_for_code(ts_code)?;
-
-        let f = types.get(&TypeIdent::Name(fn_name.to_string()));
-        assert!(f.is_some());
-
-        let f = f.unwrap();
-        assert!(f.is_exported);
-
-        if let TypeInfo::Func(f) = &f.info {
+        test_exported_type!(ts_code, fn_name, TypeInfo::Func(f), {
             assert_eq!(f.params.len(), 1);
             assert_eq!(f.params.first().unwrap(), expected_param);
-        } else {
-            assert!(false);
-        }
-
-        Ok(())
+        })
     }
 
     #[test]
@@ -1769,5 +1771,17 @@ mod test {
         )?;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_interface_basic_props() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export interface A { n: number }"#,
+            "A",
+            TypeInfo::Interface(i),
+            {
+                assert_eq!(i.fields.len(), 1);
+            }
+        )
     }
 }
