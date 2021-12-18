@@ -1635,4 +1635,62 @@ mod test {
 
         Ok(())
     }
+
+    fn test_first_fn_param(
+        ts_code: &str,
+        fn_name: &str,
+        expected_param: &Param,
+    ) -> Result<(), swc_ecma_parser::error::Error> {
+        let types = get_types_for_code(ts_code)?;
+
+        let f = types.get(&TypeIdent::Name(fn_name.to_string()));
+        assert!(f.is_some());
+
+        let f = f.unwrap();
+        assert!(f.is_exported);
+
+        if let TypeInfo::Func(f) = &f.info {
+            assert_eq!(f.params.len(), 1);
+            assert_eq!(f.params.first().unwrap(), expected_param,);
+        } else {
+            assert!(false);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fn_param_array_destructure() -> Result<(), swc_ecma_parser::error::Error> {
+        test_first_fn_param(
+            r#"export declare function arrayPat(a: [string, number]);"#,
+            "arrayPat",
+            &Param {
+                name: "a".to_string(),
+                type_info: TypeInfo::Tuple(Tuple {
+                    types: vec![
+                        TypeInfo::PrimitiveString(PrimitiveString()),
+                        TypeInfo::PrimitiveNumber(PrimitiveNumber()),
+                    ],
+                }),
+                is_variadic: false,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fn_param_rest() -> Result<(), swc_ecma_parser::error::Error> {
+        test_first_fn_param(
+            r#"export declare function restPat(...b: string);"#,
+            "restPat",
+            &Param {
+                name: "b".to_string(),
+                type_info: TypeInfo::PrimitiveString(PrimitiveString()),
+                is_variadic: true,
+            },
+        )?;
+
+        Ok(())
+    }
 }
