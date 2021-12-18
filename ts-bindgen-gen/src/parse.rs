@@ -1179,12 +1179,30 @@ impl TsTypes {
                             .unwrap_or_else(|| panic!("no key for constructor")),
                         Member::Constructor(ctor.to_ctor(ts_path, self)),
                     )),
-                    ClassMember::Method(method) => Some((
-                        method
-                            .key()
-                            .unwrap_or_else(|| panic!("no key for constructor")),
+                    ClassMember::Method(method) if method.kind == MethodKind::Method => Some((
+                        method.key().unwrap_or_else(|| panic!("no key for method")),
                         Member::Method(method.to_member_func(ts_path, self, name)),
                     )),
+                    ClassMember::Method(method) if method.kind == MethodKind::Getter => Some((
+                        method
+                            .key()
+                            .unwrap_or_else(|| panic!("no key for property")),
+                        Member::Property(*method.to_member_func(ts_path, self, name).return_type),
+                    )),
+                    ClassMember::Method(method) if method.kind == MethodKind::Setter => Some((
+                        method
+                            .key()
+                            .unwrap_or_else(|| panic!("no key for property")),
+                        Member::Property(
+                            method
+                                .to_member_func(ts_path, self, name)
+                                .params
+                                .pop()
+                                .map(|p| p.type_info)
+                                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                        ),
+                    )),
+                    ClassMember::Method(_) => None,
                     ClassMember::PrivateMethod(_) => None,
                     ClassMember::ClassProp(prop)
                         if prop
@@ -1526,16 +1544,17 @@ mod test {
     fn get_types_for_code(
         ts_code: &str,
     ) -> Result<HashMap<TypeIdent, Type>, swc_ecma_parser::error::Error> {
+        let test_path: &Path = Path::new("/test.d.ts");
         let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/"));
-        fs.add_file_at(Path::new("/test.d.ts"), ts_code.to_string());
+        fs.add_file_at(test_path, ts_code.to_string());
 
-        let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, "/test.d.ts")?;
+        let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, &test_path.to_string_lossy())?;
         let mut tbnbf = tt.into_types_by_name_by_file();
 
         assert_eq!(tbnbf.len(), 1);
 
-        let types = tbnbf.remove(Path::new("/test.d.ts"));
+        let types = tbnbf.remove(test_path);
 
         assert!(types.is_some());
 
@@ -1575,6 +1594,41 @@ mod test {
             assert!(c.members.contains_key("y"));
             assert!(c.members.contains_key("z"));
             assert!(!c.members.contains_key("n"));
+        } else {
+            assert!(false);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_class_property_parsing() -> Result<(), swc_ecma_parser::error::Error> {
+        let types = get_types_for_code(
+            r#"export declare class A {
+                private n: number;
+
+                get thing(): number;
+
+                set thing(n: number);
+            }"#,
+        )?;
+
+        let a = types.get(&TypeIdent::Name("A".to_string()));
+        assert!(a.is_some());
+
+        let a = a.unwrap();
+        assert!(a.is_exported);
+
+        if let TypeInfo::Class(c) = &a.info {
+            assert!(c.super_class.is_none());
+            assert_eq!(c.members.len(), 1);
+            let thing = c.members.get("thing");
+            assert!(thing.is_some());
+            let thing = thing.unwrap();
+            assert_eq!(
+                *thing,
+                Member::Property(TypeInfo::PrimitiveNumber(PrimitiveNumber()))
+            );
         } else {
             assert!(false);
         }
