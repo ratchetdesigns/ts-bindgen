@@ -1680,6 +1680,23 @@ mod test {
     }
 
     #[test]
+    fn test_fn_param_map_destructure() -> Result<(), swc_ecma_parser::error::Error> {
+        test_first_fn_param(
+            r#"export declare function mapPat(m: {[n: string]: string});"#,
+            "mapPat",
+            &Param {
+                name: "m".to_string(),
+                type_info: TypeInfo::Mapped {
+                    value_type: Box::new(TypeInfo::PrimitiveString(PrimitiveString())),
+                },
+                is_variadic: false,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_fn_param_rest() -> Result<(), swc_ecma_parser::error::Error> {
         test_first_fn_param(
             r#"export declare function restPat(...b: string);"#,
