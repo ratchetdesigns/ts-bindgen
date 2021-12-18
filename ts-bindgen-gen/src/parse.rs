@@ -1179,7 +1179,6 @@ impl TsTypes {
                             .unwrap_or_else(|| panic!("no key for constructor")),
                         Member::Constructor(ctor.to_ctor(ts_path, self)),
                     )),
-                    // TODO: need to split Method into methods, getters, and setters
                     ClassMember::Method(method) => Some((
                         method
                             .key()
@@ -1524,27 +1523,61 @@ mod test {
     use super::*;
     use crate::fs::MemFs;
 
-    #[test]
-    fn test_basic_parsing() -> Result<(), swc_ecma_parser::error::Error> {
+    fn get_types_for_code(
+        ts_code: &str,
+    ) -> Result<HashMap<TypeIdent, Type>, swc_ecma_parser::error::Error> {
         let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/"));
-        fs.add_file_at(
-            Path::new("/test.d.ts"),
-            r#"export type Test = number | string | null;"#.to_string(),
-        );
+        fs.add_file_at(Path::new("/test.d.ts"), ts_code.to_string());
 
         let tt = TsTypes::try_new(Arc::new(fs) as ArcFs, "/test.d.ts")?;
-        let tbnbf = tt.into_types_by_name_by_file();
+        let mut tbnbf = tt.into_types_by_name_by_file();
 
         assert_eq!(tbnbf.len(), 1);
 
-        let types = tbnbf.get(Path::new("/test.d.ts"));
+        let types = tbnbf.remove(Path::new("/test.d.ts"));
 
         assert!(types.is_some());
 
-        let types = types.unwrap();
+        Ok(types.unwrap())
+    }
+
+    #[test]
+    fn test_basic_parsing() -> Result<(), swc_ecma_parser::error::Error> {
+        let types = get_types_for_code(r#"export type Test = number | string | null;"#)?;
 
         assert!(types.get(&TypeIdent::Name("Test".to_string())).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_class_skip_private_properties() -> Result<(), swc_ecma_parser::error::Error> {
+        let types = get_types_for_code(
+            r#"export class A {
+                private n: number;
+                x: string;
+                public y: number;
+                protected z: string;
+            }"#,
+        )?;
+
+        let a = types.get(&TypeIdent::Name("A".to_string()));
+        assert!(a.is_some());
+
+        let a = a.unwrap();
+        assert!(a.is_exported);
+
+        if let TypeInfo::Class(c) = &a.info {
+            assert!(c.super_class.is_none());
+            assert_eq!(c.members.len(), 3);
+            assert!(c.members.contains_key("x"));
+            assert!(c.members.contains_key("y"));
+            assert!(c.members.contains_key("z"));
+            assert!(!c.members.contains_key("n"));
+        } else {
+            assert!(false);
+        }
 
         Ok(())
     }
