@@ -152,6 +152,7 @@ pub enum NameableTypeInfo {
     Union(Union),
     Intersection(Intersection),
     Tuple(Tuple),
+    Interface(Interface),
 }
 
 impl From<NameableTypeInfo> for FlattenedTypeInfo {
@@ -160,6 +161,7 @@ impl From<NameableTypeInfo> for FlattenedTypeInfo {
             NameableTypeInfo::Union(u) => FlattenedTypeInfo::Union(u),
             NameableTypeInfo::Intersection(i) => FlattenedTypeInfo::Intersection(i),
             NameableTypeInfo::Tuple(t) => FlattenedTypeInfo::Tuple(t),
+            NameableTypeInfo::Interface(i) => FlattenedTypeInfo::Interface(i),
         }
     }
 }
@@ -468,7 +470,7 @@ impl ApplyNames for TypeRef {
 impl From<TypeInfoIR> for EffectContainer<TypeRef> {
     fn from(src: TypeInfoIR) -> EffectContainer<TypeRef> {
         match src {
-            TypeInfoIR::Interface(_) => panic!("Interface only expected as top-level type"),
+            TypeInfoIR::Interface(i) => i.into(),
             TypeInfoIR::Enum(_) => panic!("Enum only expected as top-level type"),
             TypeInfoIR::Ref(t) => t.into(),
             TypeInfoIR::Alias(_) => panic!("Alias only expected as top-level type"),
@@ -632,6 +634,7 @@ impl_effectful_conversion_from_nameable_type_to_type_ref!(
     UnionIR => Union,
     IntersectionIR => Intersection,
     TupleIR => Tuple,
+    InterfaceIR => Interface,
 );
 
 macro_rules! type_ref_from_prims {
