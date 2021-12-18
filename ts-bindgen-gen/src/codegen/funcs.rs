@@ -811,7 +811,12 @@ impl<T: WrappedParam> ParamExt for T {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
-        render_rust_to_js_conversion(&name, &fn_name, &wrapped, quote! {})
+        render_rust_to_js_conversion(
+            &name,
+            &fn_name,
+            &wrapped,
+            quote! { .map_err(ts_bindgen_rt::Error::from)? },
+        )
     }
 
     fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
