@@ -610,6 +610,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
             TargetEnrichedTypeInfo::Interface(iface) => {
                 let Interface {
                     indexer,
+                    constructor: _, // nothing to render for an interface ctor
                     type_params,
                     ..
                 } = iface;
@@ -1106,32 +1107,27 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 if let Some(first_type) = isect.types.first().and_then(|t| t.resolve_target_type())
                 {
                     if let TargetEnrichedTypeInfo::Interface(_) = first_type {
-                        let fields = isect
-                            .types
-                            .iter()
-                            .filter_map(|t| t.resolve_target_type())
-                            .filter_map(|t| {
-                                if let TargetEnrichedTypeInfo::Interface(iface) = t {
-                                    Some(iface)
-                                } else {
-                                    None
-                                }
-                            })
+                        let interface_types = || {
+                            isect
+                                .types
+                                .iter()
+                                .filter_map(|t| t.resolve_target_type())
+                                .filter_map(|t| {
+                                    if let TargetEnrichedTypeInfo::Interface(iface) = t {
+                                        Some(iface)
+                                    } else {
+                                        None
+                                    }
+                                })
+                        };
+                        let fields = interface_types()
                             .flat_map(|iface| get_recursive_fields(&iface))
                             .collect();
 
-                        let indexer = isect
-                            .types
-                            .iter()
-                            .filter_map(|t| t.resolve_target_type())
-                            .filter_map(|t| {
-                                if let TargetEnrichedTypeInfo::Interface(iface) = t {
-                                    Some(iface)
-                                } else {
-                                    None
-                                }
-                            })
-                            .filter_map(|iface| iface.indexer)
+                        let indexer = interface_types().filter_map(|iface| iface.indexer).next();
+
+                        let constructor = interface_types()
+                            .filter_map(|iface| iface.constructor)
                             .next();
 
                         let typ = TargetEnrichedType {
@@ -1140,6 +1136,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                             info: TargetEnrichedTypeInfo::Interface(Interface {
                                 indexer,
                                 fields,
+                                constructor,
                                 extends: Default::default(),
                                 context: isect.context.clone(),
                                 type_params: Default::default(), // TODO: copy over type params from isect

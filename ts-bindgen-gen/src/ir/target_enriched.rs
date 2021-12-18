@@ -467,6 +467,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
+    pub constructor: Option<Ctor>,
     pub type_params: Vec<(String, TypeParamConfig)>,
     pub context: Context,
 }
@@ -476,6 +477,7 @@ from_struct!(
     indexer => Option,
     extends => [],
     fields => {},
+    constructor => Option,
     type_params => {},
 );
 

@@ -256,6 +256,7 @@ pub struct Interface {
     pub indexer: Option<Indexer>,
     pub extends: Vec<TypeRef>,
     pub fields: HashMap<String, TypeRef>,
+    pub constructor: Option<Ctor>,
     pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
@@ -273,6 +274,7 @@ impl ApplyNames for Interface {
                 .into_iter()
                 .map(|(k, v)| (k, v.apply_names(names_by_id)))
                 .collect(),
+            constructor: self.constructor.map(|i| i.apply_names(names_by_id)),
             type_params: self
                 .type_params
                 .into_iter()
@@ -341,6 +343,7 @@ impl From<InterfaceIR> for EffectContainer<Interface> {
                 (n, effects)
             })
             .collect();
+        let constructor = src.constructor.map(EffectContainer::from).into();
         let type_params = src
             .type_params
             .into_iter()
@@ -355,11 +358,13 @@ impl From<InterfaceIR> for EffectContainer<Interface> {
             indexer => (effect_mappers::prepend_name("Indexer")),
             extends => (effect_mappers::identity()),
             fields => (effect_mappers::identity()),
+            constructor => (effect_mappers::prepend_name("Ctor")),
             type_params => (effect_mappers::identity());
             Interface {
                 indexer,
                 extends,
                 fields,
+                constructor,
                 type_params,
             }
         )

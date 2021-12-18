@@ -222,6 +222,12 @@ impl KeyedExt for Constructor {
     }
 }
 
+impl KeyedExt for TsConstructSignatureDecl {
+    fn key(&self) -> Option<String> {
+        Some("constructor".to_string())
+    }
+}
+
 trait PropExt {
     fn item_type(&self) -> Option<&TsType>;
 
@@ -923,6 +929,7 @@ impl TsTypes {
             extends: Default::default(),
             fields: self.process_interface_members(ts_path, members),
             type_params: Default::default(),
+            constructor: self.process_interface_constructor(ts_path, members),
         })
     }
 
@@ -1119,6 +1126,7 @@ impl TsTypes {
                     setter.key().expect("bad setter key"),
                     setter.param.to_param(ts_path, 0, self).type_info,
                 )),
+                TsTypeElement::TsConstructSignatureDecl(_) => None,
                 // TODO: add other variants
                 _ => {
                     println!("unknown_variant: {:?}", el);
@@ -1126,6 +1134,19 @@ impl TsTypes {
                 }
             })
             .collect()
+    }
+
+    fn process_interface_constructor(
+        &mut self,
+        ts_path: &Path,
+        members: &[TsTypeElement],
+    ) -> Option<Ctor> {
+        members.iter().find_map(|el| match el {
+            TsTypeElement::TsConstructSignatureDecl(ctor) => Some(Ctor {
+                params: self.process_params(ts_path, &ctor.params),
+            }),
+            _ => None,
+        })
     }
 
     fn process_ts_interface(
@@ -1150,6 +1171,7 @@ impl TsTypes {
                     .collect(),
                 fields: self.process_interface_members(ts_path, &body.body),
                 type_params: type_params.type_param_config(),
+                constructor: self.process_interface_constructor(ts_path, &body.body),
             }),
         }
     }
@@ -1774,6 +1796,7 @@ mod test {
                     extends: Default::default(),
                     fields,
                     type_params: Default::default(),
+                    constructor: None,
                 }),
                 is_variadic: false,
             },
@@ -1860,6 +1883,33 @@ mod test {
                 assert_eq!(
                     *indexer.type_info,
                     TypeInfo::PrimitiveNumber(PrimitiveNumber())
+                );
+            }
+        )
+    }
+
+    #[test]
+    fn test_interface_constructor() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export interface A {
+                new (n: number): A;
+            }"#,
+            "A",
+            TypeInfo::Interface(i),
+            {
+                assert!(i.fields.is_empty());
+                assert!(i.indexer.is_none());
+                assert!(i.constructor.is_some());
+                let ctor = i.constructor.as_ref().unwrap();
+                assert_eq!(ctor.params.len(), 1);
+                let param = ctor.params.first().unwrap();
+                assert_eq!(
+                    *param,
+                    Param {
+                        name: "n".to_string(),
+                        type_info: TypeInfo::PrimitiveNumber(PrimitiveNumber()),
+                        is_variadic: false,
+                    }
                 );
             }
         )

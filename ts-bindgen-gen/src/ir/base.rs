@@ -207,6 +207,7 @@ pub struct Interface {
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
     pub type_params: Vec<(String, TypeParamConfig)>,
+    pub constructor: Option<Ctor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,6 +444,7 @@ impl TypeInfo {
                 extends,
                 fields,
                 type_params: iface_type_params,
+                constructor,
             }) => {
                 let iface_type_params =
                     resolve_type_params(types_by_name_by_file, type_params, iface_type_params);
@@ -472,6 +474,9 @@ impl TypeInfo {
                         })
                         .collect(),
                     type_params: iface_type_params,
+                    constructor: constructor
+                        .as_ref()
+                        .map(|c| c.resolve_names(types_by_name_by_file, &our_type_params)),
                 })
             }
             Self::Ref(TypeRef {
