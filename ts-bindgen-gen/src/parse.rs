@@ -1914,4 +1914,55 @@ mod test {
             }
         )
     }
+
+    #[test]
+    fn test_raw_enum() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export enum Enm {
+                A,
+                B,
+                C
+            }"#,
+            "Enm",
+            TypeInfo::Enum(e),
+            {
+                assert_eq!(e.members.len(), 3);
+                assert!(e.members.contains(&EnumMember {
+                    id: "A".to_string(),
+                    value: None,
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "B".to_string(),
+                    value: None,
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "C".to_string(),
+                    value: None,
+                }));
+            }
+        )
+    }
+
+    #[test]
+    fn test_string_enum() -> Result<(), swc_ecma_parser::error::Error> {
+        test_exported_type!(
+            r#"export enum Enm {
+                A = "First",
+                B = "Second"
+            }"#,
+            "Enm",
+            TypeInfo::Enum(e),
+            {
+                assert_eq!(e.members.len(), 2);
+                assert!(e.members.contains(&EnumMember {
+                    id: "A".to_string(),
+                    value: Some("First".to_string()),
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "B".to_string(),
+                    value: Some("Second".to_string()),
+                }));
+            }
+        )
+    }
 }
