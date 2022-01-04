@@ -1,3 +1,17 @@
+//! ts-bindgen provides a library as an easy entrypoint into generating
+//! rust wasm-bindgen bindings for a typescript module and provides an
+//! executable for doing the same via the command line.
+//!
+//! If you are using the library, we recommend adding `default-features = false`
+//! to your Cargo.toml to avoid pulling in unnecessary crates.
+//!
+//! Because rustfmt compilation requires the nightly toolchain at this point,
+//! the library functions do not support formatting the returned rust code
+//! but the ts-bindgen executable will run rustfmt on the generated code
+//! by default. You can see
+//! [ts-bindgen-web](https://github.com/ratchetdesigns/ts-bindgen/tree/master/ts-bindgen-web)
+//! for an example of running rustfmt as a library on the output (in wasm).
+
 use std::path::Path;
 use ts_bindgen_gen::{generate_rust_for_typescript, Fs, MemFs};
 #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
