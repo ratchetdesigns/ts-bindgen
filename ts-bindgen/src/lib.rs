@@ -9,7 +9,7 @@ where
     FS: Fs + Send + Sync + 'static,
 {
     let toks = generate_rust_for_typescript(fs, module);
-    toks.to_string() // TODO: rustfmt
+    toks.to_string()
 }
 
 #[cfg_attr(any(target_arch = "wasm32", target_arch = "wasm64"), wasm_bindgen)]
