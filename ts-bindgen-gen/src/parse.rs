@@ -1127,11 +1127,7 @@ impl TsTypes {
                     setter.param.to_param(ts_path, 0, self).type_info,
                 )),
                 TsTypeElement::TsConstructSignatureDecl(_) => None,
-                // TODO: add other variants
-                _ => {
-                    println!("unknown_variant: {:?}", el);
-                    None
-                }
+                TsTypeElement::TsCallSignatureDecl(_) => None, // TODO
             })
             .collect()
     }
@@ -1553,7 +1549,7 @@ impl TsTypes {
                 let typ = Type {
                     name,
                     is_exported: true,
-                    info: info,
+                    info,
                 };
                 self.set_type_for_name_for_file(ts_path, type_id, typ);
             }
@@ -1561,7 +1557,7 @@ impl TsTypes {
                 let mut iface = self.process_ts_interface(ts_path, interface_decl);
                 iface.is_exported = true;
                 self.set_type_for_name_for_file(ts_path, iface.name.name.clone(), iface.clone());
-                self.process_default_alias(ts_path, iface.name.clone());
+                self.process_default_alias(ts_path, iface.name);
             }
             DefaultDecl::Fn(fn_expr) => {
                 let name = name_for_ident_with_default_alias(&fn_expr.ident);
@@ -1570,7 +1566,7 @@ impl TsTypes {
                 let typ = Type {
                     name,
                     is_exported: true,
-                    info: info,
+                    info,
                 };
                 self.set_type_for_name_for_file(ts_path, type_id, typ);
             }
