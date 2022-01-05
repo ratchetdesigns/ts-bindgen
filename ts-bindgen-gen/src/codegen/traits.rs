@@ -237,7 +237,10 @@ pub trait IsTraitable {
 
 impl IsTraitable for TargetEnrichedTypeInfo {
     fn is_traitable(&self) -> bool {
-        matches!(self, TargetEnrichedTypeInfo::Interface(_) | TargetEnrichedTypeInfo::Class(_))
+        matches!(
+            self,
+            TargetEnrichedTypeInfo::Interface(_) | TargetEnrichedTypeInfo::Class(_)
+        )
     }
 }
 
