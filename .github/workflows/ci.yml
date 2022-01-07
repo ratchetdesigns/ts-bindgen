@@ -33,6 +33,7 @@ jobs:
           target: wasm32-unknown-unknown
       - name: Install wasm-pack
         uses: actions-rs/cargo@v1
+        continue-on-error: true # cargo install fails if binary already exists...
         with:
           command: install
           args: wasm-pack --version=0.10.0
@@ -98,6 +99,7 @@ jobs:
           target: wasm32-unknown-unknown
       - name: Install wasm-pack
         uses: actions-rs/cargo@v1
+        continue-on-error: true # cargo install fails if binary already exists...
         with:
           command: install
           args: wasm-pack --version=0.10.0
