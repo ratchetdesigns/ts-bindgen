@@ -49,12 +49,20 @@ fn main() {
         |_: &Path| {}
     };
 
-    let rust = generate_rust_for_typescript_with_file_processor(
+    let rust_result = generate_rust_for_typescript_with_file_processor(
         StdFs,
         args.ts_input_file_path,
         process_file,
-    )
-    .to_string();
+    );
+    let rust = match rust_result {
+        Ok(rust) => rust.to_string(),
+        Err(err) => {
+            eprintln!("aborting due to errors in typescript rust binding generation");
+            eprintln!("Errors:");
+            eprintln!("{}", err);
+            exit(101);
+        }
+    };
 
     let rust = if args.skip_rustfmt {
         rust

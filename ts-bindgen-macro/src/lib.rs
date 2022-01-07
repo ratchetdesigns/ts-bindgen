@@ -19,7 +19,8 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         .modules
         .iter()
         .map(|module| {
-            let mod_toks = generate_rust_for_typescript(StdFs, module);
+            let mod_toks = generate_rust_for_typescript(StdFs, module)
+                .expect("failed to generate typescript rust bindings");
 
             let mut file = File::create("output.rs").expect("failed to create file");
             std::io::Write::write_all(&mut file, mod_toks.to_string().as_bytes())

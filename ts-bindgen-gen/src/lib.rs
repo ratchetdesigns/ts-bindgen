@@ -1,4 +1,5 @@
 mod codegen;
+mod error;
 mod fs;
 mod identifier;
 mod ir;
@@ -9,6 +10,7 @@ mod parse;
 #[cfg(test)]
 mod generators;
 
+pub use crate::error::Error;
 pub use crate::fs::{Fs, MemFs, StdFs};
 use crate::ir::to_final_ir;
 use codegen::{ModDef, WithFs};
@@ -21,7 +23,7 @@ use std::sync::Arc;
 /// Given a filesystem and a module specifier (path to typescript definition file or node module
 /// found in `fs.cwd().join("node_modules")`), return a TokenStream representing the rust
 /// wasm-bindgen bindings.
-pub fn generate_rust_for_typescript<S, FS>(fs: FS, module: S) -> TokenStream2
+pub fn generate_rust_for_typescript<S, FS>(fs: FS, module: S) -> Result<TokenStream2, Error>
 where
     S: AsRef<str>,
     FS: Fs + Send + Sync + 'static,
@@ -36,15 +38,14 @@ pub fn generate_rust_for_typescript_with_file_processor<S, FS, F>(
     fs: FS,
     module: S,
     process_file: F,
-) -> TokenStream2
+) -> Result<TokenStream2, Error>
 where
     S: AsRef<str>,
     FS: Fs + Send + Sync + 'static,
     F: FnMut(&Path),
 {
     let arc_fs = Arc::new(fs) as ArcFs;
-    let tt = TsTypes::try_new(arc_fs.clone(), module.as_ref()).expect("tt error");
-    let tbnbf = tt.into_types_by_name_by_file();
+    let tbnbf = TsTypes::parse(arc_fs.clone(), module.as_ref())?;
     let final_ir = to_final_ir(tbnbf);
     let final_ir = &*final_ir.borrow();
     let mod_def = ModDef::new(&*arc_fs, final_ir);
@@ -58,5 +59,5 @@ where
         .map(std::borrow::Borrow::borrow)
         .for_each(process_file);
 
-    quote! { #(#mod_defs)* }
+    Ok(quote! { #(#mod_defs)* })
 }

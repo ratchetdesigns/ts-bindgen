@@ -13,21 +13,18 @@
 //! for an example of running rustfmt as a library on the output (in wasm).
 
 use std::path::Path;
-use ts_bindgen_gen::{generate_rust_for_typescript, Fs, MemFs};
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
-use wasm_bindgen::prelude::*;
+use ts_bindgen_gen::{generate_rust_for_typescript, Error, Fs, MemFs};
 
-pub fn generate_rust_text_for_typescript<FS, S>(fs: FS, module: S) -> String
+pub fn generate_rust_text_for_typescript<FS, S>(fs: FS, module: S) -> Result<String, Error>
 where
     S: AsRef<str>,
     FS: Fs + Send + Sync + 'static,
 {
-    let toks = generate_rust_for_typescript(fs, module);
-    toks.to_string()
+    let toks = generate_rust_for_typescript(fs, module)?;
+    Ok(toks.to_string())
 }
 
-#[cfg_attr(any(target_arch = "wasm32", target_arch = "wasm64"), wasm_bindgen)]
-pub fn generate_rust_text_for_typescript_string(ts: String) -> String {
+pub fn generate_rust_text_for_typescript_string(ts: String) -> Result<String, Error> {
     let file = "/work.d.ts";
 
     let mut fs: MemFs = Default::default();
@@ -66,7 +63,11 @@ mod test {
             "pub trait Abc_Trait",
         ];
 
-        let result = remove_whitespace(generate_rust_text_for_typescript_string(ts.to_string()));
+        let rust_result = generate_rust_text_for_typescript_string(ts.to_string());
+        assert!(rust_result.is_ok());
+        let rust = rust_result.unwrap();
+
+        let result = remove_whitespace(rust);
         let result_ok = expected_contents
             .iter()
             .all(|c| result.contains(&remove_whitespace(c.to_string())));

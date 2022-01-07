@@ -5,11 +5,10 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 use tempfile::tempdir;
-use ts_bindgen_gen::generate_rust_for_typescript;
-use ts_bindgen_gen::StdFs;
+use ts_bindgen_gen::{generate_rust_for_typescript, Error, StdFs};
 
 #[test]
-fn end_to_end() -> std::io::Result<()> {
+fn end_to_end() -> Result<(), Error> {
     let cargo_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let target_dir = tempdir()?;
     let target_dir = target_dir.path();
@@ -127,7 +126,7 @@ fn run_cargo_test<Dir: AsRef<Path>>(dir: Dir) -> std::io::Result<()> {
 fn generate_ts_bindgen_files<Src: AsRef<Path>, Dest: AsRef<Path>>(
     src: Src,
     dest: Dest,
-) -> std::io::Result<()> {
+) -> Result<(), Error> {
     for ts in read_dir(src.as_ref())? {
         let ts = ts?;
         generate_ts_bindgen_file(
@@ -142,8 +141,8 @@ fn generate_ts_bindgen_files<Src: AsRef<Path>, Dest: AsRef<Path>>(
 fn generate_ts_bindgen_file<Src: AsRef<Path>, Dest: AsRef<Path>>(
     src: Src,
     dest: Dest,
-) -> std::io::Result<()> {
-    let rust = generate_rust_for_typescript(StdFs, src.as_ref().to_string_lossy());
+) -> Result<(), Error> {
+    let rust = generate_rust_for_typescript(StdFs, src.as_ref().to_string_lossy())?;
     write_file(dest.as_ref(), rust.to_string().as_bytes())?;
 
     Ok(())

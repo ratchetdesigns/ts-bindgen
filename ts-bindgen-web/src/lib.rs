@@ -68,11 +68,10 @@ impl Component for App {
                         .get_model()
                         .map(|m| m.get_value())
                         .unwrap_or_else(|| String::from(""));
-                    let rust = generate_rust_text_for_typescript_string(ts);
-                    let rust = rust_fmt(rust).unwrap_or_else(|_| {
-                        // TODO: alert error
-                        String::from("")
-                    });
+                    let rust = generate_rust_text_for_typescript_string(ts)
+                        .map_err(|err| Box::new(err) as Box<dyn std::error::Error + 'static>)
+                        .and_then(rust_fmt)
+                        .unwrap_or_else(|err| format!("// Error generating typescript rust bindings.\n{}", err));
                     self.rust_link.with_editor(|rs_model| {
                         rs_model.get_model().map(|m| m.set_value(&rust));
                     });

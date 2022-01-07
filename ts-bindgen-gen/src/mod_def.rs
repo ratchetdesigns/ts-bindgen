@@ -200,6 +200,7 @@ impl ModDef {
 #[cfg(test)]
 mod mod_def_tests {
     use super::*;
+    use crate::error::Error;
     use crate::fs::{MemFs, StdFs};
     use crate::identifier::{make_identifier, to_ident};
     use crate::ir::{to_final_ir, Builtin, Context, TargetEnrichedTypeInfo};
@@ -280,7 +281,7 @@ mod mod_def_tests {
     }
 
     #[test]
-    fn mod_def_with_index_removed() -> Result<(), swc_ecma_parser::error::Error> {
+    fn mod_def_with_index_removed() -> Result<(), Error> {
         let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/"));
         fs.add_dir_at(Path::new("/test"));
@@ -290,8 +291,7 @@ mod mod_def_tests {
         );
 
         let arc_fs = Arc::new(fs) as ArcFs;
-        let tt = TsTypes::try_new(arc_fs.clone(), "/test")?;
-        let tbnbf = tt.into_types_by_name_by_file();
+        let tbnbf = TsTypes::parse(arc_fs.clone(), "/test")?;
         let ir = to_final_ir(tbnbf);
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
@@ -307,7 +307,7 @@ mod mod_def_tests {
     }
 
     #[test]
-    fn mod_def_with_cwd_prefix_removed() -> Result<(), swc_ecma_parser::error::Error> {
+    fn mod_def_with_cwd_prefix_removed() -> Result<(), Error> {
         let mut fs: MemFs = Default::default();
         fs.set_cwd(Path::new("/abc/def"));
         fs.add_dir_at(Path::new("/abc/def/test"));
@@ -317,8 +317,7 @@ mod mod_def_tests {
         );
 
         let arc_fs = Arc::new(fs) as ArcFs;
-        let tt = TsTypes::try_new(arc_fs.clone(), "/abc/def/test")?;
-        let tbnbf = tt.into_types_by_name_by_file();
+        let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
         let ir = to_final_ir(tbnbf);
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
