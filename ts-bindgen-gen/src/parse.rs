@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Error, InternalError};
 use crate::fs::Fs;
 use crate::ir::base::{
     Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
@@ -19,12 +19,12 @@ use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 
 pub type ArcFs = Arc<dyn Fs + Send + Sync>;
 
-#[derive(Debug)]
 pub struct TsTypes {
-    errors: Vec<Error>,
+    errors: Vec<InternalError>,
     types_by_name_by_file: HashMap<PathBuf, HashMap<TypeIdent, Type>>,
     namespace_stack: Vec<Vec<String>>,
     fs: ArcFs,
+    source_map: Lrc<SourceMap>,
 }
 
 /// Iterator implementation for `ResultIterExt::filter_map_reporting_result`
@@ -174,9 +174,9 @@ impl<'a, T> Source<'a, T> {
 }
 
 impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
-    type Error = Error;
+    type Error = InternalError;
 
-    fn try_from(source: Source<'a, T>) -> Result<TypeRef, Error> {
+    fn try_from(source: Source<'a, T>) -> Result<TypeRef, Self::Error> {
         let Source {
             ts_types,
             ts_path,
@@ -218,9 +218,9 @@ trait KeyedExt {
     fn key(&self) -> Option<String>;
 }
 
-fn make_key<K: KeyedExt + Spanned>(k: &K) -> Result<String, Error> {
+fn make_key<K: KeyedExt + Spanned>(k: &K) -> Result<String, InternalError> {
     k.key()
-        .ok_or_else(|| Error::with_msg_and_span("bad key", k.span()))
+        .ok_or_else(|| InternalError::with_msg_and_span("bad key", k.span()))
 }
 
 trait ExprKeyed {
@@ -314,7 +314,11 @@ trait PropExt {
 
     fn is_optional(&self) -> bool;
 
-    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<TypeInfo, Error> {
+    fn to_type_info(
+        &self,
+        ts_path: &Path,
+        ts_types: &mut TsTypes,
+    ) -> Result<TypeInfo, InternalError> {
         self.item_type()
             .map(|t| {
                 let item_type = ts_types.process_type(ts_path, t)?;
@@ -351,11 +355,21 @@ impl PropExt for ClassProp {
 }
 
 trait FnParamExt {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error>;
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError>;
 }
 
 impl FnParamExt for TsFnParam {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         match self {
             TsFnParam::Ident(ident) => ident.to_param(ts_path, i, ts_types),
             TsFnParam::Object(obj) => obj.to_param(ts_path, i, ts_types),
@@ -366,19 +380,29 @@ impl FnParamExt for TsFnParam {
 }
 
 impl FnParamExt for swc_ecma_ast::Param {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         self.pat.to_param(ts_path, i, ts_types)
     }
 }
 
 impl FnParamExt for Pat {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         match self {
             Pat::Ident(ident) => ident.to_param(ts_path, i, ts_types),
             Pat::Object(obj) => obj.to_param(ts_path, i, ts_types),
             Pat::Rest(rest) => rest.to_param(ts_path, i, ts_types),
             Pat::Array(array) => array.to_param(ts_path, i, ts_types),
-            _ => Err(Error::with_msg_and_span(
+            _ => Err(InternalError::with_msg_and_span(
                 "unhandled param pattern",
                 self.span(),
             )),
@@ -387,7 +411,12 @@ impl FnParamExt for Pat {
 }
 
 impl FnParamExt for BindingIdent {
-    fn to_param(&self, ts_path: &Path, _i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        _i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         Ok(Param {
             name: self.id.sym.to_string(),
             is_variadic: false,
@@ -401,7 +430,12 @@ impl FnParamExt for BindingIdent {
 }
 
 impl FnParamExt for ObjectPat {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         Ok(Param {
             name: format!("arg{}", i),
             is_variadic: false,
@@ -415,7 +449,12 @@ impl FnParamExt for ObjectPat {
 }
 
 impl FnParamExt for RestPat {
-    fn to_param(&self, ts_path: &Path, _i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        _i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         let name = match &*self.arg {
             Pat::Ident(id_param) => id_param.id.sym.to_string(),
             _ => "rest".to_string(),
@@ -442,7 +481,12 @@ impl FnParamExt for RestPat {
 }
 
 impl FnParamExt for ArrayPat {
-    fn to_param(&self, ts_path: &Path, i: usize, ts_types: &mut TsTypes) -> Result<Param, Error> {
+    fn to_param(
+        &self,
+        ts_path: &Path,
+        i: usize,
+        ts_types: &mut TsTypes,
+    ) -> Result<Param, InternalError> {
         Ok(Param {
             name: format!("arg{}", i),
             is_variadic: false,
@@ -460,11 +504,11 @@ impl FnParamExt for ArrayPat {
 }
 
 trait CtorExt {
-    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Ctor, Error>;
+    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Ctor, InternalError>;
 }
 
 impl CtorExt for Constructor {
-    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Ctor, Error> {
+    fn to_ctor(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Ctor, InternalError> {
         Ok(Ctor {
             params: self
                 .params
@@ -474,25 +518,25 @@ impl CtorExt for Constructor {
                     ParamOrTsParamProp::Param(p) => p.to_param(ts_path, i, ts_types),
                     ParamOrTsParamProp::TsParamProp(tsp) => match &tsp.param {
                         TsParamPropParam::Ident(id) => id.to_param(ts_path, i, ts_types),
-                        TsParamPropParam::Assign(a) => Err(Error::with_msg_and_span(
+                        TsParamPropParam::Assign(a) => Err(InternalError::with_msg_and_span(
                             "we don't handle assignment params yet",
                             a.span(),
                         )),
                     },
                 })
-                .collect::<Result<Vec<Param>, Error>>()?,
+                .collect::<Result<Vec<Param>, InternalError>>()?,
         })
     }
 }
 
 trait FuncExt {
-    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, Error>;
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError>;
 
     fn type_params(&self) -> &Option<TsTypeParamDecl>;
 
     fn return_type(&self) -> Option<&TsType>;
 
-    fn to_func(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Func, Error> {
+    fn to_func(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Func, InternalError> {
         Ok(Func {
             params: self.params(ts_path, ts_types)?,
             type_params: ts_types.process_fn_type_params(ts_path, self.type_params()),
@@ -510,19 +554,23 @@ trait FuncExt {
         ts_path: &Path,
         ts_types: &mut TsTypes,
         name: &TypeName,
-    ) -> Result<Func, Error> {
+    ) -> Result<Func, InternalError> {
         let mut f = self.to_func(ts_path, ts_types)?;
         f.class_name = Some(name.clone());
         Ok(f)
     }
 
-    fn to_type_info(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<TypeInfo, Error> {
+    fn to_type_info(
+        &self,
+        ts_path: &Path,
+        ts_types: &mut TsTypes,
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Func(self.to_func(ts_path, ts_types)?))
     }
 }
 
 impl FuncExt for TsMethodSignature {
-    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, Error> {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError> {
         self.params
             .iter()
             .enumerate()
@@ -540,7 +588,7 @@ impl FuncExt for TsMethodSignature {
 }
 
 impl FuncExt for TsFnType {
-    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, Error> {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError> {
         self.params
             .iter()
             .enumerate()
@@ -558,7 +606,7 @@ impl FuncExt for TsFnType {
 }
 
 impl FuncExt for Function {
-    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, Error> {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError> {
         self.params
             .iter()
             .enumerate()
@@ -576,7 +624,7 @@ impl FuncExt for Function {
 }
 
 impl FuncExt for ClassMethod {
-    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, Error> {
+    fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError> {
         self.function
             .params
             .iter()
@@ -599,7 +647,7 @@ trait IndexerExt {
 
     fn value_type(&self) -> Option<&TsType>;
 
-    fn to_indexer(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Indexer, Error> {
+    fn to_indexer(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Indexer, InternalError> {
         Ok(Indexer {
             readonly: self.is_readonly(),
             type_info: Box::new(
@@ -679,11 +727,18 @@ impl TsTypes {
         fs: ArcFs,
         module_name: &str,
     ) -> Result<HashMap<PathBuf, HashMap<TypeIdent, Type>>, Error> {
+        let file_loader =
+            Box::new(FsFileLoader::new(Arc::clone(&fs))) as Box<dyn FileLoader + Send + Sync>;
+        let source_map: Lrc<SourceMap> = Lrc::new(SourceMap::with_file_loader(
+            file_loader,
+            FilePathMapping::empty(),
+        ));
         let mut tt = TsTypes {
             types_by_name_by_file: Default::default(),
             namespace_stack: Default::default(),
             errors: Default::default(),
             fs: Arc::clone(&fs),
+            source_map,
         };
 
         if let Err(err) = tt.process_module(None, module_name) {
@@ -711,18 +766,12 @@ impl TsTypes {
         if self.errors.is_empty() {
             Ok(self.types_by_name_by_file)
         } else {
-            Err(Error::with_errors(self.errors))
+            Err(Error::with_errors(self.errors, &self.source_map))
         }
     }
 
     fn load_module(&mut self, ts_path: &Path) -> Result<Module, swc_ecma_parser::error::Error> {
-        let file_loader =
-            Box::new(FsFileLoader::new(Arc::clone(&self.fs))) as Box<dyn FileLoader + Send + Sync>;
-        let cm: Lrc<SourceMap> = Lrc::new(SourceMap::with_file_loader(
-            file_loader,
-            FilePathMapping::empty(),
-        ));
-        let fm = cm.load_file(ts_path).expect("Can't load file");
+        let fm = self.source_map.load_file(ts_path).expect("Can't load file");
         let lexer = Lexer::new(
             Syntax::Typescript(TsConfig {
                 tsx: true,
@@ -760,7 +809,7 @@ impl TsTypes {
         &mut self,
         module_base: Option<PathBuf>,
         module_name: &str,
-    ) -> Result<PathBuf, Error> {
+    ) -> Result<PathBuf, InternalError> {
         let ts_path = get_ts_path(
             &*self.fs,
             module_base,
@@ -782,7 +831,10 @@ impl TsTypes {
         Ok(ts_path)
     }
 
-    fn get_possibly_ns_qualified_name(&mut self, name: TypeIdent) -> Result<TypeIdent, Error> {
+    fn get_possibly_ns_qualified_name(
+        &mut self,
+        name: TypeIdent,
+    ) -> Result<TypeIdent, InternalError> {
         Ok(match self.namespace_stack.last() {
             Some(ns) => {
                 let mut ns = ns.clone();
@@ -791,7 +843,7 @@ impl TsTypes {
                         ns.push(s);
                     }
                     TypeIdent::DefaultExport() => {
-                        return Err(Error::with_msg_and_namespace(
+                        return Err(InternalError::with_msg_and_namespace(
                             "default exports inside namespaces are not supported",
                             ns,
                         ));
@@ -811,7 +863,7 @@ impl TsTypes {
         &mut self,
         file: &Path,
         name: TypeIdent,
-        typ: Result<Type, Error>,
+        typ: Result<Type, InternalError>,
     ) {
         match typ {
             Err(e) => self.record_error(e),
@@ -832,7 +884,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         name: TypeName,
-        info: Result<TypeInfo, Error>,
+        info: Result<TypeInfo, InternalError>,
     ) {
         let typ = info.map(|info| Type {
             name,
@@ -843,7 +895,7 @@ impl TsTypes {
         self.set_type_for_file(ts_path, typ);
     }
 
-    fn set_type_for_file(&mut self, ts_path: &Path, typ: Result<Type, Error>) {
+    fn set_type_for_file(&mut self, ts_path: &Path, typ: Result<Type, InternalError>) {
         match typ {
             Ok(t) => {
                 self.set_type_for_name_for_file(ts_path, t.name.name.clone(), Ok(t));
@@ -854,7 +906,7 @@ impl TsTypes {
         }
     }
 
-    fn record_error(&mut self, err: Error) {
+    fn record_error(&mut self, err: InternalError) {
         self.errors.push(err);
     }
 
@@ -991,7 +1043,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         ts_type_ref: &TsTypeRef,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Ref(
             Source::from(self, ts_path, ts_type_ref).try_into()?,
         ))
@@ -1001,10 +1053,10 @@ impl TsTypes {
         &mut self,
         _ts_path: &Path,
         keyword: &TsKeywordType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(match &keyword.kind {
             TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny(PrimitiveAny()),
-            TsKeywordTypeKind::TsUnknownKeyword => Err(Error::with_msg_and_span(
+            TsKeywordTypeKind::TsUnknownKeyword => Err(InternalError::with_msg_and_span(
                 "unknown keyword not supported",
                 keyword.span(),
             ))?,
@@ -1019,11 +1071,11 @@ impl TsTypes {
                 TypeInfo::PrimitiveUndefined(PrimitiveUndefined())
             }
             TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull(PrimitiveNull()),
-            TsKeywordTypeKind::TsNeverKeyword => Err(Error::with_msg_and_span(
+            TsKeywordTypeKind::TsNeverKeyword => Err(InternalError::with_msg_and_span(
                 "never keyword not supported",
                 keyword.span(),
             ))?,
-            TsKeywordTypeKind::TsIntrinsicKeyword => Err(Error::with_msg_and_span(
+            TsKeywordTypeKind::TsIntrinsicKeyword => Err(InternalError::with_msg_and_span(
                 "intrinsic keyword not supported",
                 keyword.span(),
             ))?,
@@ -1034,7 +1086,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsArrayType { elem_type, .. }: &TsArrayType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Array {
             item_type: Box::new(self.process_type(ts_path, elem_type)?),
         })
@@ -1044,7 +1096,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsOptionalType { type_ann, .. }: &TsOptionalType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Optional {
             item_type: Box::new(self.process_type(ts_path, type_ann)?),
         })
@@ -1054,12 +1106,12 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsUnionType { types, .. }: &TsUnionType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Union(Union {
             types: types
                 .iter()
                 .map(|t| self.process_type(ts_path, t))
-                .collect::<Result<Vec<_>, Error>>()?,
+                .collect::<Result<Vec<_>, InternalError>>()?,
         }))
     }
 
@@ -1067,12 +1119,12 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsIntersectionType { types, .. }: &TsIntersectionType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Intersection(Intersection {
             types: types
                 .iter()
                 .map(|t| self.process_type(ts_path, t))
-                .collect::<Result<Vec<_>, Error>>()?,
+                .collect::<Result<Vec<_>, InternalError>>()?,
         }))
     }
 
@@ -1080,7 +1132,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsTypeLit { members, .. }: &TsTypeLit,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         if members.len() == 1 && members.first().unwrap().is_ts_index_signature() {
             // mapped param, e.g. function f(a: {[n: string]: string]});
             let mem = members.first().unwrap();
@@ -1098,7 +1150,7 @@ impl TsTypes {
                     ),
                 })
             } else {
-                Err(Error::with_msg_and_span(
+                Err(InternalError::with_msg_and_span(
                     "bad member types for mapped type",
                     mem.span(),
                 ))
@@ -1118,18 +1170,18 @@ impl TsTypes {
         &mut self,
         _ts_path: &Path,
         lit: &TsLitType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(match &lit.lit {
             TsLit::Number(n) => TypeInfo::LitNumber(LitNumber { n: n.value }),
             TsLit::Str(s) => TypeInfo::LitString(LitString {
                 s: s.value.to_string(),
             }),
             TsLit::Bool(b) => TypeInfo::LitBoolean(LitBoolean { b: b.value }),
-            TsLit::BigInt(_) => Err(Error::with_msg_and_span(
+            TsLit::BigInt(_) => Err(InternalError::with_msg_and_span(
                 "we don't support literal bigints yet",
                 lit.span(),
             ))?,
-            TsLit::Tpl(_) => Err(Error::with_msg_and_span(
+            TsLit::Tpl(_) => Err(InternalError::with_msg_and_span(
                 "we don't support template literals yet",
                 lit.span(),
             ))?,
@@ -1140,7 +1192,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         params: &[TsFnParam],
-    ) -> Result<Vec<Param>, Error> {
+    ) -> Result<Vec<Param>, InternalError> {
         params
             .iter()
             .enumerate()
@@ -1165,7 +1217,7 @@ impl TsTypes {
             type_params,
             ..
         }: &TsFnType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Func(Func {
             type_params: self.process_fn_type_params(ts_path, type_params),
             params: self.process_params(ts_path, params)?,
@@ -1182,7 +1234,7 @@ impl TsTypes {
             type_params: _,
             ..
         }: &TsConstructorType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Constructor(Ctor {
             params: self.process_params(ts_path, params)?,
         }))
@@ -1196,7 +1248,7 @@ impl TsTypes {
             type_ann,
             ..
         }: &TsTypePredicate,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Func(Func {
             type_params: Default::default(),
             params: vec![Param {
@@ -1219,12 +1271,12 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsTupleType { elem_types, .. }: &TsTupleType,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(TypeInfo::Tuple(Tuple {
             types: elem_types
                 .iter()
                 .map(|t| self.process_type(ts_path, &t.ty))
-                .collect::<Result<Vec<_>, Error>>()?,
+                .collect::<Result<Vec<_>, InternalError>>()?,
         }))
     }
 
@@ -1232,7 +1284,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsTypeOperator { op, type_ann, .. }: &TsTypeOperator,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         Ok(match op {
             TsTypeOperatorOp::KeyOf => TypeInfo::PrimitiveString(PrimitiveString()),
             TsTypeOperatorOp::Unique | TsTypeOperatorOp::ReadOnly => {
@@ -1241,7 +1293,11 @@ impl TsTypes {
         })
     }
 
-    fn process_type(&mut self, ts_path: &Path, ts_type: &TsType) -> Result<TypeInfo, Error> {
+    fn process_type(
+        &mut self,
+        ts_path: &Path,
+        ts_type: &TsType,
+    ) -> Result<TypeInfo, InternalError> {
         Ok(match ts_type {
             TsType::TsTypeRef(type_ref) => self.process_type_ref(ts_path, type_ref)?,
             TsType::TsKeywordType(keyword_type) => {
@@ -1283,7 +1339,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         members: &[TsTypeElement],
-    ) -> Result<Option<Indexer>, Error> {
+    ) -> Result<Option<Indexer>, InternalError> {
         members.iter().find_map_reporting_result(|el| match el {
             TsTypeElement::TsIndexSignature(indexer) => Some(indexer.to_indexer(ts_path, self)),
             _ => None,
@@ -1294,7 +1350,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         members: &[TsTypeElement],
-    ) -> Result<HashMap<String, TypeInfo>, Error> {
+    ) -> Result<HashMap<String, TypeInfo>, InternalError> {
         members
             .iter()
             .filter_map_reporting_result(|el| {
@@ -1329,7 +1385,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         members: &[TsTypeElement],
-    ) -> Result<Option<Ctor>, Error> {
+    ) -> Result<Option<Ctor>, InternalError> {
         members.iter().find_map_reporting_result(|el| match el {
             TsTypeElement::TsConstructSignatureDecl(ctor) => {
                 let params = self.process_params(ts_path, &ctor.params);
@@ -1352,7 +1408,7 @@ impl TsTypes {
             body,
             ..
         }: &TsInterfaceDecl,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         Ok(Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
@@ -1365,7 +1421,7 @@ impl TsTypes {
                             Source::from(self, ts_path, e).try_into()?,
                         ))
                     })
-                    .collect::<Result<Vec<_>, Error>>()?,
+                    .collect::<Result<Vec<_>, InternalError>>()?,
                 fields: self.process_interface_members(ts_path, &body.body)?,
                 type_params: type_params.type_param_config(),
                 constructor: self.process_interface_constructor(ts_path, &body.body)?,
@@ -1377,7 +1433,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         TsEnumDecl { id, members, .. }: &TsEnumDecl,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         Ok(Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
             is_exported: false,
@@ -1399,7 +1455,7 @@ impl TsTypes {
                                             // TODO: might need to capture numbers too
                                             _ => None,
                                         },
-                                        _ => Some(Err(Error::with_msg_and_span(
+                                        _ => Some(Err(InternalError::with_msg_and_span(
                                             "enums with non-literal initializers not supported",
                                             v.span(),
                                         ))),
@@ -1408,7 +1464,7 @@ impl TsTypes {
                                 .transpose()?,
                         })
                     })
-                    .collect::<Result<Vec<EnumMember>, Error>>()?,
+                    .collect::<Result<Vec<EnumMember>, InternalError>>()?,
             }),
         })
     }
@@ -1422,7 +1478,7 @@ impl TsTypes {
             type_ann,
             ..
         }: &TsTypeAliasDecl,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         let type_info = self.process_type(ts_path, &*type_ann)?;
         Ok(Type {
             name: TypeName::for_name(ts_path, &id.sym.to_string()),
@@ -1439,7 +1495,7 @@ impl TsTypes {
         ts_path: &Path,
         name: &TypeName,
         class: &swc_ecma_ast::Class,
-    ) -> Result<TypeInfo, Error> {
+    ) -> Result<TypeInfo, InternalError> {
         let swc_ecma_ast::Class {
             body,
             type_params,
@@ -1504,11 +1560,11 @@ impl TsTypes {
                         ClassMember::Empty(_) => None,
                     })
                 })
-                .collect::<Result<HashMap<String, Member>, Error>>()?,
+                .collect::<Result<HashMap<String, Member>, InternalError>>()?,
             implements: implements
                 .iter()
                 .map(|i| Source::from(self, ts_path, i).try_into())
-                .collect::<Result<Vec<_>, Error>>()?,
+                .collect::<Result<Vec<_>, InternalError>>()?,
             type_params: type_params.type_param_config(),
         }))
     }
@@ -1517,7 +1573,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         ClassDecl { ident, class, .. }: &ClassDecl,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         let name = TypeName::for_name(ts_path, &ident.sym.to_string());
         Ok(Type {
             name: name.clone(),
@@ -1530,7 +1586,7 @@ impl TsTypes {
         &mut self,
         ts_path: &Path,
         VarDeclarator { name, .. }: &VarDeclarator,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         match name {
             Pat::Ident(BindingIdent { id, type_ann }) => Ok(Type {
                 name: TypeName::for_name(ts_path, &id.sym.to_string()),
@@ -1544,7 +1600,7 @@ impl TsTypes {
                     ),
                 },
             }),
-            _ => Err(Error::with_msg_and_span(
+            _ => Err(InternalError::with_msg_and_span(
                 "we only support regular identifiers for variables",
                 name.span(),
             )),
@@ -1557,7 +1613,7 @@ impl TsTypes {
         FnDecl {
             ident, function, ..
         }: &FnDecl,
-    ) -> Result<Type, Error> {
+    ) -> Result<Type, InternalError> {
         Ok(Type {
             name: TypeName::for_name(ts_path, &ident.sym.to_string()),
             is_exported: false,
@@ -1565,7 +1621,7 @@ impl TsTypes {
         })
     }
 
-    fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Result<Type, Error>> {
+    fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Result<Type, InternalError>> {
         match decl {
             Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
             Decl::TsEnum(enm) => vec![self.process_ts_enum(ts_path, enm)],
@@ -1598,7 +1654,7 @@ impl TsTypes {
                             self.process_module_items(ts_path, &block.body)
                         }
                         TsNamespaceBody::TsNamespaceDecl(ns_decl) => {
-                            return vec![Err(Error::with_msg_and_span(
+                            return vec![Err(InternalError::with_msg_and_span(
                                 "inner namespace decls are not supported",
                                 ns_decl.span(),
                             ))];
@@ -1684,7 +1740,7 @@ impl TsTypes {
                     }
                 }
                 _ => {
-                    self.record_error(Error::with_msg_and_span(
+                    self.record_error(InternalError::with_msg_and_span(
                         "unnamed exports not supported",
                         spec.span(),
                     ));
