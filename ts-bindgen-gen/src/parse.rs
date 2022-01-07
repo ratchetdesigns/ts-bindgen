@@ -770,8 +770,8 @@ impl TsTypes {
         }
     }
 
-    fn load_module(&mut self, ts_path: &Path) -> Result<Module, swc_ecma_parser::error::Error> {
-        let fm = self.source_map.load_file(ts_path).expect("Can't load file");
+    fn load_module(&mut self, ts_path: &Path) -> Result<Module, InternalError> {
+        let fm = self.source_map.load_file(ts_path)?;
         let lexer = Lexer::new(
             Syntax::Typescript(TsConfig {
                 tsx: true,
@@ -917,7 +917,13 @@ impl TsTypes {
             specifiers, src, ..
         }: &ImportDecl,
     ) {
-        let base = ts_path.parent().expect("All files must have a parent");
+        let base = match path_parent(ts_path) {
+            Ok(base) => base,
+            Err(err) => {
+                self.record_error(err);
+                return;
+            }
+        };
         let import = src.value.to_string();
 
         let file_result = self.process_module(Some(base.to_path_buf()), &import);
@@ -984,7 +990,13 @@ impl TsTypes {
 
     fn process_export_all(&mut self, ts_path: &Path, export_all: &ExportAll) {
         let s = export_all.src.value.to_string();
-        let dir = ts_path.parent().expect("All files must have a parent");
+        let dir = match path_parent(ts_path) {
+            Ok(base) => base,
+            Err(err) => {
+                self.record_error(err);
+                return;
+            }
+        };
 
         let file_result = self.process_module(Some(dir.to_path_buf()), &s);
 
@@ -1144,7 +1156,12 @@ impl TsTypes {
                             &index_sig
                                 .type_ann
                                 .as_ref()
-                                .expect("Need a type for a mapped type")
+                                .ok_or_else(|| {
+                                    InternalError::with_msg_and_span(
+                                        "expected a type for a mapped type",
+                                        index_sig.span(),
+                                    )
+                                })?
                                 .type_ann,
                         )?,
                     ),
@@ -1753,7 +1770,13 @@ impl TsTypes {
         let src = src.as_ref().unwrap();
         let file = {
             let src = src.value.to_string();
-            let dir = ts_path.parent().expect("All files must have a parent");
+            let dir = match path_parent(ts_path) {
+                Ok(dir) => dir,
+                Err(err) => {
+                    self.record_error(err);
+                    return;
+                }
+            };
             let file_result = self.process_module(Some(dir.to_path_buf()), &src);
             match file_result {
                 Ok(file) => file,
@@ -1895,6 +1918,13 @@ impl TsTypes {
                     Err(err) => self.record_error(err),
                 });
         }
+    }
+}
+
+fn path_parent(path: &Path) -> Result<&Path, InternalError> {
+    match path.parent() {
+        Some(base) => Ok(base),
+        None => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "path has no parent").into()),
     }
 }
 
