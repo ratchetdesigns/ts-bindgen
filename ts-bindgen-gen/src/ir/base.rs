@@ -441,6 +441,9 @@ impl TypeInfo {
         None
     }
 
+    // TODO: resolve_names exists throughout this file exclusively to resolve builtin names...
+    // is there a simpler way to do this without the full recursion?
+    // perhaps move this to the flattened ir conversion when we have to walk our ast anyway?
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
