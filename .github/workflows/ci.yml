@@ -108,7 +108,7 @@ jobs:
         with:
           node-version: '14'
       - name: Wasm web builds
-        run: wasm-pack build --target web -- --no-default-features
+        run: wasm-pack build --dev --target web -- --no-default-features
         working-directory: ${{ matrix.wasm_project }}
         env:
           CFG_RELEASE: nightly
