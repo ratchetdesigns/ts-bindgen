@@ -81,7 +81,10 @@ where
 ///
 /// # Ok(())
 /// # }
-pub fn generate_rust_string_for_typescript_string(rust_namespace: &str, ts: String) -> Result<String, Error> {
+pub fn generate_rust_string_for_typescript_string(
+    rust_namespace: &str,
+    ts: String,
+) -> Result<String, Error> {
     let file = format!("/{}.d.ts", rust_namespace);
 
     let fs = {

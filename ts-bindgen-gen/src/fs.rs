@@ -7,12 +7,22 @@ use std::path::{Component, Path, PathBuf};
 
 /// Filesystem abstraction
 pub trait Fs: Debug {
+    /// Does path refer to a regular file?
     fn is_file(&self, path: &Path) -> bool;
+
+    /// Does path refer to a directory?
     fn is_dir(&self, path: &Path) -> bool;
+
+    /// Does path exist?
     fn exists(&self, path: &Path) -> bool;
+
+    /// Open the file at path, returning a reader (dyn [`Read`]) or an Error.
     fn open<'a>(&'a self, path: &Path) -> Result<Box<dyn Read + 'a>, Error>;
+
+    /// Get the current working directory.
     fn cwd(&self) -> Result<PathBuf, Error>;
 
+    /// Normalize the path. Normalization converts, for example, /a/b/../c -> /a/c.
     fn normalize(&self, path: &Path) -> PathBuf {
         path.components()
             .fold(PathBuf::new(), |cur, component| match component {
@@ -26,6 +36,7 @@ pub trait Fs: Debug {
             })
     }
 
+    /// Is the provided path absolute?
     fn is_absolute_path(&self, path: &Path) -> bool {
         if cfg!(any(target_arch = "wasm32", target_arch = "wasm64")) {
             // wasm is_absolute checks path.has_root && path.prefix().is_some()
@@ -64,7 +75,7 @@ impl Fs for StdFs {
     }
 }
 
-/// Testing filesystem
+/// In-memory filesystem
 #[derive(Default, Debug)]
 pub struct MemFs {
     cwd: Option<PathBuf>,
@@ -78,19 +89,24 @@ enum FileEntry {
 }
 
 impl MemFs {
+    /// Set the current working directory to `path`.
     pub fn set_cwd(&mut self, path: &Path) {
         self.cwd = Some(path.to_path_buf());
     }
 
+    /// Add a regular file at `path` with contents, `contents`.
     pub fn add_file_at(&mut self, path: &Path, contents: String) {
         self.paths
             .insert(path.to_path_buf(), FileEntry::File(contents));
     }
 
+    /// Add a directory at `path`.
     pub fn add_dir_at(&mut self, path: &Path) {
         self.paths.insert(path.to_path_buf(), FileEntry::Dir());
     }
 
+    /// Remove the file or directory at `path`. If `path` is a directory, we do not perform a
+    /// recursive deletion of contents.
     pub fn rm_at(&mut self, path: &Path) {
         self.paths.remove(path);
     }

@@ -4,6 +4,7 @@ use swc_common::{
     Spanned,
 };
 
+/// Public Error type for ts-bindgen-gen.
 #[derive(Debug)]
 pub struct Error {
     msg: String,
