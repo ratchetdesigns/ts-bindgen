@@ -1361,6 +1361,7 @@ impl TsTypes {
             TsType::TsTypePredicate(pred) => self.process_type_predicate(ts_path, pred)?,
             TsType::TsTupleType(tuple) => self.process_tuple(ts_path, tuple)?,
             TsType::TsTypeOperator(op) => self.process_type_op(ts_path, op)?,
+            TsType::TsThisType(_) => TypeInfo::PrimitiveAny(PrimitiveAny()), // TODO: this is clearly silly
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Ref(TypeRef {
@@ -2353,6 +2354,24 @@ mod test {
                     id: "E".to_string(),
                     value: Some(EnumValue::Num(6.0)),
                 }));
+            }
+        )
+    }
+
+    #[test]
+    fn test_this_type() -> Result<(), Error> {
+        test_exported_type!(
+            r#"export interface Something {
+                thisThing: this;
+            }"#,
+            "Something",
+            TypeInfo::Interface(i),
+            {
+                assert_eq!(i.fields.len(), 1);
+                let n = i.fields.get("thisThing");
+                assert!(n.is_some());
+                let n = n.unwrap();
+                assert_eq!(*n, TypeInfo::PrimitiveAny(PrimitiveAny()));
             }
         )
     }
