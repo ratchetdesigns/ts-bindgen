@@ -673,11 +673,11 @@ pub enum Builtin {
     PrimitiveVoid,
     PrimitiveUndefined,
     PrimitiveNull,
-    BuiltinDate,
+    Date,
     LitNumber,
     LitBoolean,
     LitString,
-    BuiltinPromise,
+    Promise,
     Array,
     Fn,
     Map,
@@ -696,11 +696,11 @@ type_ref_from_prims!(
     PrimitiveVoid => PrimitiveVoid,
     PrimitiveUndefined => PrimitiveUndefined,
     PrimitiveNull => PrimitiveNull,
-    BuiltinDate => BuiltinDate,
+    BuiltinDate => Date,
     LitNumber => LitNumber,
     LitBoolean => LitBoolean,
     LitString => LitString,
-    BuiltinPromise => BuiltinPromise,
+    BuiltinPromise => Promise,
 );
 
 impl From<Box<TypeInfoIR>> for EffectContainer<Box<FlattenedTypeInfo>> {

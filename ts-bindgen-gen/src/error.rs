@@ -24,22 +24,22 @@ impl Error {
         let msg: Vec<String> = errors
             .into_iter()
             .map(|error| match error {
-                InternalError::LogicError { msg, span } => format!(
+                InternalError::Logic { msg, span } => format!(
                     "binding generation error: {}\n{}",
                     msg,
                     span_error_msg(span, source_map)
                 ),
-                InternalError::NamespaceError { msg, ns } => format!(
+                InternalError::Namespace { msg, ns } => format!(
                     "binding generation error: {} for namespace {}",
                     msg,
                     ns.join("::")
                 ),
-                InternalError::ParseError { error } => format!(
+                InternalError::Parse { error } => format!(
                     "typescript parsing error: {}\n{}",
                     error.kind().msg(),
                     span_error_msg(error.span(), source_map)
                 ),
-                InternalError::IoError { error } => format!("io error: {}", error),
+                InternalError::Io { error } => format!("io error: {}", error),
             })
             .collect();
 
@@ -71,32 +71,32 @@ impl std::error::Error for Error {
 
 #[derive(Debug)]
 pub(crate) enum InternalError {
-    LogicError {
+    Logic {
         // TODO: convert spans into a useful snippet
         msg: &'static str,
         span: Span,
     },
-    NamespaceError {
+    Namespace {
         msg: &'static str,
         ns: Vec<String>,
     },
-    ParseError {
+    Parse {
         error: swc_ecma_parser::error::Error,
     },
-    IoError {
+    Io {
         error: std::io::Error,
     },
 }
 
 impl From<swc_ecma_parser::error::Error> for InternalError {
     fn from(error: swc_ecma_parser::error::Error) -> InternalError {
-        InternalError::ParseError { error }
+        InternalError::Parse { error }
     }
 }
 
 impl From<std::io::Error> for InternalError {
     fn from(error: std::io::Error) -> InternalError {
-        InternalError::IoError { error }
+        InternalError::Io { error }
     }
 }
 
@@ -109,20 +109,20 @@ impl fmt::Display for InternalError {
 impl std::error::Error for InternalError {
     fn description(&self) -> &str {
         match self {
-            InternalError::LogicError { .. } => "LogicError",
-            InternalError::NamespaceError { .. } => "NamespaceError",
-            InternalError::ParseError { .. } => "ParseError",
-            InternalError::IoError { .. } => "IoError",
+            InternalError::Logic { .. } => "Logic",
+            InternalError::Namespace { .. } => "Namespace",
+            InternalError::Parse { .. } => "Parse",
+            InternalError::Io { .. } => "Io",
         }
     }
 }
 
 impl InternalError {
     pub fn with_msg_and_span(msg: &'static str, span: Span) -> InternalError {
-        InternalError::LogicError { msg, span }
+        InternalError::Logic { msg, span }
     }
 
     pub fn with_msg_and_namespace(msg: &'static str, ns: Vec<String>) -> InternalError {
-        InternalError::NamespaceError { msg, ns }
+        InternalError::Namespace { msg, ns }
     }
 }

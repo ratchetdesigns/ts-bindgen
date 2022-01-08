@@ -31,11 +31,11 @@ impl Named for Builtin {
             Builtin::PrimitiveNull => {
                 ("ts_bindgen_rt::Null", make_identifier!(ts_bindgen_rt::Null))
             }
-            Builtin::BuiltinDate => ("js_sys::Date", make_identifier!(js_sys::Date)),
+            Builtin::Date => ("js_sys::Date", make_identifier!(js_sys::Date)),
             Builtin::LitNumber => Builtin::PrimitiveNumber.to_name(),
             Builtin::LitBoolean => Builtin::PrimitiveBoolean.to_name(),
             Builtin::LitString => Builtin::PrimitiveString.to_name(),
-            Builtin::BuiltinPromise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
+            Builtin::Promise => ("js_sys::Promise", make_identifier!(js_sys::Promise)),
             Builtin::Array => ("Vec", to_ident("Vec")),
             Builtin::Fn => ("Fn", to_ident("Fn")),
             Builtin::Map => (
