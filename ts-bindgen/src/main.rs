@@ -71,7 +71,7 @@ fn main() {
     };
 
     if let Some(out_path) = args.rust_output_path {
-        if let Err(err) = write_file(&out_path, rust.to_string()) {
+        if let Err(err) = write_file(&out_path, rust) {
             eprintln!("Failed to write file {}: {}", out_path, err);
             exit(2);
         }

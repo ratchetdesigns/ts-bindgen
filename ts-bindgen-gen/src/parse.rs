@@ -1077,10 +1077,12 @@ impl TsTypes {
     ) -> Result<TypeInfo, InternalError> {
         Ok(match &keyword.kind {
             TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny(PrimitiveAny()),
-            TsKeywordTypeKind::TsUnknownKeyword => Err(InternalError::with_msg_and_span(
-                "unknown keyword not supported",
-                keyword.span(),
-            ))?,
+            TsKeywordTypeKind::TsUnknownKeyword => {
+                return Err(InternalError::with_msg_and_span(
+                    "unknown keyword not supported",
+                    keyword.span(),
+                ))
+            }
             TsKeywordTypeKind::TsNumberKeyword => TypeInfo::PrimitiveNumber(PrimitiveNumber()),
             TsKeywordTypeKind::TsObjectKeyword => TypeInfo::PrimitiveObject(PrimitiveObject()),
             TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean(PrimitiveBoolean()),
@@ -1092,14 +1094,18 @@ impl TsTypes {
                 TypeInfo::PrimitiveUndefined(PrimitiveUndefined())
             }
             TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull(PrimitiveNull()),
-            TsKeywordTypeKind::TsNeverKeyword => Err(InternalError::with_msg_and_span(
-                "never keyword not supported",
-                keyword.span(),
-            ))?,
-            TsKeywordTypeKind::TsIntrinsicKeyword => Err(InternalError::with_msg_and_span(
-                "intrinsic keyword not supported",
-                keyword.span(),
-            ))?,
+            TsKeywordTypeKind::TsNeverKeyword => {
+                return Err(InternalError::with_msg_and_span(
+                    "never keyword not supported",
+                    keyword.span(),
+                ))
+            }
+            TsKeywordTypeKind::TsIntrinsicKeyword => {
+                return Err(InternalError::with_msg_and_span(
+                    "intrinsic keyword not supported",
+                    keyword.span(),
+                ))
+            }
         })
     }
 
@@ -1203,14 +1209,18 @@ impl TsTypes {
                 s: s.value.to_string(),
             }),
             TsLit::Bool(b) => TypeInfo::LitBoolean(LitBoolean { b: b.value }),
-            TsLit::BigInt(_) => Err(InternalError::with_msg_and_span(
-                "we don't support literal bigints yet",
-                lit.span(),
-            ))?,
-            TsLit::Tpl(_) => Err(InternalError::with_msg_and_span(
-                "we don't support template literals yet",
-                lit.span(),
-            ))?,
+            TsLit::BigInt(_) => {
+                return Err(InternalError::with_msg_and_span(
+                    "we don't support literal bigints yet",
+                    lit.span(),
+                ))
+            }
+            TsLit::Tpl(_) => {
+                return Err(InternalError::with_msg_and_span(
+                    "we don't support template literals yet",
+                    lit.span(),
+                ))
+            }
         })
     }
 
