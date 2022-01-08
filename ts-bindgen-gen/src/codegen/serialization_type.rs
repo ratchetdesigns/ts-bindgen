@@ -6,7 +6,6 @@ use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
 pub enum SerializationType {
     Raw,
     SerdeJson,
-    Ref,
     Fn,
 }
 

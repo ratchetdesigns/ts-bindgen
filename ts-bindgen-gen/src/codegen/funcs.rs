@@ -329,7 +329,6 @@ pub mod fn_types {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
-            SerializationType::Ref => quote! { &#typ },
             SerializationType::SerdeJson => quote! { JsValue },
             SerializationType::Fn => {
                 let target = typ.resolve_target_type();
@@ -368,7 +367,6 @@ pub mod fn_types {
         let serialization_type = typ.serialization_type();
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
-            SerializationType::Ref => quote! { &#typ },
             SerializationType::Fn => match typ {
                 // TODO: fix this leaky abstraction...
                 TypeRefLike::TypeRef(_) => quote! { &'static #typ },
@@ -591,7 +589,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         internal_fn_name: &Identifier,
         is_fallible: bool,
         result_converter: Option<&ResConverter>,
-        type_env: &HashMap<String, TypeRef>,
+        _type_env: &HashMap<String, TypeRef>,
     ) -> TokenStream2
     where
         ResConverter: Fn(TokenStream2) -> TokenStream2,
@@ -784,7 +782,7 @@ impl<T: WrappedParam> ParamExt for T {
         let name = self.rust_name();
 
         match serialization_type {
-            SerializationType::Raw | SerializationType::Ref => quote! { #name },
+            SerializationType::Raw => quote! { #name },
             SerializationType::SerdeJson => {
                 quote! {
                     ts_bindgen_rt::from_jsvalue(&#name).map_err(ts_bindgen_rt::Error::from)?
@@ -979,7 +977,7 @@ fn render_wasm_bindgen_return_to_js(
 ) -> TokenStream2 {
     let serialization_type = return_type.serialization_type();
     let res = match serialization_type {
-        SerializationType::Raw | SerializationType::Ref => return_value.clone(),
+        SerializationType::Raw => return_value.clone(),
         SerializationType::SerdeJson => {
             quote! {
                 ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
@@ -1000,7 +998,7 @@ fn render_wasm_bindgen_return_to_js(
 pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream2) -> TokenStream2 {
     let serialization_type = return_type.serialization_type();
     match serialization_type {
-        SerializationType::Raw | SerializationType::Ref => quote! {
+        SerializationType::Raw => quote! {
             #return_value.into_serde().unwrap()
         },
         SerializationType::SerdeJson => {
@@ -1023,7 +1021,7 @@ fn render_rust_to_js_conversion(
 ) -> TokenStream2 {
     let serialization_type = typ.serialization_type();
     match serialization_type {
-        SerializationType::Raw | SerializationType::Ref => quote! { #name },
+        SerializationType::Raw => quote! { #name },
         SerializationType::SerdeJson => {
             quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
         }
@@ -1041,7 +1039,7 @@ fn render_rust_to_jsvalue_conversion(
 ) -> TokenStream2 {
     let serialization_type = typ.serialization_type();
     match serialization_type {
-        SerializationType::Raw | SerializationType::Ref => quote! { JsValue::from(#name) },
+        SerializationType::Raw => quote! { JsValue::from(#name) },
         SerializationType::SerdeJson => {
             quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
         }

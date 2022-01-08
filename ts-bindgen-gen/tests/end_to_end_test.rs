@@ -123,21 +123,6 @@ fn run_cargo_test<Dir: AsRef<Path>>(dir: Dir) -> std::io::Result<()> {
     }
 }
 
-fn generate_ts_bindgen_files<Src: AsRef<Path>, Dest: AsRef<Path>>(
-    src: Src,
-    dest: Dest,
-) -> Result<(), Error> {
-    for ts in read_dir(src.as_ref())? {
-        let ts = ts?;
-        generate_ts_bindgen_file(
-            ts.path(),
-            dest.as_ref().join(ts.file_name()).with_extension("rs"),
-        )?;
-    }
-
-    Ok(())
-}
-
 fn generate_ts_bindgen_file<Src: AsRef<Path>, Dest: AsRef<Path>>(
     src: Src,
     dest: Dest,
