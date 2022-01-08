@@ -4,7 +4,7 @@ extern crate wasm_bindgen;
 pub mod jsvalue_serde;
 
 pub use jsvalue_serde::{from_jsvalue, to_jsvalue};
-use jsvalue_serde::{JSVALUE_NEWTYPE_STRUCT, UNDEFINED_UNIT_STRUCT, Error as SerdeError};
+use jsvalue_serde::{Error as SerdeError, JSVALUE_NEWTYPE_STRUCT, UNDEFINED_UNIT_STRUCT};
 use serde::{de, ser};
 use std::fmt;
 use wasm_bindgen::{

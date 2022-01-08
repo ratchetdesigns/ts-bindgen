@@ -1018,7 +1018,7 @@ impl TsTypes {
                     export_all.span(),
                 ));
                 return;
-            },
+            }
         };
         let to_export = to_export
             .iter()
