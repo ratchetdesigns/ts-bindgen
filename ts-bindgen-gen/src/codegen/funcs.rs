@@ -577,9 +577,6 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         quote! {
             #[allow(dead_code)]
             pub #f {
-                #[allow(unused_imports)]
-                use ts_bindgen_rt::IntoSerdeOrDefault;
-
                 #wrapper_fns
 
                 #ret
@@ -643,9 +640,6 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         quote! {
             #[allow(dead_code)]
             pub #f {
-                #[allow(unused_imports)]
-                use ts_bindgen_rt::IntoSerdeOrDefault;
-
                 #(#arg_converters)*
 
                 #wrapper_fns
@@ -793,7 +787,7 @@ impl<T: WrappedParam> ParamExt for T {
             SerializationType::Raw | SerializationType::Ref => quote! { #name },
             SerializationType::SerdeJson => {
                 quote! {
-                    ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#name).map_err(ts_bindgen_rt::Error::from)?
+                    ts_bindgen_rt::from_jsvalue(&#name).map_err(ts_bindgen_rt::Error::from)?
                 }
             }
             SerializationType::Fn => {
@@ -988,7 +982,7 @@ fn render_wasm_bindgen_return_to_js(
         SerializationType::Raw | SerializationType::Ref => return_value.clone(),
         SerializationType::SerdeJson => {
             quote! {
-                ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap()
+                ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
             }
         }
         SerializationType::Fn => {
@@ -1011,7 +1005,7 @@ pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream
         },
         SerializationType::SerdeJson => {
             quote! {
-                ts_bindgen_rt::IntoSerdeOrDefault::into_serde_or_default(&#return_value).unwrap()
+                ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
             }
         }
         SerializationType::Fn => {
@@ -1031,7 +1025,7 @@ fn render_rust_to_js_conversion(
     match serialization_type {
         SerializationType::Raw | SerializationType::Ref => quote! { #name },
         SerializationType::SerdeJson => {
-            quote! { ts_bindgen_rt::from_serde_or_undefined(#name)#error_mapper }
+            quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
         }
         SerializationType::Fn => {
             quote! { &#fn_name }
@@ -1049,7 +1043,7 @@ fn render_rust_to_jsvalue_conversion(
     match serialization_type {
         SerializationType::Raw | SerializationType::Ref => quote! { JsValue::from(#name) },
         SerializationType::SerdeJson => {
-            quote! { ts_bindgen_rt::from_serde_or_undefined(#name)#error_mapper }
+            quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
         }
         SerializationType::Fn => {
             quote! { &#fn_name }

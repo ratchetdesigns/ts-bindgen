@@ -3,8 +3,9 @@ extern crate wasm_bindgen;
 
 pub mod jsvalue_serde;
 
-use jsvalue_serde::{from_jsvalue, to_jsvalue, JSVALUE_NEWTYPE_STRUCT, UNDEFINED_UNIT_STRUCT};
-use serde::{de, ser, Deserialize, Serialize};
+pub use jsvalue_serde::{from_jsvalue, to_jsvalue};
+use jsvalue_serde::{JSVALUE_NEWTYPE_STRUCT, UNDEFINED_UNIT_STRUCT, Error as SerdeError};
+use serde::{de, ser};
 use std::fmt;
 use wasm_bindgen::{
     convert::{FromWasmAbi, IntoWasmAbi},
@@ -54,26 +55,10 @@ impl From<Box<dyn std::error::Error>> for Error {
     }
 }
 
-pub trait IntoSerdeOrDefault {
-    fn into_serde_or_default<T>(&self) -> Result<T, Box<dyn std::error::Error>>
-    where
-        T: for<'a> Deserialize<'a>;
-}
-
-impl IntoSerdeOrDefault for JsValue {
-    fn into_serde_or_default<T>(&self) -> Result<T, Box<dyn std::error::Error>>
-    where
-        T: for<'a> Deserialize<'a>,
-    {
-        Ok(from_jsvalue(self)?)
+impl From<SerdeError> for Error {
+    fn from(_: SerdeError) -> Error {
+        Error
     }
-}
-
-pub fn from_serde_or_undefined<T>(val: T) -> Result<JsValue, Box<dyn std::error::Error>>
-where
-    T: Serialize,
-{
-    Ok(to_jsvalue(&val)?)
 }
 
 pub fn deserialize_as_jsvalue<'de, D, R>(deserializer: D) -> Result<R, D::Error>
