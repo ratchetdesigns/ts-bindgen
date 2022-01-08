@@ -7,7 +7,7 @@ use monaco::{
     yew::{CodeEditor, CodeEditorLink},
 };
 use std::rc::Rc;
-use ts_bindgen::generate_rust_text_for_typescript_string;
+use ts_bindgen::generate_rust_string_for_typescript_string;
 use wasm_bindgen::prelude::*;
 use yew::{html, Component, Context, Html};
 
@@ -68,7 +68,7 @@ impl Component for App {
                         .get_model()
                         .map(|m| m.get_value())
                         .unwrap_or_else(|| String::from(""));
-                    let rust = generate_rust_text_for_typescript_string(ts)
+                    let rust = generate_rust_string_for_typescript_string("example", ts)
                         .map_err(|err| Box::new(err) as Box<dyn std::error::Error + 'static>)
                         .and_then(rust_fmt)
                         .unwrap_or_else(|err| format!("// Error generating typescript rust bindings.\n{}", err));

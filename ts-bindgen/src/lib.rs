@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! ts-bindgen provides a library as an easy entrypoint into generating
 //! rust wasm-bindgen bindings for a typescript module and provides an
 //! executable for doing the same via the command line.
@@ -12,10 +14,43 @@
 //! [ts-bindgen-web](https://github.com/ratchetdesigns/ts-bindgen/tree/master/ts-bindgen-web)
 //! for an example of running rustfmt as a library on the output (in wasm).
 
-use std::path::Path;
-use ts_bindgen_gen::{generate_rust_for_typescript, Error, Fs, MemFs};
+pub use ts_bindgen_gen::{Error, Fs, MemFs, StdFs};
 
-pub fn generate_rust_text_for_typescript<FS, S>(fs: FS, module: S) -> Result<String, Error>
+use std::path::Path;
+use ts_bindgen_gen::generate_rust_for_typescript;
+
+/// Given a [filesystem](`FS`) and a reference to a typescript definition module (e.g. "moment" to
+/// refer to a moment module in node_modules, "./my-module" to refer to my-module.d.ts or
+/// my-module/index.d.ts or my-module's package.json typings reference, etc.), return a String
+/// of rust code for wasm-bindgen bindings to the module.
+///
+/// ```rust
+/// use ts_bindgen::{generate_rust_string_for_typescript, MemFs};
+/// use std::path::Path;
+///
+/// # fn main() -> Result<(), ts_bindgen::Error> {
+/// let fs = {
+///     let mut fs: MemFs = Default::default();
+///     fs.set_cwd(Path::new("/"));
+///     fs.add_file_at(
+///         Path::new("/my-module.d.ts"),
+///         r#"
+///             export declare interface MyInterface {
+///                 someNumber: number;
+///                 aString: string;
+///             }
+///         "#.to_string(),
+///     );
+///     fs
+/// };
+///
+/// let rust = generate_rust_string_for_typescript(fs, "./my-module")?;
+///
+/// assert!(rust.contains("pub struct MyInterface"));
+///
+/// # Ok(())
+/// # }
+pub fn generate_rust_string_for_typescript<FS, S>(fs: FS, module: S) -> Result<String, Error>
 where
     S: AsRef<str>,
     FS: Fs + Send + Sync + 'static,
@@ -24,14 +59,39 @@ where
     Ok(toks.to_string())
 }
 
-pub fn generate_rust_text_for_typescript_string(ts: String) -> Result<String, Error> {
-    let file = "/work.d.ts";
+/// Given typescript definitions as a string, return a String of rust code for wasm-bindgen bindings to the typescript definitions.
+/// The rust will be generated in a module named according to `rust_namespace`.
+///
+/// ```rust
+/// use ts_bindgen::generate_rust_string_for_typescript_string;
+/// use std::path::Path;
+///
+/// # fn main() -> Result<(), ts_bindgen::Error> {
+/// let ts = r#"
+///     export declare interface MyInterface {
+///         someNumber: number;
+///         aString: string;
+///     }
+/// "#.to_string();
+///
+/// let rust = generate_rust_string_for_typescript_string("some-module", ts)?;
+///
+/// assert!(rust.contains("pub mod some_module"));
+/// assert!(rust.contains("pub struct MyInterface"));
+///
+/// # Ok(())
+/// # }
+pub fn generate_rust_string_for_typescript_string(rust_namespace: &str, ts: String) -> Result<String, Error> {
+    let file = format!("/{}.d.ts", rust_namespace);
 
-    let mut fs: MemFs = Default::default();
-    fs.set_cwd(Path::new("/"));
-    fs.add_file_at(Path::new(file), ts);
+    let fs = {
+        let mut fs: MemFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_file_at(Path::new(&file), ts);
+        fs
+    };
 
-    generate_rust_text_for_typescript(fs, file)
+    generate_rust_string_for_typescript(fs, file)
 }
 
 #[cfg(test)]
@@ -63,7 +123,7 @@ mod test {
             "pub trait Abc_Trait",
         ];
 
-        let rust_result = generate_rust_text_for_typescript_string(ts.to_string());
+        let rust_result = generate_rust_string_for_typescript_string("work", ts.to_string());
         assert!(rust_result.is_ok());
         let rust = rust_result.unwrap();
 
