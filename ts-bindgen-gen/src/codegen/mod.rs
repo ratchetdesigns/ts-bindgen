@@ -509,68 +509,6 @@ impl MemberContainer for Union {
     }
 }
 
-fn is_potentially_undefined<T: UndefinedHandler>(t: &T) -> bool {
-    t.is_potentially_undefined()
-}
-
-trait UndefinedHandler {
-    /// Is self potentially undefined if the type were living on its own.
-    /// That is, we ignore the possibility of an optional field of this type being undefined
-    /// because that is a property of the field and not the type.
-    fn is_potentially_undefined(&self) -> bool;
-}
-
-impl UndefinedHandler for Union {
-    fn is_potentially_undefined(&self) -> bool {
-        let (und, std) = self.undefined_and_standard_members();
-        let has_direct_undefined_member = !und.is_empty();
-        has_direct_undefined_member || std.iter().any(|t| t.is_potentially_undefined())
-    }
-}
-
-impl UndefinedHandler for TypeRef {
-    fn is_potentially_undefined(&self) -> bool {
-        self.resolve_target_type()
-            .as_ref()
-            .map(is_potentially_undefined)
-            .unwrap_or(false)
-    }
-}
-
-impl UndefinedHandler for TargetEnrichedTypeInfo {
-    fn is_potentially_undefined(&self) -> bool {
-        trait_impl_for_type_info!(
-            match self,
-            is_potentially_undefined | false,
-            TargetEnrichedTypeInfo::Interface(_) => false,
-            TargetEnrichedTypeInfo::Enum(_) => false,
-            TargetEnrichedTypeInfo::Ref(TypeRef {
-                referent: TypeIdent::Builtin(
-                    Builtin::PrimitiveUndefined
-                    | Builtin::PrimitiveAny
-                    | Builtin::PrimitiveObject
-                    | Builtin::PrimitiveVoid,
-                ),
-                ..
-            }) => true,
-            TargetEnrichedTypeInfo::Ref(TypeRef {
-                referent: TypeIdent::Builtin(_),
-                ..
-            }) => false,
-            TargetEnrichedTypeInfo::Array { .. } => false,
-            TargetEnrichedTypeInfo::Optional { .. } => true,
-            TargetEnrichedTypeInfo::Union(u) => u.is_potentially_undefined(),
-            TargetEnrichedTypeInfo::Intersection(i) => i.types.iter().any(is_potentially_undefined),
-            TargetEnrichedTypeInfo::Tuple(_) => false,
-            TargetEnrichedTypeInfo::Mapped { .. } => false,
-            TargetEnrichedTypeInfo::Func(_) => false,
-            TargetEnrichedTypeInfo::Constructor(_) => false,
-            TargetEnrichedTypeInfo::Class(_) => false,
-            TargetEnrichedTypeInfo::Var { .. } => false,
-        )
-    }
-}
-
 trait JsModulePath {
     fn js_module_path(&self) -> String;
 }
