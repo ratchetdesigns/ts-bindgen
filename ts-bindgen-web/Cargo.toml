@@ -1,11 +1,15 @@
 [package]
 name = "ts-bindgen-web"
 version = "0.1.0"
-description = "Web interface for generating rust bindings for typescript definitions"
+description = "Web interface for generating wasm-bindgen bindings from typescript definitions"
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
 publish = false
+repository = "https://github.com/ratchetdesigns/ts-bindgen"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "web", "bindings", "typescript", "wasm-bindgen", "javascript", "ffi"]
+categories = ["compilers", "command-line-utilities", "development-tools::ffi", "wasm", "web-programming"]
 
 [workspace]
 
