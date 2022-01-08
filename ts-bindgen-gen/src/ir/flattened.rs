@@ -1,4 +1,3 @@
-pub use crate::ir::base::NamespaceImport;
 use crate::ir::base::{
     Alias as AliasIR, BaseClass as BaseClassIR, BuiltinDate, BuiltinPromise, Class as ClassIR,
     Ctor as CtorIR, Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR,
@@ -9,6 +8,7 @@ use crate::ir::base::{
     TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
     TypeParamConfig as TypeParamConfigIR, TypeRef as TypeRefIR, Union as UnionIR,
 };
+pub use crate::ir::base::{EnumValue, NamespaceImport};
 use enum_to_enum::{FromEnum, WithEffects};
 use std::collections::HashMap;
 use std::iter::{Extend, FromIterator};
@@ -1031,7 +1031,7 @@ impl ApplyNames for Member {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
-    pub value: Option<String>,
+    pub value: Option<EnumValue>,
 }
 
 impl From<EnumMemberIR> for EnumMember {

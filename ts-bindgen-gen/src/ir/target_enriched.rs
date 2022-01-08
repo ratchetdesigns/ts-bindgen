@@ -7,7 +7,7 @@ use crate::ir::flattened::{
     TypeParamConfig as FlattenedTypeParamConfig, TypeRef as FlattenedTypeRef,
     Union as FlattenedUnion,
 };
-pub use crate::ir::flattened::{Builtin, TypeIdent};
+pub use crate::ir::flattened::{Builtin, EnumValue, TypeIdent};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -439,7 +439,7 @@ from_struct!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
-    pub value: Option<String>,
+    pub value: Option<EnumValue>,
     pub context: Context,
 }
 

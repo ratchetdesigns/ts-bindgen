@@ -25,9 +25,9 @@ use crate::identifier::{
     Identifier,
 };
 use crate::ir::{
-    Alias, Builtin, Class, Context, Enum, EnumMember, Func, Indexer, Interface, Intersection,
-    Member, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple, TypeIdent,
-    TypeParamConfig, TypeRef, Union,
+    Alias, Builtin, Class, Context, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
+    Intersection, Member, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple,
+    TypeIdent, TypeParamConfig, TypeRef, Union,
 };
 pub use crate::mod_def::ModDef;
 use crate::mod_def::ToModPathIter;
@@ -1405,6 +1405,17 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         let our_toks = quote! {
             #[serde(#(#serde_attrs),*)]
             pub #field_name: #rendered_type
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+impl ToTokens for EnumValue {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let our_toks = match self {
+            EnumValue::Str(s) => quote! { #s },
+            EnumValue::Num(n) => quote! { #n },
         };
 
         toks.append_all(our_toks);

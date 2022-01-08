@@ -1,8 +1,8 @@
 use crate::error::{Error, InternalError};
 use crate::fs::Fs;
 use crate::ir::base::{
-    Alias, BaseClass, Class, Ctor, Enum, EnumMember, Func, Indexer, Interface, Intersection,
-    LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
+    Alias, BaseClass, Class, Ctor, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
+    Intersection, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
     PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
     PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
     TypeInfo, TypeName, TypeParamConfig, TypeRef, Union,
@@ -1476,30 +1476,12 @@ impl TsTypes {
             info: TypeInfo::Enum(Enum {
                 members: members
                     .iter()
-                    .map(|TsEnumMember { id, init, .. }| {
-                        Ok(EnumMember {
-                            id: match id {
-                                TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
-                                TsEnumMemberId::Str(s) => s.value.to_string(),
-                            },
-                            value: init
-                                .as_ref()
-                                .and_then(|v| {
-                                    match &**v {
-                                        Expr::Lit(l) => match l {
-                                            Lit::Str(s) => Some(Ok(s.value.to_string())),
-                                            // TODO: might need to capture numbers too
-                                            _ => None,
-                                        },
-                                        _ => Some(Err(InternalError::with_msg_and_span(
-                                            "enums with non-literal initializers not supported",
-                                            v.span(),
-                                        ))),
-                                    }
-                                })
-                                .transpose()?,
-                        })
-                    })
+                    .scan(
+                        None,
+                        |last_numeric_discriminator, TsEnumMember { id, init, .. }| {
+                            Some(make_enum_member(id, init, last_numeric_discriminator))
+                        },
+                    )
                     .collect::<Result<Vec<EnumMember>, InternalError>>()?,
             }),
         })
@@ -1947,6 +1929,45 @@ fn path_parent(path: &Path) -> Result<&Path, InternalError> {
     }
 }
 
+fn make_enum_member(
+    id: &TsEnumMemberId,
+    init: &Option<Box<Expr>>,
+    last_numeric_discriminator: &mut Option<f64>,
+) -> Result<EnumMember, InternalError> {
+    Ok(EnumMember {
+        id: match id {
+            TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
+            TsEnumMemberId::Str(s) => s.value.to_string(),
+        },
+        value: init
+            .as_ref()
+            .and_then(|v| match &**v {
+                Expr::Lit(l) => match l {
+                    Lit::Str(s) => Some(Ok(EnumValue::Str(s.value.to_string()))),
+                    Lit::Num(n) => {
+                        *last_numeric_discriminator = Some(n.value);
+                        Some(Ok(EnumValue::Num(n.value)))
+                    }
+                    _ => None,
+                },
+                _ => Some(Err(InternalError::with_msg_and_span(
+                    "enums with non-literal initializers not supported",
+                    v.span(),
+                ))),
+            })
+            .or_else(|| {
+                last_numeric_discriminator.map(|last| {
+                    // if we have a prior EnumValue::Num member, use the prior
+                    // value + 1 as our enum value
+                    let our_init = last + 1.0;
+                    *last_numeric_discriminator = Some(our_init);
+                    Ok(EnumValue::Num(our_init))
+                })
+            })
+            .transpose()?,
+    })
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -2288,11 +2309,49 @@ mod test {
                 assert_eq!(e.members.len(), 2);
                 assert!(e.members.contains(&EnumMember {
                     id: "A".to_string(),
-                    value: Some("First".to_string()),
+                    value: Some(EnumValue::Str("First".to_string())),
                 }));
                 assert!(e.members.contains(&EnumMember {
                     id: "B".to_string(),
-                    value: Some("Second".to_string()),
+                    value: Some(EnumValue::Str("Second".to_string())),
+                }));
+            }
+        )
+    }
+
+    #[test]
+    fn test_number_enum() -> Result<(), Error> {
+        test_exported_type!(
+            r#"export enum Enm {
+                A = 1,
+                B = 2,
+                C,
+                D = 5,
+                E,
+            }"#,
+            "Enm",
+            TypeInfo::Enum(e),
+            {
+                assert_eq!(e.members.len(), 5);
+                assert!(e.members.contains(&EnumMember {
+                    id: "A".to_string(),
+                    value: Some(EnumValue::Num(1.0)),
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "B".to_string(),
+                    value: Some(EnumValue::Num(2.0)),
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "C".to_string(),
+                    value: Some(EnumValue::Num(3.0)),
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "D".to_string(),
+                    value: Some(EnumValue::Num(5.0)),
+                }));
+                assert!(e.members.contains(&EnumMember {
+                    id: "E".to_string(),
+                    value: Some(EnumValue::Num(6.0)),
                 }));
             }
         )

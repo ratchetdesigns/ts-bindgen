@@ -46,10 +46,18 @@ impl TypeName {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnumValue {
+    Str(String),
+    Num(f64),
+}
+
+impl Eq for EnumValue {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
-    pub value: Option<String>, // TODO: really a string | number
+    pub value: Option<EnumValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
