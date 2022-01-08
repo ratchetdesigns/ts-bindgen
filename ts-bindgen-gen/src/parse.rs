@@ -5,7 +5,7 @@ use crate::ir::base::{
     Intersection, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
     PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
     PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
-    TypeInfo, TypeName, TypeParamConfig, TypeRef, Union,
+    TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -130,6 +130,16 @@ impl<'a> TypeRefExt for ClassSuperTypeRef<'a> {
 
     fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
         self.type_args
+    }
+}
+
+impl TypeRefExt for TsEntityName {
+    fn entity_name(&self) -> &TsEntityName {
+        self
+    }
+
+    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+        &None
     }
 }
 
@@ -1329,6 +1339,22 @@ impl TsTypes {
         })
     }
 
+    fn process_type_query(
+        &mut self,
+        ts_path: &Path,
+        query: &TsTypeQuery,
+    ) -> Result<TypeInfo, InternalError> {
+        match &query.expr_name {
+            TsTypeQueryExpr::TsEntityName(ent) => Ok(TypeInfo::TypeQuery(TypeQuery::LookupRef(
+                Source::from(self, ts_path, ent).try_into()?,
+            ))),
+            TsTypeQueryExpr::Import(_) => Err(InternalError::with_msg_and_span(
+                "type queries for imports are not supported",
+                query.span(),
+            )),
+        }
+    }
+
     fn process_type(
         &mut self,
         ts_path: &Path,
@@ -1362,6 +1388,7 @@ impl TsTypes {
             TsType::TsTupleType(tuple) => self.process_tuple(ts_path, tuple)?,
             TsType::TsTypeOperator(op) => self.process_type_op(ts_path, op)?,
             TsType::TsThisType(_) => TypeInfo::PrimitiveAny(PrimitiveAny()), // TODO: this is clearly silly
+            TsType::TsTypeQuery(query) => self.process_type_query(ts_path, query)?,
             _ => {
                 println!("MISSING {:?} {:?}", ts_path, ts_type);
                 TypeInfo::Ref(TypeRef {
@@ -2372,6 +2399,28 @@ mod test {
                 assert!(n.is_some());
                 let n = n.unwrap();
                 assert_eq!(*n, TypeInfo::PrimitiveAny(PrimitiveAny()));
+            }
+        )
+    }
+
+    #[test]
+    fn test_type_query() -> Result<(), Error> {
+        test_exported_type!(
+            r#"class MyClass {
+                n: number;
+            }
+            export interface I {
+                c: typeof MyClass;
+            }
+            "#,
+            "I",
+            TypeInfo::Interface(i),
+            {
+                assert_eq!(i.fields.len(), 1);
+                let c = i.fields.get("c");
+                assert!(c.is_some());
+                let c = c.unwrap();
+                assert!(matches!(*c, TypeInfo::Class(_)));
             }
         )
     }

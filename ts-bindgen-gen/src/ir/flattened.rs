@@ -6,7 +6,8 @@ use crate::ir::base::{
     PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
     PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
     TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
-    TypeParamConfig as TypeParamConfigIR, TypeRef as TypeRefIR, Union as UnionIR,
+    TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR, TypeRef as TypeRefIR,
+    Union as UnionIR,
 };
 pub use crate::ir::base::{EnumValue, NamespaceImport};
 use enum_to_enum::{FromEnum, WithEffects};
@@ -191,6 +192,7 @@ pub enum FlattenedTypeInfo {
         LitNumber,
         LitString,
         LitBoolean,
+        TypeQuery,
         Ref
     )]
     Ref(TypeRef),
@@ -540,6 +542,9 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::NamespaceImport(_) => {
                 panic!("Namespace import only expected as a top-level construct")
             }
+            TypeInfoIR::TypeQuery(_) => {
+                panic!("TypeQuery instances should not make it to the flattened stage")
+            }
         }
     }
 }
@@ -594,6 +599,12 @@ impl From<FuncIR> for EffectContainer<TypeRef> {
                 ).collect(),
             }
         )
+    }
+}
+
+impl From<TypeQueryIR> for EffectContainer<TypeRef> {
+    fn from(_: TypeQueryIR) -> EffectContainer<TypeRef> {
+        panic!("TypeQuery should never reach flattened stage");
     }
 }
 

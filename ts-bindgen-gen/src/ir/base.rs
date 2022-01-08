@@ -358,6 +358,9 @@ pub enum TypeInfo {
     Class(Class),
     Var { type_info: Box<TypeInfo> },
     NamespaceImport(NamespaceImport),
+    // TODO: we resolve TypeQuery in resolve_names. would much prefer not to leak TypeQuery into
+    // our public interface because it complicates handling in future ir transforms.
+    TypeQuery(TypeQuery),
 }
 
 impl TypeInfo {
@@ -444,6 +447,8 @@ impl TypeInfo {
     // TODO: resolve_names exists throughout this file exclusively to resolve builtin names...
     // is there a simpler way to do this without the full recursion?
     // perhaps move this to the flattened ir conversion when we have to walk our ast anyway?
+    /// resolve_names resolves builtin names to their respective builtins and resolves TypeQuery to
+    /// the corresponding type
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -493,22 +498,10 @@ impl TypeInfo {
             Self::Ref(TypeRef {
                 referent,
                 type_params: alias_type_params,
-            }) => types_by_name_by_file
-                .get(&referent.file)
-                .and_then(|types_by_name| {
-                    let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
-                        TypeIdent::Name(
-                            qn.first()
-                                .expect("must have a name in a qualified name")
-                                .to_string(),
-                        )
-                    } else {
-                        referent.name.clone()
-                    };
-
-                    // look up the type just to make sure it exists, we get a builtin if it doesn't
-                    // exist below
-                    types_by_name.get(&n).map(|_| self.clone())
+            }) => lookup_type(types_by_name_by_file, referent)
+                .map(|_| {
+                    // look up the type just to make sure it exists, we get a builtin if it doesn't exist below
+                    self.clone()
                 })
                 .or_else(|| {
                     if let TypeIdent::Name(n) = &referent.name {
@@ -639,8 +632,46 @@ impl TypeInfo {
             Self::BuiltinDate(BuiltinDate()) => self.clone(),
             Self::BuiltinPromise(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
+            Self::TypeQuery(TypeQuery::LookupRef(tr)) => {
+                lookup_type(types_by_name_by_file, &tr.referent)
+                    .map(|t| {
+                        let t = &t.info;
+                        if let Self::Var { type_info } = t {
+                            std::ops::Deref::deref(type_info).clone()
+                        } else {
+                            t.clone()
+                        }
+                    })
+                    .expect("expected target of type query to exit")
+            }
         }
     }
+}
+
+fn lookup_type<'a>(
+    types_by_name_by_file: &'a HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    referent: &TypeName,
+) -> Option<&'a Type> {
+    types_by_name_by_file
+        .get(&referent.file)
+        .and_then(|types_by_name| {
+            let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
+                TypeIdent::Name(
+                    qn.first()
+                        .expect("must have a name in a qualified name")
+                        .to_string(),
+                )
+            } else {
+                referent.name.clone()
+            };
+
+            types_by_name.get(&n)
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeQuery {
+    LookupRef(TypeRef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
