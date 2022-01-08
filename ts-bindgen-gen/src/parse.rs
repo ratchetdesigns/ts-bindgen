@@ -1008,10 +1008,19 @@ impl TsTypes {
             }
         };
 
-        let to_export = self
-            .types_by_name_by_file
-            .get(&file)
-            .expect("should have processed file already")
+        let types_by_name = self.types_by_name_by_file.get(&file);
+
+        let to_export = match types_by_name {
+            Some(file) => file,
+            None => {
+                self.record_error(InternalError::with_msg_and_span(
+                    "expected file to have already been processed",
+                    export_all.span(),
+                ));
+                return;
+            },
+        };
+        let to_export = to_export
             .iter()
             .filter(|(_, t)| t.is_exported)
             .filter_map(|(n, t)| match n {
