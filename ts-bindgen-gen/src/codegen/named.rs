@@ -39,8 +39,8 @@ impl Named for Builtin {
             Builtin::Array => ("Vec", to_ident("Vec")),
             Builtin::Fn => ("Fn", to_ident("Fn")),
             Builtin::Map => (
-                "std::collections::HashMap",
-                make_identifier!(std::collections::HashMap),
+                "std::collections::HashMap<String, JsValue>",
+                make_identifier!(std::collections::HashMap<String, JsValue>),
             ),
             Builtin::Optional => ("Option", to_ident("Option")),
             Builtin::Variadic => ("", to_ident("")),
@@ -84,6 +84,14 @@ impl<'a> Named for CasedTypeIdent<'a> {
     }
 }
 
+/// Given a TypeRef and an identifier for it, determine whether to retain
+/// the type_params on the identifier or not
+fn retain_target_type_params(type_ref: &TypeRef, id: &Identifier) -> bool {
+    // TODO: this is inelegant...
+    // we keep HashMap<String, JsValue> but maybe should keep other type params?
+    !id.type_params.is_empty() && matches!(&type_ref.referent, TypeIdent::Builtin(_))
+}
+
 impl Named for TypeRef {
     fn to_name(&self) -> (&str, Identifier) {
         let target_type = self.resolve_target_type();
@@ -93,7 +101,9 @@ impl Named for TypeRef {
                 let js_name = self.referent.js_name();
                 (js_name, to_camel_case_ident(js_name))
             });
-        id.type_params = self.type_params.iter().map(|t| t.to_name().1).collect();
+        if !retain_target_type_params(self, &id) {
+            id.type_params = self.type_params.iter().map(|t| t.to_name().1).collect();
+        }
         (n, id)
     }
 }
@@ -135,7 +145,9 @@ pub trait SimpleNamed {
 impl SimpleNamed for TypeRef {
     fn to_simple_name(&self) -> Identifier {
         let (_, mut id) = self.to_name();
-        id.type_params.clear();
+        if !retain_target_type_params(self, &id) {
+            id.type_params.clear();
+        }
         id
     }
 }
