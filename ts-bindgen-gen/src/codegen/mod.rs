@@ -832,6 +832,21 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
 
                 let target = quote! { self.0 };
                 let (member_defs, public_methods): (Vec<TokenStream2>, Vec<TokenStream2>) = members.iter()
+                    .filter(|(_, member)| {
+                        if let Member::Property(typ) = member {
+                            // if we have a javascript type that acts as a namespace, containing
+                            // other classes, we just ignore those entries.
+                            // this is fine IF those classes are exported elsewhere. if they
+                            // aren't, we may need to find a way to force them to be exported
+                            // (reasonable since they are de facto exported by virtue of being a property on
+                            // an exported class)
+                            typ.resolve_target_type()
+                                .map(|t| !matches!(t, TargetEnrichedTypeInfo::Class(_)))
+                                .unwrap_or(true)
+                        } else {
+                            true
+                        }
+                    })
                     .map(|(member_js_name, member)| {
                         let member_js_ident = format_ident!("{}", member_js_name);
                         let internal_fn_name = InternalFunc::to_internal_rust_name(member_js_name);
