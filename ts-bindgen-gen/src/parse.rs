@@ -194,9 +194,9 @@ impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
         } = source;
 
         match node.entity_name() {
-            TsEntityName::Ident(Ident { sym, .. }) => Ok(TypeRef {
-                referent: TypeName::for_name(ts_path.to_path_buf(), &sym.to_string()),
-                type_params: node
+            TsEntityName::Ident(Ident { sym, .. }) => {
+                let type_name = TypeName::for_name(ts_path.to_path_buf(), &sym.to_string());
+                let type_params = node
                     .type_args()
                     .as_ref()
                     .map(|tps| {
@@ -205,11 +205,13 @@ impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
                             .map(|tp| ts_types.process_type(ts_path, tp))
                             .collect()
                     })
-                    .unwrap_or_else(|| Ok(Default::default()))?,
-            }),
-            TsEntityName::TsQualifiedName(qn) => Ok(TypeRef {
-                referent: ts_types.qualified_name_to_type_name(ts_path, qn),
-                type_params: node
+                    .unwrap_or_else(|| Ok(Default::default()))?;
+
+                Ok(ts_types.make_type_ref(type_name, type_params))
+            }
+            TsEntityName::TsQualifiedName(qn) => {
+                let type_name = ts_types.qualified_name_to_type_name(ts_path, qn);
+                let type_params = node
                     .type_args()
                     .as_ref()
                     .map(|tps| {
@@ -218,8 +220,10 @@ impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
                             .map(|tp| ts_types.process_type(ts_path, tp))
                             .collect()
                     })
-                    .unwrap_or_else(|| Ok(Default::default()))?,
-            }),
+                    .unwrap_or_else(|| Ok(Default::default()))?;
+
+                Ok(ts_types.make_type_ref(type_name, type_params))
+            }
         }
     }
 }
@@ -802,6 +806,18 @@ impl TsTypes {
         Ok(module)
     }
 
+    fn make_type_ref(&mut self, referent: TypeName, type_params: Vec<TypeInfo>) -> TypeRef {
+        TypeRef {
+            referent: TypeName {
+                file: referent.file,
+                name: self
+                    .get_possibly_ns_qualified_name(referent.name)
+                    .expect("bad ns name"),
+            },
+            type_params,
+        }
+    }
+
     fn process_module_item(&mut self, ts_path: &Path, item: &ModuleItem) {
         match item {
             ModuleItem::ModuleDecl(decl) => self.process_module_decl(ts_path, decl),
@@ -841,6 +857,7 @@ impl TsTypes {
         Ok(ts_path)
     }
 
+    // TODO: no longer needs to be fallible
     fn get_possibly_ns_qualified_name(
         &mut self,
         name: TypeIdent,
@@ -853,10 +870,7 @@ impl TsTypes {
                         ns.push(s);
                     }
                     TypeIdent::DefaultExport() => {
-                        return Err(InternalError::with_msg_and_namespace(
-                            "default exports inside namespaces are not supported",
-                            ns,
-                        ));
+                        ns.push("default".to_string());
                     }
                     TypeIdent::QualifiedName(mut name) => {
                         ns.append(&mut name);
@@ -1749,6 +1763,7 @@ impl TsTypes {
                     if exported.is_none() {
                         // export { x };
                         // we need to just mark the name as exported
+                        // TODO: handle the case where export {x} preceeds the definition of x
                         match self.get_possibly_ns_qualified_name(orig) {
                             Ok(name) => {
                                 self.types_by_name_by_file
@@ -1772,13 +1787,13 @@ impl TsTypes {
                             name: TypeName::for_name(ts_path, &exported.sym.to_string()),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
-                                target: Box::new(TypeInfo::Ref(TypeRef {
-                                    referent: TypeName {
+                                target: Box::new(TypeInfo::Ref(self.make_type_ref(
+                                    TypeName {
                                         file: ts_path.to_path_buf(),
                                         name: orig,
                                     },
-                                    type_params: Default::default(),
-                                })),
+                                    Default::default(),
+                                ))),
                                 type_params: Default::default(),
                             }),
                         };
@@ -1861,10 +1876,9 @@ impl TsTypes {
             name: TypeName::default_export_for(ts_path.to_path_buf()),
             is_exported: true,
             info: TypeInfo::Alias(Alias {
-                target: Box::new(TypeInfo::Ref(TypeRef {
-                    referent,
-                    type_params: Default::default(),
-                })),
+                target: Box::new(TypeInfo::Ref(
+                    self.make_type_ref(referent, Default::default()),
+                )),
                 type_params: Default::default(),
             }),
         };
@@ -1912,6 +1926,22 @@ impl TsTypes {
         }
     }
 
+    fn export_default_alias(&mut self, ts_path: &Path, decl: &TsExportAssignment) {
+        match &*decl.expr {
+            Expr::Ident(ident) => {
+                let name = ident.sym.to_string();
+                let type_name = TypeName::for_name(ts_path, &name);
+                self.process_default_alias(ts_path, type_name);
+            }
+            _ => {
+                self.record_error(InternalError::with_msg_and_span(
+                    "non-ident assignment exports are not supported",
+                    decl.span(),
+                ));
+            }
+        }
+    }
+
     fn process_module_decl(&mut self, ts_path: &Path, module_decl: &ModuleDecl) {
         match module_decl {
             ModuleDecl::Import(decl) => self.process_import_decl(ts_path, decl),
@@ -1925,8 +1955,8 @@ impl TsTypes {
             ModuleDecl::TsImportEquals(_decl) => {
                 println!("import equals, {:?}", _decl);
             }
-            ModuleDecl::TsExportAssignment(_decl) => {
-                println!("export assignment, {:?}", _decl);
+            ModuleDecl::TsExportAssignment(decl) => {
+                self.export_default_alias(ts_path, decl);
             }
             ModuleDecl::TsNamespaceExport(_decl) => {
                 println!("export namespace, {:?}", _decl);
@@ -2420,7 +2450,11 @@ mod test {
                 let c = i.fields.get("c");
                 assert!(c.is_some());
                 let c = c.unwrap();
-                assert!(matches!(*c, TypeInfo::Class(_)));
+                if let TypeInfo::Ref(tr) = c {
+                    assert_eq!(tr.referent.name, TypeIdent::Name("MyClass".to_string()));
+                } else {
+                    assert!(false);
+                }
             }
         )
     }

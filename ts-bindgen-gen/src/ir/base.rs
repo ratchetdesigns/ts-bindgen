@@ -518,15 +518,7 @@ impl TypeInfo {
                         type_params,
                     )
                 })
-                .or_else(|| {
-                    println!(
-                        "can't resolve, {:?}, {:?}",
-                        self,
-                        types_by_name_by_file.get(&referent.file)
-                    );
-                    None
-                })
-                .expect("can't resolve alias"),
+                .unwrap_or_else(|| Self::PrimitiveAny(PrimitiveAny())),
             Self::Alias(a) => Self::Alias(a.clone()),
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
@@ -636,13 +628,15 @@ impl TypeInfo {
                 lookup_type(types_by_name_by_file, &tr.referent)
                     .map(|t| {
                         let t = &t.info;
+                        // terms (vars) are replaced by their types.
+                        // types are turned into typerefs
                         if let Self::Var { type_info } = t {
                             std::ops::Deref::deref(type_info).clone()
                         } else {
-                            t.clone()
+                            Self::Ref(tr.clone())
                         }
                     })
-                    .expect("expected target of type query to exit")
+                    .expect("expected target of type query to exist")
             }
         }
     }
@@ -654,19 +648,7 @@ fn lookup_type<'a>(
 ) -> Option<&'a Type> {
     types_by_name_by_file
         .get(&referent.file)
-        .and_then(|types_by_name| {
-            let n = if let TypeIdent::QualifiedName(qn) = &referent.name {
-                TypeIdent::Name(
-                    qn.first()
-                        .expect("must have a name in a qualified name")
-                        .to_string(),
-                )
-            } else {
-                referent.name.clone()
-            };
-
-            types_by_name.get(&n)
-        })
+        .and_then(|types_by_name| types_by_name.get(&referent.name))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

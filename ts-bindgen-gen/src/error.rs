@@ -30,11 +30,6 @@ impl Error {
                     msg,
                     span_error_msg(span, source_map)
                 ),
-                InternalError::Namespace { msg, ns } => format!(
-                    "binding generation error: {} for namespace {}",
-                    msg,
-                    ns.join("::")
-                ),
                 InternalError::Parse { error } => format!(
                     "typescript parsing error: {}\n{}",
                     error.kind().msg(),
@@ -77,10 +72,6 @@ pub(crate) enum InternalError {
         msg: &'static str,
         span: Span,
     },
-    Namespace {
-        msg: &'static str,
-        ns: Vec<String>,
-    },
     Parse {
         error: swc_ecma_parser::error::Error,
     },
@@ -111,7 +102,6 @@ impl std::error::Error for InternalError {
     fn description(&self) -> &str {
         match self {
             InternalError::Logic { .. } => "Logic",
-            InternalError::Namespace { .. } => "Namespace",
             InternalError::Parse { .. } => "Parse",
             InternalError::Io { .. } => "Io",
         }
@@ -121,9 +111,5 @@ impl std::error::Error for InternalError {
 impl InternalError {
     pub fn with_msg_and_span(msg: &'static str, span: Span) -> InternalError {
         InternalError::Logic { msg, span }
-    }
-
-    pub fn with_msg_and_namespace(msg: &'static str, ns: Vec<String>) -> InternalError {
-        InternalError::Namespace { msg, ns }
     }
 }

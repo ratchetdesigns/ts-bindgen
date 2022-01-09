@@ -63,65 +63,18 @@ fn resolve_type(
 
 impl ResolveTargetType for TypeRef {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
-        match &self.referent {
-            TypeIdent::LocalName(_) => resolve_type(
-                &self.context.types_by_ident_by_path,
-                &self.context.path,
-                &self.referent,
-            ),
-            TypeIdent::Name { file, name: _ } => {
-                resolve_type(&self.context.types_by_ident_by_path, file, &self.referent)
-            }
-            TypeIdent::DefaultExport(path) => {
-                resolve_type(&self.context.types_by_ident_by_path, path, &self.referent)
-            }
-            TypeIdent::QualifiedName { file, name_parts } => {
-                let mut final_file = file.clone();
-                let mut final_name = None;
-                let types_by_ident_by_path = RefCell::borrow(&self.context.types_by_ident_by_path);
+        let file = match &self.referent {
+            TypeIdent::LocalName(_) => &self.context.path,
+            TypeIdent::Name { file, name: _ } => file,
+            TypeIdent::DefaultExport(path) => path,
+            TypeIdent::QualifiedName {
+                file,
+                name_parts: _,
+            } => file,
+            _ => return Some(TargetEnrichedTypeInfo::Ref(self.clone())),
+        };
 
-                for n in name_parts {
-                    let t = types_by_ident_by_path.get(file).and_then(|t_by_n| {
-                        t_by_n.get(&TypeIdent::Name {
-                            file: final_file.clone(),
-                            name: n.clone(),
-                        })
-                    });
-                    if let Some(ty) = t {
-                        if let Some(target_type) = ty.resolve_target_type() {
-                            // TODO: silly to clone on every iteration but i need to figure out how
-                            // to get resolved_type to live long enough to just pass along the ref
-                            final_file = match target_type {
-                                TargetEnrichedTypeInfo::Interface(i) => i.context.path.clone(),
-                                TargetEnrichedTypeInfo::Enum(e) => e.context.path.clone(),
-                                TargetEnrichedTypeInfo::Alias(a) => a.context.path.clone(),
-                                TargetEnrichedTypeInfo::Ref(r) => r.context.path.clone(),
-                                TargetEnrichedTypeInfo::Union(u) => u.context.path.clone(),
-                                TargetEnrichedTypeInfo::Intersection(i) => i.context.path.clone(),
-                                TargetEnrichedTypeInfo::Func(f) => f.context.path.clone(),
-                                TargetEnrichedTypeInfo::Constructor(c) => c.context.path.clone(),
-                                TargetEnrichedTypeInfo::Class(c) => c.context.path.clone(),
-                                _ => final_file,
-                            };
-                            final_name = Some(&ty.name);
-                        } else {
-                            panic!("bad qualfiied name lookup");
-                        }
-                    } else {
-                        panic!("bad qualified name lookup");
-                    }
-                }
-
-                final_name.and_then(|final_name| {
-                    resolve_type(
-                        &self.context.types_by_ident_by_path,
-                        &final_file,
-                        final_name,
-                    )
-                })
-            }
-            _ => Some(TargetEnrichedTypeInfo::Ref(self.clone())),
-        }
+        resolve_type(&self.context.types_by_ident_by_path, file, &self.referent)
     }
 }
 
