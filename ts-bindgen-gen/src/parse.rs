@@ -1681,6 +1681,44 @@ impl TsTypes {
         })
     }
 
+    fn process_namespace_body(
+        &mut self,
+        ts_path: &Path,
+        _declare: bool,
+        id: &TsModuleName,
+        body: Option<&TsNamespaceBody>,
+    ) {
+        let name = match id {
+            TsModuleName::Ident(ident) => ident.sym.to_string(),
+            TsModuleName::Str(s) => s.value.to_string(),
+        };
+
+        let full_ns = {
+            let mut full_ns = self
+                .namespace_stack
+                .last()
+                .unwrap_or(&Default::default())
+                .clone();
+            full_ns.push(name);
+            full_ns
+        };
+        self.namespace_stack.push(full_ns);
+
+        body.as_ref().map(|b| match b {
+            TsNamespaceBody::TsModuleBlock(block) => {
+                self.process_module_items(ts_path, &block.body)
+            }
+            TsNamespaceBody::TsNamespaceDecl(ns_decl) => self.process_namespace_body(
+                ts_path,
+                ns_decl.declare,
+                &TsModuleName::Ident(ns_decl.id.clone()),
+                Some(&*ns_decl.body),
+            ),
+        });
+
+        self.namespace_stack.pop();
+    }
+
     fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Result<Type, InternalError>> {
         match decl {
             Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
@@ -1691,38 +1729,10 @@ impl TsTypes {
                 .iter()
                 .map(|var| self.process_var(ts_path, var))
                 .collect(),
-            Decl::TsModule(TsModuleDecl { id, body, .. }) => {
-                let name = match id {
-                    TsModuleName::Ident(ident) => ident.sym.to_string(),
-                    TsModuleName::Str(s) => s.value.to_string(),
-                };
-
-                let full_ns = {
-                    let mut full_ns = self
-                        .namespace_stack
-                        .last()
-                        .unwrap_or(&Default::default())
-                        .clone();
-                    full_ns.push(name);
-                    full_ns
-                };
-                self.namespace_stack.push(full_ns);
-
-                for b in body {
-                    match b {
-                        TsNamespaceBody::TsModuleBlock(block) => {
-                            self.process_module_items(ts_path, &block.body)
-                        }
-                        TsNamespaceBody::TsNamespaceDecl(ns_decl) => {
-                            return vec![Err(InternalError::with_msg_and_span(
-                                "inner namespace decls are not supported",
-                                ns_decl.span(),
-                            ))];
-                        }
-                    }
-                }
-
-                self.namespace_stack.pop();
+            Decl::TsModule(TsModuleDecl {
+                id, declare, body, ..
+            }) => {
+                self.process_namespace_body(ts_path, *declare, id, body.as_ref());
 
                 Default::default()
             }
@@ -2052,7 +2062,7 @@ mod test {
         ($code:literal, $name:literal, $expected_info:pat, $assertions:block) => {
             {
                 let code = $code;
-                let name = $name;
+                let name = TypeIdent::Name($name.to_string());
                 test_exported_type!(
                     code,
                     name,
@@ -2065,7 +2075,7 @@ mod test {
             {
                 let types = get_types_for_code($code)?;
 
-                let ty = types.get(&TypeIdent::Name($name.to_string()));
+                let ty = types.get(&$name);
                 assert!(ty.is_some());
 
                 let ty = ty.unwrap();
@@ -2142,6 +2152,7 @@ mod test {
         fn_name: &str,
         expected_param: &Param,
     ) -> Result<(), Error> {
+        let fn_name = TypeIdent::Name(fn_name.to_string());
         test_exported_type!(ts_code, fn_name, TypeInfo::Func(f), {
             assert_eq!(f.params.len(), 1);
             assert_eq!(f.params.first().unwrap(), expected_param);
@@ -2457,5 +2468,18 @@ mod test {
                 }
             }
         )
+    }
+
+    #[test]
+    fn test_module() -> Result<(), Error> {
+        let expected_type =
+            TypeIdent::QualifiedName(vec!["A".to_string(), "B".to_string(), "Hi".to_string()]);
+        let ts = r#"module A.B {
+            export class Hi {}
+        }
+        "#;
+        test_exported_type!(ts, expected_type, TypeInfo::Class(c), {
+            assert!(c.members.is_empty());
+        })
     }
 }
