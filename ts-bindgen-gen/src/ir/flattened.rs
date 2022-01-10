@@ -192,7 +192,6 @@ pub enum FlattenedTypeInfo {
         LitNumber,
         LitString,
         LitBoolean,
-        TypeQuery,
         Ref
     )]
     Ref(TypeRef),
@@ -215,6 +214,7 @@ pub enum FlattenedTypeInfo {
         type_info: Box<FlattenedTypeInfo>,
     },
     NamespaceImport(NamespaceImport),
+    TypeQuery(TypeQuery),
 }
 
 impl ApplyNames for FlattenedTypeInfo {
@@ -249,6 +249,7 @@ impl ApplyNames for FlattenedTypeInfo {
                 type_info: Box::new(type_info.apply_names(names_by_id)),
             },
             FlattenedTypeInfo::NamespaceImport(n) => FlattenedTypeInfo::NamespaceImport(n),
+            FlattenedTypeInfo::TypeQuery(q) => FlattenedTypeInfo::TypeQuery(q.apply_names(names_by_id)),
         }
     }
 }
@@ -542,9 +543,7 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
             TypeInfoIR::NamespaceImport(_) => {
                 panic!("Namespace import only expected as a top-level construct")
             }
-            TypeInfoIR::TypeQuery(_) => {
-                panic!("TypeQuery instances should not make it to the flattened stage")
-            }
+            TypeInfoIR::TypeQuery(tr) => tr.into(),
         }
     }
 }
@@ -603,8 +602,10 @@ impl From<FuncIR> for EffectContainer<TypeRef> {
 }
 
 impl From<TypeQueryIR> for EffectContainer<TypeRef> {
-    fn from(_: TypeQueryIR) -> EffectContainer<TypeRef> {
-        panic!("TypeQuery should never reach flattened stage");
+    fn from(src: TypeQueryIR) -> EffectContainer<TypeRef> {
+        match src {
+            TypeQueryIR::LookupRef(tr) => tr.into(),
+        }
     }
 }
 
@@ -1109,6 +1110,34 @@ impl ApplyNames for Alias {
                 .into_iter()
                 .map(|(n, t)| (n, t.apply_names(names_by_id)))
                 .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeQuery {
+    LookupRef(TypeRef),
+}
+
+impl From<TypeQueryIR> for EffectContainer<TypeQuery> {
+    fn from(src: TypeQueryIR) -> EffectContainer<TypeQuery> {
+        match src {
+            TypeQueryIR::LookupRef(tr) => {
+                let our_ref = tr.into();
+
+                combine_effects!(
+                    our_ref => (effect_mappers::identity());
+                    TypeQuery::LookupRef(our_ref)
+                )
+            },
+        }
+    }
+}
+
+impl ApplyNames for TypeQuery {
+    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+        match self {
+            TypeQuery::LookupRef(tr) => TypeQuery::LookupRef(tr.apply_names(names_by_id)),
         }
     }
 }

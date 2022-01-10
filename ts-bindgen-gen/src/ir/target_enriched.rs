@@ -5,7 +5,7 @@ use crate::ir::flattened::{
     Intersection as FlattenedIntersection, Member as FlattenedMember,
     NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
     TypeParamConfig as FlattenedTypeParamConfig, TypeRef as FlattenedTypeRef,
-    Union as FlattenedUnion,
+    Union as FlattenedUnion, TypeQuery as FlattenedTypeQuery,
 };
 pub use crate::ir::flattened::{Builtin, EnumValue, TypeIdent};
 use std::cell::RefCell;
@@ -185,6 +185,7 @@ pub enum TargetEnrichedTypeInfo {
         type_info: Box<TargetEnrichedTypeInfo>,
     },
     NamespaceImport(NamespaceImport),
+    TypeQuery(TypeQuery),
 }
 
 macro_rules! case_conv {
@@ -269,6 +270,9 @@ impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
             }
             case_conv!(match FlattenedTypeInfo::NamespaceImport, x) => {
                 case_conv!(TargetEnrichedTypeInfo::NamespaceImport, x, ctx)
+            }
+            case_conv!(match FlattenedTypeInfo::TypeQuery, x) => {
+                case_conv!(TargetEnrichedTypeInfo::TypeQuery, x, ctx)
             }
         }
     }
@@ -521,6 +525,30 @@ impl From<WithContext<FlattenedNamespaceImport>> for NamespaceImport {
             FlattenedNamespaceImport::Named { src, name } => {
                 NamespaceImport::Named { src, name, context }
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeQuery {
+    LookupRef {
+        type_ref: TypeRef,
+        context: Context,
+    },
+}
+
+impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
+    fn from(src: WithContext<FlattenedTypeQuery>) -> TypeQuery {
+        let value = src.value;
+        let context = src.context;
+        match value {
+            FlattenedTypeQuery::LookupRef(type_ref) => TypeQuery::LookupRef {
+                type_ref: WithContext {
+                    value: type_ref,
+                    context: context.clone(),
+                }.into(),
+                context,
+            },
         }
     }
 }

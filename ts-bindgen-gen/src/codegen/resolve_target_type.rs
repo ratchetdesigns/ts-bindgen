@@ -1,7 +1,7 @@
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::ir::{
     Alias, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef,
-    TypesByIdentByPath,
+    TypesByIdentByPath, TypeQuery
 };
 use std::cell::RefCell;
 use std::path::Path;
@@ -105,6 +105,14 @@ impl ResolveTargetType for NamespaceImport {
 impl ResolveTargetType for Alias {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         self.target.resolve_target_type()
+    }
+}
+
+impl ResolveTargetType for TypeQuery {
+    fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
+        match self {
+            TypeQuery::LookupRef { type_ref, .. } => type_ref.resolve_target_type(),
+        }
     }
 }
 
