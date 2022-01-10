@@ -1,0 +1,22 @@
+{
+  "name": "ts-bindgen-paperjs-example",
+  "version": "0.1.0",
+  "description": "ts-bindgen paper.js example",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ratchetdesigns/ts-bindgen.git"
+  },
+  "author": "Adam Berger <adam@ratchetdesigns.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ratchetdesigns/ts-bindgen/issues"
+  },
+  "homepage": "https://github.com/ratchetdesigns/ts-bindgen#readme",
+  "dependencies": {
+    "paper": "^0.12.15"
+  }
+}
