@@ -72,6 +72,12 @@ macro_rules! trait_impl_for_type_info {
                 .as_ref()
                 .map($invoker)
                 .unwrap_or($default),
+            #[allow(unreachable_patterns)]
+            TargetEnrichedTypeInfo::TypeQuery(tq) => tq
+                .resolve_target_type()
+                .as_ref()
+                .map($invoker)
+                .unwrap_or($default),
         }
     };
     (match $matcher:ident,

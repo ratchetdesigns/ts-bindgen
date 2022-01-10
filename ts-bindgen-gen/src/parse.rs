@@ -811,8 +811,7 @@ impl TsTypes {
             referent: TypeName {
                 file: referent.file,
                 name: self
-                    .get_possibly_ns_qualified_name(referent.name)
-                    .expect("bad ns name"),
+                    .get_possibly_ns_qualified_name(referent.name),
             },
             type_params,
         }
@@ -857,12 +856,11 @@ impl TsTypes {
         Ok(ts_path)
     }
 
-    // TODO: no longer needs to be fallible
     fn get_possibly_ns_qualified_name(
-        &mut self,
+        &self,
         name: TypeIdent,
-    ) -> Result<TypeIdent, InternalError> {
-        Ok(match self.namespace_stack.last() {
+    ) -> TypeIdent {
+        match self.namespace_stack.last() {
             Some(ns) => {
                 let mut ns = ns.clone();
                 match name {
@@ -880,7 +878,14 @@ impl TsTypes {
                 TypeIdent::QualifiedName(ns)
             }
             None => name,
-        })
+        }
+    }
+
+    fn ns_type_name(&self, name: TypeName) -> TypeName {
+        TypeName {
+            file: name.file,
+            name: self.get_possibly_ns_qualified_name(name.name),
+        }
     }
 
     fn set_type_for_name_for_file(
@@ -891,15 +896,12 @@ impl TsTypes {
     ) {
         match typ {
             Err(e) => self.record_error(e),
-            Ok(typ) => match self.get_possibly_ns_qualified_name(name) {
-                Ok(name) => {
-                    self.types_by_name_by_file
-                        .entry(file.to_path_buf())
-                        .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-                            names_to_types.insert(name, typ);
-                        });
-                }
-                Err(err) => self.record_error(err),
+            Ok(typ) => {
+                self.types_by_name_by_file
+                    .entry(file.to_path_buf())
+                    .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                        names_to_types.insert(name, typ);
+                    });
             },
         }
     }
@@ -979,7 +981,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info,
                     }),
@@ -989,7 +991,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::Default {
                             src: file.to_path_buf(),
@@ -1001,7 +1003,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: TypeName::for_name(ts_path, &local.sym.to_string()),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::All {
                             src: file.to_path_buf(),
@@ -1488,7 +1490,7 @@ impl TsTypes {
         }: &TsInterfaceDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: TypeName::for_name(ts_path, &id.sym.to_string()),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
             is_exported: false,
             info: TypeInfo::Interface(Interface {
                 indexer: self.process_interface_indexer(ts_path, &body.body)?,
@@ -1513,7 +1515,7 @@ impl TsTypes {
         TsEnumDecl { id, members, .. }: &TsEnumDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: TypeName::for_name(ts_path, &id.sym.to_string()),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
             is_exported: false,
             info: TypeInfo::Enum(Enum {
                 members: members
@@ -1541,7 +1543,7 @@ impl TsTypes {
     ) -> Result<Type, InternalError> {
         let type_info = self.process_type(ts_path, &*type_ann)?;
         Ok(Type {
-            name: TypeName::for_name(ts_path, &id.sym.to_string()),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
             is_exported: false,
             info: TypeInfo::Alias(Alias {
                 target: Box::new(type_info),
@@ -1634,7 +1636,7 @@ impl TsTypes {
         ts_path: &Path,
         ClassDecl { ident, class, .. }: &ClassDecl,
     ) -> Result<Type, InternalError> {
-        let name = TypeName::for_name(ts_path, &ident.sym.to_string());
+        let name = self.ns_type_name(TypeName::for_name(ts_path, &ident.sym.to_string()));
         Ok(Type {
             name: name.clone(),
             is_exported: false,
@@ -1649,7 +1651,7 @@ impl TsTypes {
     ) -> Result<Type, InternalError> {
         match name {
             Pat::Ident(BindingIdent { id, type_ann }) => Ok(Type {
-                name: TypeName::for_name(ts_path, &id.sym.to_string()),
+                name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
                 is_exported: false,
                 info: TypeInfo::Var {
                     type_info: Box::new(
@@ -1675,7 +1677,7 @@ impl TsTypes {
         }: &FnDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: TypeName::for_name(ts_path, &ident.sym.to_string()),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &ident.sym.to_string())),
             is_exported: false,
             info: function.to_type_info(ts_path, self)?,
         })
@@ -1768,33 +1770,26 @@ impl TsTypes {
             specifiers.iter().for_each(|spec| match spec {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
                     let orig = orig.sym.to_string();
-                    let orig = TypeIdent::Name(orig);
+                    let orig = self.get_possibly_ns_qualified_name(TypeIdent::Name(orig));
 
                     if exported.is_none() {
                         // export { x };
                         // we need to just mark the name as exported
                         // TODO: handle the case where export {x} preceeds the definition of x
-                        match self.get_possibly_ns_qualified_name(orig) {
-                            Ok(name) => {
-                                self.types_by_name_by_file
-                                    .entry(ts_path.to_path_buf())
-                                    .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-                                        names_to_types.entry(name).and_modify(|typ: &mut Type| {
-                                            typ.is_exported = true;
-                                        });
-                                    });
-                            }
-                            Err(err) => {
-                                self.record_error(err);
-                            }
-                        };
+                        self.types_by_name_by_file
+                            .entry(ts_path.to_path_buf())
+                            .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
+                                names_to_types.entry(orig).and_modify(|typ: &mut Type| {
+                                    typ.is_exported = true;
+                                });
+                            });
                     } else {
                         // export { x as y };
                         // create an exported alias from y to x
                         let exported = exported.as_ref().unwrap();
 
                         let typ = Type {
-                            name: TypeName::for_name(ts_path, &exported.sym.to_string()),
+                            name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym.to_string())),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
                                 target: Box::new(TypeInfo::Ref(self.make_type_ref(
@@ -1841,7 +1836,7 @@ impl TsTypes {
             }
         };
 
-        specifiers
+        let types: Vec<_> = specifiers
             .iter()
             .map(|spec| match spec {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
@@ -1857,33 +1852,35 @@ impl TsTypes {
                     };
 
                     Type {
-                        name: TypeName::for_name(
+                        name: self.ns_type_name(TypeName::for_name(
                             ts_path,
                             &exported.as_ref().unwrap_or(orig).sym.to_string(),
-                        ),
+                        )),
                         is_exported: true,
                         info,
                     }
                 }
                 ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Type {
-                    name: TypeName::for_name(ts_path, &exported.sym.to_string()),
+                    name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym.to_string())),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
-                    name: TypeName::for_name(ts_path, &name.sym.to_string()),
+                    name: self.ns_type_name(TypeName::for_name(ts_path, &name.sym.to_string())),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::All { src: file.clone() }),
                 },
             })
-            .for_each(|typ| {
-                self.set_type_for_name_for_file(ts_path, typ.name.name.clone(), Ok(typ));
-            });
+            .collect();
+
+        for typ in types {
+            self.set_type_for_name_for_file(ts_path, typ.name.name.clone(), Ok(typ));
+        }
     }
 
     fn process_default_alias(&mut self, ts_path: &Path, referent: TypeName) {
         let alias = Type {
-            name: TypeName::default_export_for(ts_path.to_path_buf()),
+            name: self.ns_type_name(TypeName::default_export_for(ts_path.to_path_buf())),
             is_exported: true,
             info: TypeInfo::Alias(Alias {
                 target: Box::new(TypeInfo::Ref(
@@ -2461,7 +2458,7 @@ mod test {
                 let c = i.fields.get("c");
                 assert!(c.is_some());
                 let c = c.unwrap();
-                if let TypeInfo::Ref(tr) = c {
+                if let TypeInfo::TypeQuery(TypeQuery::LookupRef(tr)) = c {
                     assert_eq!(tr.referent.name, TypeIdent::Name("MyClass".to_string()));
                 } else {
                     assert!(false);

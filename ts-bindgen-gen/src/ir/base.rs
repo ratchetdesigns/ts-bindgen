@@ -358,8 +358,6 @@ pub enum TypeInfo {
     Class(Class),
     Var { type_info: Box<TypeInfo> },
     NamespaceImport(NamespaceImport),
-    // TODO: we resolve TypeQuery in resolve_names. would much prefer not to leak TypeQuery into
-    // our public interface because it complicates handling in future ir transforms.
     TypeQuery(TypeQuery),
 }
 
@@ -447,8 +445,6 @@ impl TypeInfo {
     // TODO: resolve_names exists throughout this file exclusively to resolve builtin names...
     // is there a simpler way to do this without the full recursion?
     // perhaps move this to the flattened ir conversion when we have to walk our ast anyway?
-    /// resolve_names resolves builtin names to their respective builtins and resolves TypeQuery to
-    /// the corresponding type
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -518,7 +514,10 @@ impl TypeInfo {
                         type_params,
                     )
                 })
-                .unwrap_or_else(|| Self::PrimitiveAny(PrimitiveAny())),
+                .unwrap_or_else(|| {
+                    //println!("unresolved alias {:?}, leaving as any", referent);
+                    Self::PrimitiveAny(PrimitiveAny())
+                }),
             Self::Alias(a) => Self::Alias(a.clone()),
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
@@ -624,20 +623,7 @@ impl TypeInfo {
             Self::BuiltinDate(BuiltinDate()) => self.clone(),
             Self::BuiltinPromise(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
-            Self::TypeQuery(TypeQuery::LookupRef(tr)) => {
-                lookup_type(types_by_name_by_file, &tr.referent)
-                    .map(|t| {
-                        let t = &t.info;
-                        // terms (vars) are replaced by their types.
-                        // types are turned into typerefs
-                        if let Self::Var { type_info } = t {
-                            std::ops::Deref::deref(type_info).clone()
-                        } else {
-                            Self::Ref(tr.clone())
-                        }
-                    })
-                    .expect("expected target of type query to exist")
-            }
+            Self::TypeQuery(TypeQuery::LookupRef(_)) => self.clone(),
         }
     }
 }
