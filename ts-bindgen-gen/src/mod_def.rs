@@ -144,7 +144,7 @@ impl ModDef {
 
         types_by_name_by_file
             .iter()
-            .for_each(|(_path, types_by_name)| {
+            .for_each(|(path, types_by_name)| {
                 // given a path like /.../node_modules/a/b/c, we fold over
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
@@ -153,7 +153,20 @@ impl ModDef {
                     .iter()
                     .for_each(|(name, typ)| {
                         // TODO: might need to fix up to_mod_path_iter for LocalName, etc.
-                        let names: Vec<_> = name.to_mod_path_iter(fs).collect();
+                        let names = {
+                            let mut names: Vec<_> = name.to_mod_path_iter(fs).collect();
+                            if names.is_empty() {
+                                // TODO: names without a file should not exist (e.g. LocalName)
+                                names = path.to_mod_path_iter(fs).collect();
+                            }
+
+                            names
+                        };
+
+                        if names.is_empty() {
+                            panic!("found name with no module");
+                        }
+
                         let last_idx = names.len() - 1;
                         names.iter().enumerate().fold(
                             root.clone(),
@@ -270,7 +283,6 @@ mod mod_def_tests {
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/test")?;
         let ir = to_final_ir(tbnbf);
-        println!("HERE {:?}", &ir);
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
@@ -332,10 +344,10 @@ mod mod_def_tests {
         let test_mod = mods.children.first().unwrap();
         assert_eq!(test_mod.name, make_identifier!(test));
         assert_eq!(test_mod.children.len(), 1);
-        assert!(!test_mod.types.is_empty());
+        assert!(test_mod.types.is_empty());
 
         let namespace_mod = test_mod.children.first().unwrap();
-        assert_eq!(namespace_mod.name, make_identifier!(A));
+        assert_eq!(namespace_mod.name, make_identifier!(a));
 
         assert!(namespace_mod.children.is_empty());
         assert!(!namespace_mod.types.is_empty());
