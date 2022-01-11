@@ -119,6 +119,7 @@ impl ToModPathIter for TypeIdent {
                 ),
             ),
             TypeIdent::Name { file, .. } => file.to_mod_path_iter(fs),
+            TypeIdent::DefaultExport(file) => file.to_mod_path_iter(fs),
             _ => Box::new(iter::empty()),
         }
     }
@@ -143,42 +144,18 @@ impl ModDef {
 
         types_by_name_by_file
             .iter()
-            .for_each(|(path, types_by_name)| {
+            .for_each(|(_path, types_by_name)| {
                 // given a path like /.../node_modules/a/b/c, we fold over
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
                 // over [a, b, c].
-                let mod_path = path.to_mod_path_iter(fs).collect::<Vec<Identifier>>();
-                let last_idx = mod_path.len() - 1;
-
-                mod_path
-                    .iter()
-                    .enumerate()
-                    .fold(root.clone(), move |parent, (i, mod_name)| {
-                        let mut parent = parent.borrow_mut();
-                        let types = if i == last_idx {
-                            types_by_name
-                                .values()
-                                .cloned()
-                                .collect::<Vec<TargetEnrichedType>>()
-                        } else {
-                            Default::default()
-                        };
-                        parent.add_child_mod(mod_name.clone(), types)
-                    });
-
                 types_by_name
                     .iter()
-                    .filter_map(|(name, typ)| {
-                        if let TypeIdent::QualifiedName { .. } = name {
-                            Some((name.to_mod_path_iter(fs).collect::<Vec<Identifier>>(), typ))
-                        } else {
-                            None
-                        }
-                    })
-                    .for_each(|(names, typ)| {
-                        let last_idx = mod_path.len() + names.len() - 1;
-                        mod_path.iter().chain(names.iter()).enumerate().fold(
+                    .for_each(|(name, typ)| {
+                        // TODO: might need to fix up to_mod_path_iter for LocalName, etc.
+                        let names: Vec<_> = name.to_mod_path_iter(fs).collect();
+                        let last_idx = names.len() - 1;
+                        names.iter().enumerate().fold(
                             root.clone(),
                             move |parent, (i, mod_name)| {
                                 let mut parent = parent.borrow_mut();
@@ -293,6 +270,7 @@ mod mod_def_tests {
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/test")?;
         let ir = to_final_ir(tbnbf);
+        println!("HERE {:?}", &ir);
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
@@ -328,6 +306,39 @@ mod mod_def_tests {
 
         assert!(test_mod.children.is_empty());
         assert!(!test_mod.types.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn mod_def_with_namespaces() -> Result<(), Error> {
+        let mut fs: MemFs = Default::default();
+        fs.set_cwd(Path::new("/abc/def"));
+        fs.add_dir_at(Path::new("/abc/def/test"));
+        fs.add_file_at(
+            Path::new("/abc/def/test/index.d.ts"),
+            r#"namespace A {
+                export class Test {}
+            }"#.to_string(),
+        );
+
+        let arc_fs = Arc::new(fs) as ArcFs;
+        let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
+        let ir = to_final_ir(tbnbf);
+        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
+
+        assert_eq!(mods.children.len(), 1);
+
+        let test_mod = mods.children.first().unwrap();
+        assert_eq!(test_mod.name, make_identifier!(test));
+        assert_eq!(test_mod.children.len(), 1);
+        assert!(!test_mod.types.is_empty());
+
+        let namespace_mod = test_mod.children.first().unwrap();
+        assert_eq!(namespace_mod.name, make_identifier!(A));
+
+        assert!(namespace_mod.children.is_empty());
+        assert!(!namespace_mod.types.is_empty());
 
         Ok(())
     }

@@ -4,9 +4,17 @@ use strum_macros::Display as StrumDisplay;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
+    /// A regular type identifier
     Name(String),
+    /// Identifier for a default export
     DefaultExport(),
+    /// Identifier for a qualified name (i.e. within a module or namespace)
+    /// Module A.B.C would be represented by `vec!["A", "B", "C"]`
     QualifiedName(Vec<String>),
+    /// Privileged name that is inserted into a namespace to refer to the
+    /// parent type environment. Within a `declare module '...'` block,
+    /// any outer definitions are available.
+    TypeEnvironmentParent(),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -42,6 +50,7 @@ impl TypeName {
             TypeIdent::Name(n) => n,
             TypeIdent::QualifiedName(n) => n.last().expect("bad qualified name"),
             TypeIdent::DefaultExport() => "default",
+            TypeIdent::TypeEnvironmentParent() => "__parent__", // TODO: ?
         }
     }
 }
@@ -442,9 +451,6 @@ impl TypeInfo {
         None
     }
 
-    // TODO: resolve_names exists throughout this file exclusively to resolve builtin names...
-    // is there a simpler way to do this without the full recursion?
-    // perhaps move this to the flattened ir conversion when we have to walk our ast anyway?
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -494,12 +500,17 @@ impl TypeInfo {
             Self::Ref(TypeRef {
                 referent,
                 type_params: alias_type_params,
-            }) => lookup_type(types_by_name_by_file, referent)
-                .map(|_| {
+            }) => canonicalize_type(types_by_name_by_file, referent)
+                .map(|canonical_referent| {
                     // look up the type just to make sure it exists, we get a builtin if it doesn't exist below
-                    self.clone()
+                    Self::Ref(TypeRef {
+                        referent: canonical_referent,
+                        type_params: alias_type_params.clone(),
+                    })
                 })
                 .or_else(|| {
+                    // if our referent refers to an item in our type environment,
+                    // leave as-is
                     if let TypeIdent::Name(n) = &referent.name {
                         type_params.get(n).map(|_| self.clone())
                     } else {
@@ -626,6 +637,43 @@ impl TypeInfo {
             Self::TypeQuery(TypeQuery::LookupRef(_)) => self.clone(),
         }
     }
+}
+
+fn canonicalize_type(
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    referent: &TypeName,
+) -> Option<TypeName> {
+    lookup_type(types_by_name_by_file, referent)
+        .map(|_| referent.clone()) // keep found types as-is
+        .or_else(|| {
+            // if we don't find the type AND we have a parent type environment,
+            // check the parent recursively
+            lookup_type(
+                types_by_name_by_file,
+                &TypeName {
+                    file: referent.file.clone(),
+                    name: TypeIdent::TypeEnvironmentParent()
+                },
+            )
+            .and_then(|parent| match &parent.info {
+                TypeInfo::NamespaceImport(NamespaceImport::All { src }) => Some(src),
+                _ => None, // we should never write anything other than a NamespaceImport::All to a TypeEnvironmentParent
+            })
+            .and_then(|parent_file| {
+                if *parent_file == referent.file {
+                    // circular dependency
+                    None
+                } else {
+                    canonicalize_type(
+                        types_by_name_by_file,
+                        &TypeName {
+                            file: parent_file.clone(),
+                            name: referent.name.clone(),
+                        }
+                    )
+                }
+            })
+        })
 }
 
 fn lookup_type<'a>(

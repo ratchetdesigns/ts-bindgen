@@ -841,14 +841,14 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .filter(|(_, member)| {
                         if let Member::Property(typ) = member {
                             // if we have a javascript type that acts as a namespace, containing
-                            // other classes, we just ignore those entries.
+                            // other types, we just ignore those entries.
                             // this is fine IF those classes are exported elsewhere. if they
                             // aren't, we may need to find a way to force them to be exported
                             // (reasonable since they are de facto exported by virtue of being a property on
                             // an exported class)
-                            typ.resolve_target_type()
-                                .map(|t| !matches!(t, TargetEnrichedTypeInfo::Class(_)))
-                                .unwrap_or(true)
+                            // TODO: maybe add a level property to TypeRef indicating TermLevel or TypeLevel
+                            true
+                            // !matches!(typ, TargetEnrichedTypeInfo::TypeQuery(_))
                         } else {
                             true
                         }

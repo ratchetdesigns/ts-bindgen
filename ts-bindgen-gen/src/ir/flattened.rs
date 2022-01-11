@@ -441,6 +441,13 @@ impl From<TypeNameIR> for TypeIdent {
             TypeIdentIR::Name(name) => TypeIdent::Name { file, name },
             TypeIdentIR::DefaultExport() => TypeIdent::DefaultExport(file),
             TypeIdentIR::QualifiedName(name_parts) => TypeIdent::QualifiedName { file, name_parts },
+            TypeIdentIR::TypeEnvironmentParent() => {
+                // TODO: should never get to this case
+                TypeIdent::Name {
+                    file,
+                    name: "__parent__".to_string()
+                }
+            },
         }
     }
 }
@@ -1004,7 +1011,10 @@ impl From<ClassIR> for EffectContainer<Class> {
         let members = src
             .members
             .into_iter()
-            .map(|(n, m)| (n, m.into()))
+            .map(|(n, m)| {
+                let effects = EffectContainer::from(m).adapt_effects(effect_mappers::prepend_name(&n));
+                (n, effects)
+            })
             .collect();
         let implements = src.implements.into_iter().map(|i| i.into()).collect();
         combine_effects!(
@@ -1164,34 +1174,39 @@ impl_effectless_conversion!(
 );
 
 pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterator<Item = FlatType> {
-    types.into_iter().flat_map(|t| {
-        let info = t.info.into();
-        let ft = combine_effects!(
-            info => (effect_mappers::prepend_name(&t.name.to_name()));
-            FlatType {
-                name: t.name.into(),
-                is_exported: t.is_exported,
-                info,
-            }
-        );
-        let (v, effs) = ft.into_value_and_effects();
-        let (effs, names_by_id): (Vec<FlatType>, HashMap<usize, String>) = effs
-            .map(|eff| match eff {
-                Effect::CreateType {
-                    name,
-                    typ,
-                    generated_name_id,
-                } => (
-                    FlatType {
-                        name: TypeIdent::LocalName(name.clone()),
-                        is_exported: true,
-                        info: typ.into(),
-                    },
-                    (generated_name_id, name),
-                ),
-            })
-            .unzip();
-        effs.into_iter()
-            .chain(std::iter::once(v.apply_names(&names_by_id)))
-    })
+    types.into_iter()
+        .filter(|t| {
+            // skip these marker types
+            t.name.name != TypeIdentIR::TypeEnvironmentParent()
+        })
+        .flat_map(|t| {
+            let info = t.info.into();
+            let ft = combine_effects!(
+                info => (effect_mappers::prepend_name(&t.name.to_name()));
+                FlatType {
+                    name: t.name.into(),
+                    is_exported: t.is_exported,
+                    info,
+                }
+            );
+            let (v, effs) = ft.into_value_and_effects();
+            let (effs, names_by_id): (Vec<FlatType>, HashMap<usize, String>) = effs
+                .map(|eff| match eff {
+                    Effect::CreateType {
+                        name,
+                        typ,
+                        generated_name_id,
+                    } => (
+                        FlatType {
+                            name: TypeIdent::LocalName(name.clone()),
+                            is_exported: true,
+                            info: typ.into(),
+                        },
+                        (generated_name_id, name),
+                    ),
+                })
+                .unzip();
+            effs.into_iter()
+                .chain(std::iter::once(v.apply_names(&names_by_id)))
+        })
 }
