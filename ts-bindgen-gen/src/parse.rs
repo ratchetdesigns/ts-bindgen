@@ -835,6 +835,22 @@ impl TsTypes {
         module_base: Option<PathBuf>,
         module_name: &str,
     ) -> Result<PathBuf, InternalError> {
+        self.process_module_with_items(
+            module_base,
+            module_name,
+            false,
+            |t, p| t.load_module(p).map(|m| m.body.clone()),
+        )
+    }
+
+    fn process_module_with_items<G: FnMut(&mut TsTypes, &Path) -> Result<Vec<ModuleItem>, InternalError>> (
+        &mut self,
+        module_base: Option<PathBuf>,
+        module_name: &str,
+        // if allow_incremental - reprocess module if necessary. else, skip re-processing
+        allow_incremental: bool,
+        mut load_module: G,
+    ) -> Result<PathBuf, InternalError> {
         let ts_path = get_ts_path(
             &*self.fs,
             module_base,
@@ -844,14 +860,18 @@ impl TsTypes {
         let ts_path = self.fs.normalize(&ts_path);
 
         match self.types_by_name_by_file.entry(ts_path.clone()) {
-            Entry::Occupied(_) => return Ok(ts_path),
+            Entry::Occupied(_) => {
+                if !allow_incremental {
+                    return Ok(ts_path)
+                }
+            },
             Entry::Vacant(v) => {
                 v.insert(Default::default());
             }
         }
 
-        let module = self.load_module(&ts_path)?;
-        self.process_module_items(&ts_path, &module.body);
+        let module_items = load_module(self, &ts_path)?;
+        self.process_module_items(&ts_path, &module_items);
 
         Ok(ts_path)
     }
@@ -872,6 +892,10 @@ impl TsTypes {
                     }
                     TypeIdent::QualifiedName(mut name) => {
                         ns.append(&mut name);
+                    }
+                    TypeIdent::TypeEnvironmentParent() => {
+                        // TODO: should never get here
+                        return name;
                     }
                 }
 
@@ -1686,7 +1710,7 @@ impl TsTypes {
     fn process_namespace_body(
         &mut self,
         ts_path: &Path,
-        _declare: bool,
+        declare: bool,
         id: &TsModuleName,
         body: Option<&TsNamespaceBody>,
     ) {
@@ -1694,6 +1718,52 @@ impl TsTypes {
             TsModuleName::Ident(ident) => ident.sym.to_string(),
             TsModuleName::Str(s) => s.value.to_string(),
         };
+
+        // TODO: not sure if this heuristic of treating strings as module names
+        // and idents as namespaces makes sense...
+        if declare && matches!(id, TsModuleName::Str(_)) {
+            // declared namespace bodies are interpreted as definitions for separate modules but
+            // with access to the surrounding types environment
+
+            if let Some(TsNamespaceBody::TsModuleBlock(block)) = body {
+                let file_result = self.process_module_with_items(
+                    None, // TODO: should we resolve relative to ts_path?
+                    &name,
+                    true,
+                    |_, _| {
+                        Ok(block.body.clone())
+                    },
+                );
+
+                let file = match file_result {
+                    Ok(file) => file,
+                    Err(err) => {
+                        self.record_error(err);
+                        return;
+                    }
+                };
+
+                if file != ts_path {
+                    self.set_type_for_file(
+                        &file,
+                        Ok(Type {
+                            name: TypeName {
+                                file: ts_path.to_path_buf(),
+                                name: TypeIdent::TypeEnvironmentParent(),
+                            },
+                            is_exported: false,
+                            info: TypeInfo::NamespaceImport(NamespaceImport::All {
+                                src: file.clone()
+                            }),
+                        }),
+                    );
+                }
+            } else {
+                println!("Module declaration without body block");
+            }
+
+            return;
+        }
 
         let full_ns = {
             let mut full_ns = self
@@ -1975,14 +2045,7 @@ impl TsTypes {
         if let Stmt::Decl(decl) = stmt {
             self.process_decl(ts_path, decl)
                 .into_iter()
-                .for_each(|typ| match typ {
-                    Ok(t) => {
-                        let type_name = t.name.to_name().to_string();
-
-                        self.set_type_for_name_for_file(ts_path, TypeIdent::Name(type_name), Ok(t));
-                    }
-                    Err(err) => self.record_error(err),
-                });
+                .for_each(|typ| self.set_type_for_file(ts_path, typ));
         }
     }
 }
@@ -2478,5 +2541,26 @@ mod test {
         test_exported_type!(ts, expected_type, TypeInfo::Class(c), {
             assert!(c.members.is_empty());
         })
+    }
+
+    #[test]
+    fn test_indexed() -> Result<(), Error> {
+        test_exported_type!(
+            r#"export interface A {
+                environment: {[key: string]: string};
+            }"#,
+            "A",
+            TypeInfo::Interface(i), {
+                assert_eq!(i.fields.len(), 1);
+                let environment = i.fields.get("environment");
+                assert!(environment.is_some());
+                let environment = environment.unwrap();
+                if let TypeInfo::Mapped { value_type } = environment {
+                    assert_eq!(**value_type, TypeInfo::PrimitiveString(PrimitiveString()));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
     }
 }

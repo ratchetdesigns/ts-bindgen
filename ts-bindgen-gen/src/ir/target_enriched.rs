@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use strum_macros::Display as StrumDisplay;
 
 type SourceTypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, FlatType>>;
 pub type TypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>>;
@@ -160,7 +161,7 @@ from_struct!(
     info => .,
 );
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, StrumDisplay)]
 pub enum TargetEnrichedTypeInfo {
     Interface(Interface),
     Enum(Enum),
@@ -553,10 +554,16 @@ impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Context {
     pub types_by_ident_by_path: WrappedTypesByIdentByPath,
     pub path: PathBuf,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("Context").finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

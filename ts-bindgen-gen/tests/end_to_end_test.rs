@@ -10,8 +10,9 @@ use ts_bindgen_gen::{generate_rust_for_typescript, Error, StdFs};
 #[test]
 fn end_to_end() -> Result<(), Error> {
     let cargo_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let target_dir = tempdir()?;
-    let target_dir = target_dir.path();
+    //let target_dir = tempdir()?;
+    //let target_dir = target_dir.path();
+    let target_dir = Path::new("/tmp/test");
     let test_template_path = cargo_dir.join("tests/end_to_end_template");
 
     copy_dir(&test_template_path, &target_dir)?;

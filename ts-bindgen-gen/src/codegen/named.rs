@@ -87,9 +87,11 @@ impl<'a> Named for CasedTypeIdent<'a> {
 /// Given a TypeRef and an identifier for it, determine whether to retain
 /// the type_params on the identifier or not
 fn retain_target_type_params(type_ref: &TypeRef, id: &Identifier) -> bool {
-    // TODO: this is inelegant...
+    // TODO: this is ugly...
     // we keep HashMap<String, JsValue> but maybe should keep other type params?
-    !id.type_params.is_empty() && matches!(&type_ref.referent, TypeIdent::Builtin(_)) && !matches!(&type_ref.referent, TypeIdent::Builtin(Builtin::Fn))
+    !id.type_params.is_empty()
+        && matches!(&type_ref.referent, TypeIdent::Builtin(_))
+        && !matches!(&type_ref.referent, TypeIdent::Builtin(Builtin::Fn | Builtin::Map))
 }
 
 impl Named for TypeRef {
