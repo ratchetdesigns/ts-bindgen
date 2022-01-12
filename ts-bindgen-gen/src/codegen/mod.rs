@@ -139,6 +139,9 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, ModDef, FS> {
             quote! {
                 #[allow(unused)]
                 use wasm_bindgen::prelude::*;
+
+                #[allow(unused)]
+                use super::*; // ts modules inherit their parent environment
             }
         };
 
