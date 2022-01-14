@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 trait ApplyNames {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self;
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub struct FlatType {
 }
 
 impl ApplyNames for FlatType {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         FlatType {
             name: self.name,
             is_exported: self.is_exported,
@@ -43,6 +43,8 @@ impl ApplyNames for FlatType {
 pub enum Effect {
     CreateType {
         name: String,
+        file: PathBuf,
+        ns: Vec<String>,
         typ: NameableTypeInfo,
         generated_name_id: usize,
     },
@@ -218,7 +220,7 @@ pub enum FlattenedTypeInfo {
 }
 
 impl ApplyNames for FlattenedTypeInfo {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         match self {
             FlattenedTypeInfo::Interface(i) => {
                 FlattenedTypeInfo::Interface(i.apply_names(names_by_id))
@@ -264,7 +266,7 @@ pub struct Interface {
 }
 
 impl ApplyNames for Interface {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Interface {
             indexer: self.indexer.map(|i| i.apply_names(names_by_id)),
             extends: self
@@ -318,10 +320,14 @@ mod effect_mappers {
         move |e: Effect| match e {
             Effect::CreateType {
                 name,
+                file,
+                ns,
                 typ,
                 generated_name_id,
             } => Effect::CreateType {
-                name: prefix.as_ref().to_title_case() + &name,
+                name: format!("{}_{}", prefix.as_ref().to_title_case(), &name),
+                file,
+                ns,
                 typ,
                 generated_name_id,
             },
@@ -381,7 +387,7 @@ pub struct Indexer {
 }
 
 impl ApplyNames for Indexer {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Indexer {
             readonly: self.readonly,
             value_type: self.value_type.apply_names(names_by_id),
@@ -424,10 +430,10 @@ pub enum TypeIdent {
 }
 
 impl ApplyNames for TypeIdent {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         match self {
             TypeIdent::GeneratedName { id } => {
-                TypeIdent::LocalName(names_by_id.get(&id).unwrap().clone())
+                names_by_id.get(&id).unwrap().clone()
             }
             _ => self,
         }
@@ -465,7 +471,7 @@ pub struct TypeRef {
 }
 
 impl ApplyNames for TypeRef {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         TypeRef {
             referent: self.referent.apply_names(names_by_id),
             type_params: self
@@ -626,6 +632,8 @@ macro_rules! impl_effectful_conversion_from_nameable_type_to_type_ref {
                 let (val, effects) = ec.into_value_and_effects();
                 let effect = Effect::CreateType {
                     name: "".to_string(), // our name is filled in as we bubble up
+                    //file: "", // TODO
+                    //ns: vec![], // TODO
                     typ: NameableTypeInfo::$nameable(val),
                     generated_name_id: id,
                 };
@@ -738,7 +746,7 @@ pub struct Union {
 }
 
 impl ApplyNames for Union {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Union {
             types: self
                 .types
@@ -767,7 +775,7 @@ pub struct Intersection {
 }
 
 impl ApplyNames for Intersection {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Intersection {
             types: self
                 .types
@@ -796,7 +804,7 @@ pub struct Tuple {
 }
 
 impl ApplyNames for Tuple {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Tuple {
             types: self
                 .types
@@ -826,7 +834,7 @@ pub struct TypeParamConfig {
 }
 
 impl ApplyNames for TypeParamConfig {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         TypeParamConfig {
             constraint: self.constraint.map(|c| c.apply_names(names_by_id)),
             default_type_arg: self.default_type_arg.map(|d| d.apply_names(names_by_id)),
@@ -860,7 +868,7 @@ pub struct Func {
 }
 
 impl ApplyNames for Func {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Func {
             type_params: self
                 .type_params
@@ -912,7 +920,7 @@ pub struct Param {
 }
 
 impl ApplyNames for Param {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Param {
             name: self.name,
             type_info: self.type_info.apply_names(names_by_id),
@@ -942,7 +950,7 @@ pub struct Ctor {
 }
 
 impl ApplyNames for Ctor {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Ctor {
             params: self
                 .params
@@ -974,7 +982,7 @@ pub struct Class {
 }
 
 impl ApplyNames for Class {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Class {
             super_class: self.super_class.map(|s| s.apply_names(names_by_id)),
             members: self
@@ -1041,7 +1049,7 @@ pub enum Member {
 }
 
 impl ApplyNames for Member {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         match self {
             Member::Constructor(c) => Member::Constructor(c.apply_names(names_by_id)),
             Member::Method(c) => Member::Method(c.apply_names(names_by_id)),
@@ -1071,7 +1079,7 @@ pub struct Enum {
 }
 
 impl ApplyNames for Enum {
-    fn apply_names(self, _: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, _: &HashMap<usize, TypeIdent>) -> Self {
         self
     }
 }
@@ -1112,7 +1120,7 @@ impl From<AliasIR> for EffectContainer<Alias> {
 }
 
 impl ApplyNames for Alias {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         Alias {
             target: self.target.apply_names(names_by_id),
             type_params: self
@@ -1145,7 +1153,7 @@ impl From<TypeQueryIR> for EffectContainer<TypeQuery> {
 }
 
 impl ApplyNames for TypeQuery {
-    fn apply_names(self, names_by_id: &HashMap<usize, String>) -> Self {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         match self {
             TypeQuery::LookupRef(tr) => TypeQuery::LookupRef(tr.apply_names(names_by_id)),
         }
@@ -1190,20 +1198,39 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
                 }
             );
             let (v, effs) = ft.into_value_and_effects();
-            let (effs, names_by_id): (Vec<FlatType>, HashMap<usize, String>) = effs
+            let (effs, names_by_id): (Vec<FlatType>, HashMap<usize, TypeIdent>) = effs
                 .map(|eff| match eff {
                     Effect::CreateType {
                         name,
+                        file,
+                        ns,
                         typ,
                         generated_name_id,
-                    } => (
-                        FlatType {
-                            name: TypeIdent::LocalName(name.clone()),
-                            is_exported: true,
-                            info: typ.into(),
-                        },
-                        (generated_name_id, name),
-                    ),
+                    } => {
+                        let name = if ns.is_empty() {
+                            TypeIdent::Name {
+                                file,
+                                name,
+                            }
+                        } else {
+                            let mut name_parts = ns;
+                            name_parts.push(name);
+
+                            TypeIdent::QualifiedName {
+                                file,
+                                name_parts,
+                            }
+                        };
+
+                        (
+                            FlatType {
+                                name: name.clone(),
+                                is_exported: true,
+                                info: typ.into(),
+                            },
+                            (generated_name_id, name),
+                        )
+                    },
                 })
                 .unzip();
             effs.into_iter()
