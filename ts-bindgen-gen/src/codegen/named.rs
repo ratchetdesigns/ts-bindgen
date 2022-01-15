@@ -14,10 +14,7 @@ impl Named for Builtin {
             Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue")),
             Builtin::PrimitiveNumber => ("f64", to_ident("f64")),
             // TODO: make a wrapper in rt to allow objects to be null or undefined
-            Builtin::PrimitiveObject => (
-                "std::collections::HashMap<String, JsValue>",
-                make_identifier!(std::collections::HashMap<String, JsValue>),
-            ),
+            Builtin::PrimitiveObject => ("JsValue", to_ident("JsValue")),
             Builtin::PrimitiveBoolean => ("bool", to_ident("bool")),
             Builtin::PrimitiveBigInt => ("u64", to_ident("u64")),
             Builtin::PrimitiveString => ("String", to_ident("String")),
