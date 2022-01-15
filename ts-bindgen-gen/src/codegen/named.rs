@@ -91,7 +91,10 @@ fn retain_target_type_params(type_ref: &TypeRef, id: &Identifier) -> bool {
     // we keep HashMap<String, JsValue> but maybe should keep other type params?
     !id.type_params.is_empty()
         && matches!(&type_ref.referent, TypeIdent::Builtin(_))
-        && !matches!(&type_ref.referent, TypeIdent::Builtin(Builtin::Fn | Builtin::Map))
+        && !matches!(
+            &type_ref.referent,
+            TypeIdent::Builtin(Builtin::Fn | Builtin::Map)
+        )
 }
 
 impl Named for TypeRef {

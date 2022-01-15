@@ -652,7 +652,7 @@ fn canonicalize_type(
                 types_by_name_by_file,
                 &TypeName {
                     file: referent.file.clone(),
-                    name: TypeIdent::TypeEnvironmentParent()
+                    name: TypeIdent::TypeEnvironmentParent(),
                 },
             )
             .and_then(|parent| match &parent.info {
@@ -669,7 +669,7 @@ fn canonicalize_type(
                         &TypeName {
                             file: parent_file.clone(),
                             name: referent.name.clone(),
-                        }
+                        },
                     )
                 }
             })

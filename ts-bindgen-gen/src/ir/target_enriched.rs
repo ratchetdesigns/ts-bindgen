@@ -4,8 +4,8 @@ use crate::ir::flattened::{
     Indexer as FlattenedIndexer, Interface as FlattenedInterface,
     Intersection as FlattenedIntersection, Member as FlattenedMember,
     NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
-    TypeParamConfig as FlattenedTypeParamConfig, TypeRef as FlattenedTypeRef,
-    Union as FlattenedUnion, TypeQuery as FlattenedTypeQuery,
+    TypeParamConfig as FlattenedTypeParamConfig, TypeQuery as FlattenedTypeQuery,
+    TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
 pub use crate::ir::flattened::{Builtin, EnumValue, TypeIdent};
 use std::cell::RefCell;
@@ -532,10 +532,7 @@ impl From<WithContext<FlattenedNamespaceImport>> for NamespaceImport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeQuery {
-    LookupRef {
-        type_ref: TypeRef,
-        context: Context,
-    },
+    LookupRef { type_ref: TypeRef, context: Context },
 }
 
 impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
@@ -547,7 +544,8 @@ impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
                 type_ref: WithContext {
                     value: type_ref,
                     context: context.clone(),
-                }.into(),
+                }
+                .into(),
                 context,
             },
         }
