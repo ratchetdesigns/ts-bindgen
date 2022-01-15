@@ -1180,6 +1180,15 @@ impl From<Namespaced<ClassIR>> for EffectContainer<Class> {
             let members = v
                 .members
                 .into_iter()
+                .filter(|(_, m)| {
+                    // if we have a javascript type that acts as a namespace, containing
+                    // other types, we just ignore those entries.
+                    // this is fine IF those classes are exported elsewhere. if they
+                    // aren't, we may need to find a way to force them to be exported
+                    // (reasonable since they are de facto exported by virtue of being a property on
+                    // an exported class)
+                    !matches!(m, MemberIR::Property(TypeInfoIR::TypeQuery(_)))
+                })
                 .map(|(n, m)| {
                     let effects = EffectContainer::from(ns.in_ns(m))
                         .adapt_effects(effect_mappers::prepend_name(&n));
