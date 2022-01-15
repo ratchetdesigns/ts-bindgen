@@ -10,7 +10,7 @@ use crate::ir::base::{
     Union as UnionIR,
 };
 pub use crate::ir::base::{EnumValue, NamespaceImport};
-use enum_to_enum::{FromEnum, WithEffects};
+use enum_to_enum::WithEffects;
 use std::collections::HashMap;
 use std::iter::{Extend, FromIterator};
 use std::path::PathBuf;
@@ -149,6 +149,64 @@ impl<K, V> FromIterator<(K, EffectContainer<V>)> for EffectContainer<Vec<(K, V)>
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Namespaced<V> {
+    value: V,
+    file: PathBuf,
+    ns: Vec<String>,
+}
+
+impl<V> Namespaced<V> {
+    fn new(value: V, name: &TypeNameIR) -> Namespaced<V> {
+        let ns = match &name.name {
+            TypeIdentIR::Name(_) => Default::default(),
+            TypeIdentIR::DefaultExport() => Default::default(),
+            TypeIdentIR::QualifiedName(name_parts) => name_parts[0..name_parts.len() - 1]
+                .iter()
+                .cloned()
+                .collect(),
+            TypeIdentIR::TypeEnvironmentParent() => Default::default(),
+        };
+
+        Namespaced {
+            value,
+            ns,
+            file: name.file.clone(),
+        }
+    }
+
+    fn map<MapperRes, Mapper>(self, mapper: Mapper) -> MapperRes
+    where
+        Mapper: Fn(V, NsMaker) -> MapperRes,
+    {
+        let ns = NsMaker::new(&self);
+        let value = self.value;
+        mapper(value, ns)
+    }
+}
+
+struct NsMaker {
+    file: PathBuf,
+    ns: Vec<String>,
+}
+
+impl NsMaker {
+    fn new<V>(nsed: &Namespaced<V>) -> NsMaker {
+        NsMaker {
+            file: nsed.file.clone(),
+            ns: nsed.ns.clone(),
+        }
+    }
+
+    fn in_ns<V>(&self, value: V) -> Namespaced<V> {
+        Namespaced {
+            value,
+            file: self.file.clone(),
+            ns: self.ns.clone(),
+        }
+    }
+}
+
 /// A subset of [`FlattenedTypeInfo`] variants that may need to be lifted and named
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameableTypeInfo {
@@ -158,9 +216,9 @@ pub enum NameableTypeInfo {
     Interface(Interface),
 }
 
-impl From<NameableTypeInfo> for FlattenedTypeInfo {
-    fn from(src: NameableTypeInfo) -> FlattenedTypeInfo {
-        match src {
+impl From<Namespaced<NameableTypeInfo>> for FlattenedTypeInfo {
+    fn from(src: Namespaced<NameableTypeInfo>) -> FlattenedTypeInfo {
+        match src.value {
             NameableTypeInfo::Union(u) => FlattenedTypeInfo::Union(u),
             NameableTypeInfo::Intersection(i) => FlattenedTypeInfo::Intersection(i),
             NameableTypeInfo::Tuple(t) => FlattenedTypeInfo::Tuple(t),
@@ -172,51 +230,85 @@ impl From<NameableTypeInfo> for FlattenedTypeInfo {
 /// FlattenedTypeInfo's represent a view of [`crate::ir::TypeInfo`]
 /// with all anonymous inner types converted into references to
 /// a top-level, named type.
-#[derive(Debug, Clone, PartialEq, Eq, FromEnum)]
-#[from_enum(TypeInfoIR, effect_container = EffectContainer)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlattenedTypeInfo {
     Interface(Interface),
     Enum(Enum),
     Alias(Alias),
-    #[from_case(
-        PrimitiveAny,
-        PrimitiveNumber,
-        PrimitiveObject,
-        PrimitiveBoolean,
-        PrimitiveBigInt,
-        PrimitiveString,
-        PrimitiveSymbol,
-        PrimitiveVoid,
-        PrimitiveUndefined,
-        PrimitiveNull,
-        BuiltinPromise,
-        BuiltinDate,
-        LitNumber,
-        LitString,
-        LitBoolean,
-        Ref
-    )]
     Ref(TypeRef),
-    Array {
-        item_type: Box<FlattenedTypeInfo>,
-    },
+    Array { item_type: Box<FlattenedTypeInfo> },
     Tuple(Tuple),
-    Optional {
-        item_type: Box<FlattenedTypeInfo>,
-    },
+    Optional { item_type: Box<FlattenedTypeInfo> },
     Union(Union),
     Intersection(Intersection),
-    Mapped {
-        value_type: Box<FlattenedTypeInfo>,
-    },
+    Mapped { value_type: Box<FlattenedTypeInfo> },
     Func(Func),
     Constructor(Ctor),
     Class(Class),
-    Var {
-        type_info: Box<FlattenedTypeInfo>,
-    },
+    Var { type_info: Box<FlattenedTypeInfo> },
     NamespaceImport(NamespaceImport),
     TypeQuery(TypeQuery),
+}
+
+macro_rules! tuple_match_convert {
+    ($ns:ident, $to_case:ident ($val:ident)) => {{
+        let val_with_effects: EffectContainer<_> = $ns.in_ns($val).into();
+        let ($val, effects) = val_with_effects.into_value_and_effects();
+        EffectContainer::compose_from($to_case($val), effects.collect())
+    }};
+}
+
+macro_rules! struct_match_convert {
+    ($ns: ident, $to_case:ident { $item: ident }) => {{
+        let val_with_effects: EffectContainer<_> = $ns.in_ns($item).into();
+        let ($item, effects) = val_with_effects.into_value_and_effects();
+        EffectContainer::compose_from($to_case { $item }, effects.collect())
+    }};
+}
+
+impl From<Namespaced<TypeInfoIR>> for EffectContainer<FlattenedTypeInfo> {
+    fn from(src: Namespaced<TypeInfoIR>) -> EffectContainer<FlattenedTypeInfo> {
+        src.map(|v, ns| {
+            use FlattenedTypeInfo::*; // using paths instead of idents in {tuple,struct}_match_convert is hard...
+            match v {
+                TypeInfoIR::Interface(v) => tuple_match_convert!(ns, Interface(v)),
+                TypeInfoIR::Enum(v) => tuple_match_convert!(ns, Enum(v)),
+                TypeInfoIR::Alias(v) => tuple_match_convert!(ns, Alias(v)),
+                TypeInfoIR::PrimitiveAny(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveNumber(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveObject(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveBoolean(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveBigInt(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveString(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveSymbol(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveVoid(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveUndefined(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::PrimitiveNull(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::BuiltinPromise(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::BuiltinDate(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::LitNumber(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::LitString(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::LitBoolean(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::Ref(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::Array { item_type } => struct_match_convert!(ns, Array { item_type }),
+                TypeInfoIR::Tuple(v) => tuple_match_convert!(ns, Tuple(v)),
+                TypeInfoIR::Optional { item_type } => {
+                    struct_match_convert!(ns, Optional { item_type })
+                }
+                TypeInfoIR::Union(v) => tuple_match_convert!(ns, Union(v)),
+                TypeInfoIR::Intersection(v) => tuple_match_convert!(ns, Intersection(v)),
+                TypeInfoIR::Mapped { value_type } => {
+                    struct_match_convert!(ns, Mapped { value_type })
+                }
+                TypeInfoIR::Func(v) => tuple_match_convert!(ns, Func(v)),
+                TypeInfoIR::Constructor(v) => tuple_match_convert!(ns, Constructor(v)),
+                TypeInfoIR::Class(v) => tuple_match_convert!(ns, Class(v)),
+                TypeInfoIR::Var { type_info } => struct_match_convert!(ns, Var { type_info }),
+                TypeInfoIR::NamespaceImport(v) => tuple_match_convert!(ns, NamespaceImport(v)),
+                TypeInfoIR::TypeQuery(v) => tuple_match_convert!(ns, TypeQuery(v)),
+            }
+        })
+    }
 }
 
 impl ApplyNames for FlattenedTypeInfo {
@@ -251,7 +343,9 @@ impl ApplyNames for FlattenedTypeInfo {
                 type_info: Box::new(type_info.apply_names(names_by_id)),
             },
             FlattenedTypeInfo::NamespaceImport(n) => FlattenedTypeInfo::NamespaceImport(n),
-            FlattenedTypeInfo::TypeQuery(q) => FlattenedTypeInfo::TypeQuery(q.apply_names(names_by_id)),
+            FlattenedTypeInfo::TypeQuery(q) => {
+                FlattenedTypeInfo::TypeQuery(q.apply_names(names_by_id))
+            }
         }
     }
 }
@@ -339,44 +433,59 @@ mod effect_mappers {
     }
 }
 
-impl From<InterfaceIR> for EffectContainer<Interface> {
-    fn from(src: InterfaceIR) -> EffectContainer<Interface> {
-        let indexer = src.indexer.map(EffectContainer::from).into();
-        let extends = src.extends.into_iter().map(EffectContainer::from).collect();
-        let fields = src
-            .fields
-            .into_iter()
-            .map(|(n, t)| {
-                let effects =
-                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
-                (n, effects)
-            })
-            .collect();
-        let constructor = src.constructor.map(EffectContainer::from).into();
-        let type_params = src
-            .type_params
-            .into_iter()
-            .map(|(n, t)| {
-                let effects =
-                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
-                (n, effects)
-            })
-            .collect();
+impl From<Namespaced<InterfaceIR>> for EffectContainer<Interface> {
+    fn from(src: Namespaced<InterfaceIR>) -> EffectContainer<Interface> {
+        src.map(|v, ns| {
+            let indexer = v
+                .indexer
+                .map(|i| ns.in_ns(i))
+                .map(EffectContainer::from)
+                .into();
+            let extends = v
+                .extends
+                .into_iter()
+                .map(|e| ns.in_ns(e))
+                .map(EffectContainer::from)
+                .collect();
+            let fields = v
+                .fields
+                .into_iter()
+                .map(|(n, t)| {
+                    let effects = EffectContainer::from(ns.in_ns(t))
+                        .adapt_effects(effect_mappers::prepend_name(&n));
+                    (n, effects)
+                })
+                .collect();
+            let constructor = v
+                .constructor
+                .map(|c| ns.in_ns(c))
+                .map(EffectContainer::from)
+                .into();
+            let type_params = v
+                .type_params
+                .into_iter()
+                .map(|(n, t)| {
+                    let effects = EffectContainer::from(ns.in_ns(t))
+                        .adapt_effects(effect_mappers::prepend_name(&n));
+                    (n, effects)
+                })
+                .collect();
 
-        combine_effects!(
-            indexer => (effect_mappers::prepend_name("Indexer")),
-            extends => (effect_mappers::identity()),
-            fields => (effect_mappers::identity()),
-            constructor => (effect_mappers::prepend_name("Ctor")),
-            type_params => (effect_mappers::identity());
-            Interface {
-                indexer,
-                extends,
-                fields,
-                constructor,
-                type_params,
-            }
-        )
+            combine_effects!(
+                indexer => (effect_mappers::prepend_name("Indexer")),
+                extends => (effect_mappers::identity()),
+                fields => (effect_mappers::identity()),
+                constructor => (effect_mappers::prepend_name("Ctor")),
+                type_params => (effect_mappers::identity());
+                Interface {
+                    indexer,
+                    extends,
+                    fields,
+                    constructor,
+                    type_params,
+                }
+            )
+        })
     }
 }
 
@@ -395,17 +504,20 @@ impl ApplyNames for Indexer {
     }
 }
 
-impl From<IndexerIR> for EffectContainer<Indexer> {
-    fn from(src: IndexerIR) -> EffectContainer<Indexer> {
-        let value_type = (*src.type_info).into();
+impl From<Namespaced<IndexerIR>> for EffectContainer<Indexer> {
+    fn from(src: Namespaced<IndexerIR>) -> EffectContainer<Indexer> {
+        src.map(|v, ns| {
+            let ti = *v.type_info;
+            let value_type = ns.in_ns(ti).into();
 
-        combine_effects!(
-            value_type => (effect_mappers::identity());
-            Indexer {
-                readonly: src.readonly,
-                value_type
-            }
-        )
+            combine_effects!(
+                value_type => (effect_mappers::identity());
+                Indexer {
+                    readonly: v.readonly,
+                    value_type
+                }
+            )
+        })
     }
 }
 
@@ -432,16 +544,15 @@ pub enum TypeIdent {
 impl ApplyNames for TypeIdent {
     fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
         match self {
-            TypeIdent::GeneratedName { id } => {
-                names_by_id.get(&id).unwrap().clone()
-            }
+            TypeIdent::GeneratedName { id } => names_by_id.get(&id).unwrap().clone(),
             _ => self,
         }
     }
 }
 
-impl From<TypeNameIR> for TypeIdent {
-    fn from(src: TypeNameIR) -> TypeIdent {
+impl From<Namespaced<TypeNameIR>> for TypeIdent {
+    fn from(src: Namespaced<TypeNameIR>) -> TypeIdent {
+        let src = src.value;
         let file = src.file;
         match src.name {
             TypeIdentIR::Name(name) => TypeIdent::Name { file, name },
@@ -451,15 +562,15 @@ impl From<TypeNameIR> for TypeIdent {
                 // TODO: should never get to this case
                 TypeIdent::Name {
                     file,
-                    name: "__parent__".to_string()
+                    name: "__parent__".to_string(),
                 }
-            },
+            }
         }
     }
 }
 
-impl From<TypeNameIR> for EffectContainer<TypeIdent> {
-    fn from(src: TypeNameIR) -> EffectContainer<TypeIdent> {
+impl From<Namespaced<TypeNameIR>> for EffectContainer<TypeIdent> {
+    fn from(src: Namespaced<TypeNameIR>) -> EffectContainer<TypeIdent> {
         EffectContainer::new(src.into(), Default::default())
     }
 }
@@ -488,27 +599,27 @@ impl ApplyNames for TypeRef {
 ///
 /// This conversion is only valid for a non-top-level [TypeInfoIR] because we assume that
 /// anything we find is un-named.
-impl From<TypeInfoIR> for EffectContainer<TypeRef> {
-    fn from(src: TypeInfoIR) -> EffectContainer<TypeRef> {
-        match src {
-            TypeInfoIR::Interface(i) => i.into(),
+impl From<Namespaced<TypeInfoIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<TypeInfoIR>) -> EffectContainer<TypeRef> {
+        src.map(|v, ns| match v {
+            TypeInfoIR::Interface(i) => ns.in_ns(i).into(),
             TypeInfoIR::Enum(_) => panic!("Enum only expected as top-level type"),
-            TypeInfoIR::Ref(t) => t.into(),
+            TypeInfoIR::Ref(t) => ns.in_ns(t).into(),
             TypeInfoIR::Alias(_) => panic!("Alias only expected as top-level type"),
-            TypeInfoIR::PrimitiveAny(p) => p.into(),
-            TypeInfoIR::PrimitiveNumber(p) => p.into(),
-            TypeInfoIR::PrimitiveObject(p) => p.into(),
-            TypeInfoIR::PrimitiveBoolean(p) => p.into(),
-            TypeInfoIR::PrimitiveBigInt(p) => p.into(),
-            TypeInfoIR::PrimitiveString(p) => p.into(),
-            TypeInfoIR::PrimitiveSymbol(p) => p.into(),
-            TypeInfoIR::PrimitiveVoid(p) => p.into(),
-            TypeInfoIR::PrimitiveUndefined(p) => p.into(),
-            TypeInfoIR::PrimitiveNull(p) => p.into(),
-            TypeInfoIR::BuiltinPromise(b) => b.into(),
-            TypeInfoIR::BuiltinDate(b) => b.into(),
+            TypeInfoIR::PrimitiveAny(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveNumber(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveObject(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveBoolean(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveBigInt(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveString(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveSymbol(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveVoid(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveUndefined(p) => ns.in_ns(p).into(),
+            TypeInfoIR::PrimitiveNull(p) => ns.in_ns(p).into(),
+            TypeInfoIR::BuiltinPromise(b) => ns.in_ns(b).into(),
+            TypeInfoIR::BuiltinDate(b) => ns.in_ns(b).into(),
             TypeInfoIR::Array { item_type } => {
-                let item_type: EffectContainer<TypeRef> = (*item_type).into();
+                let item_type: EffectContainer<TypeRef> = ns.in_ns(*item_type).into();
                 combine_effects!(
                     item_type => (effect_mappers::identity());
                     TypeRef {
@@ -517,9 +628,9 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                     }
                 )
             }
-            TypeInfoIR::Tuple(t) => t.into(),
+            TypeInfoIR::Tuple(t) => ns.in_ns(t).into(),
             TypeInfoIR::Optional { item_type } => {
-                let item_type: EffectContainer<TypeRef> = (*item_type).into();
+                let item_type: EffectContainer<TypeRef> = ns.in_ns(*item_type).into();
                 combine_effects!(
                     item_type => (effect_mappers::identity());
                     TypeRef {
@@ -528,10 +639,10 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                     }
                 )
             }
-            TypeInfoIR::Union(u) => u.into(),
-            TypeInfoIR::Intersection(i) => i.into(),
+            TypeInfoIR::Union(u) => ns.in_ns(u).into(),
+            TypeInfoIR::Intersection(i) => ns.in_ns(i).into(),
             TypeInfoIR::Mapped { value_type } => {
-                let value_type: EffectContainer<TypeRef> = (*value_type).into();
+                let value_type: EffectContainer<TypeRef> = ns.in_ns(*value_type).into();
                 combine_effects!(
                     value_type => (effect_mappers::identity());
                     TypeRef {
@@ -546,51 +657,54 @@ impl From<TypeInfoIR> for EffectContainer<TypeRef> {
                     }
                 )
             }
-            TypeInfoIR::LitNumber(l) => l.into(),
-            TypeInfoIR::LitString(l) => l.into(),
-            TypeInfoIR::LitBoolean(l) => l.into(),
-            TypeInfoIR::Func(f) => f.into(),
+            TypeInfoIR::LitNumber(l) => ns.in_ns(l).into(),
+            TypeInfoIR::LitString(l) => ns.in_ns(l).into(),
+            TypeInfoIR::LitBoolean(l) => ns.in_ns(l).into(),
+            TypeInfoIR::Func(f) => ns.in_ns(f).into(),
             TypeInfoIR::Constructor(_) => panic!("Constructor only expected as top-level type"),
             TypeInfoIR::Class(_) => panic!("Class only expected as top-level type"),
             TypeInfoIR::Var { type_info: _ } => panic!("Var only expected as a top-level type"),
             TypeInfoIR::NamespaceImport(_) => {
                 panic!("Namespace import only expected as a top-level construct")
             }
-            TypeInfoIR::TypeQuery(tr) => tr.into(),
-        }
+            TypeInfoIR::TypeQuery(tr) => ns.in_ns(tr).into(),
+        })
     }
 }
 
-impl From<TypeRefIR> for EffectContainer<TypeRef> {
-    fn from(src: TypeRefIR) -> EffectContainer<TypeRef> {
-        let referent = src.referent.into();
-        let type_params = src
-            .type_params
-            .into_iter()
-            .map(EffectContainer::from)
-            .collect();
-        combine_effects!(
-            referent => (effect_mappers::identity()),
-            type_params => (effect_mappers::identity());
-            TypeRef {
-                referent,
-                type_params,
-            }
-        )
+impl From<Namespaced<TypeRefIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<TypeRefIR>) -> EffectContainer<TypeRef> {
+        src.map(|v, ns| {
+            let referent = ns.in_ns(v.referent).into();
+            let type_params = v
+                .type_params
+                .into_iter()
+                .map(|t| ns.in_ns(t))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                referent => (effect_mappers::identity()),
+                type_params => (effect_mappers::identity());
+                TypeRef {
+                    referent,
+                    type_params,
+                }
+            )
+        })
     }
 }
 
-impl From<BaseClassIR> for EffectContainer<TypeRef> {
-    fn from(src: BaseClassIR) -> EffectContainer<TypeRef> {
-        match src {
-            BaseClassIR::Resolved(ti) => ti.into(),
+impl From<Namespaced<BaseClassIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<BaseClassIR>) -> EffectContainer<TypeRef> {
+        src.map(|v, ns| match v {
+            BaseClassIR::Resolved(ti) => ns.in_ns(ti).into(),
             BaseClassIR::Unresolved(_) => panic!("expected only resolved base classes"),
-        }
+        })
     }
 }
 
-impl From<FuncIR> for EffectContainer<TypeRef> {
-    fn from(src: FuncIR) -> EffectContainer<TypeRef> {
+impl From<Namespaced<FuncIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<FuncIR>) -> EffectContainer<TypeRef> {
         let f: EffectContainer<Func> = src.into();
 
         combine_effects!(
@@ -614,26 +728,28 @@ impl From<FuncIR> for EffectContainer<TypeRef> {
     }
 }
 
-impl From<TypeQueryIR> for EffectContainer<TypeRef> {
-    fn from(src: TypeQueryIR) -> EffectContainer<TypeRef> {
-        match src {
-            TypeQueryIR::LookupRef(tr) => tr.into(),
-        }
+impl From<Namespaced<TypeQueryIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<TypeQueryIR>) -> EffectContainer<TypeRef> {
+        src.map(|v, ns| match v {
+            TypeQueryIR::LookupRef(tr) => ns.in_ns(tr).into(),
+        })
     }
 }
 
 macro_rules! impl_effectful_conversion_from_nameable_type_to_type_ref {
     () => {};
     ($src:path => $nameable:ident) => {
-        impl From<$src> for EffectContainer<TypeRef> {
-            fn from(src: $src) -> EffectContainer<TypeRef> {
+        impl From<Namespaced<$src>> for EffectContainer<TypeRef> {
+            fn from(src: Namespaced<$src>) -> EffectContainer<TypeRef> {
                 let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+                let file = src.file.clone();
+                let ns = src.ns.clone();
                 let ec: EffectContainer<_> = src.into();
                 let (val, effects) = ec.into_value_and_effects();
                 let effect = Effect::CreateType {
                     name: "".to_string(), // our name is filled in as we bubble up
-                    //file: "", // TODO
-                    //ns: vec![], // TODO
+                    file: file,
+                    ns: ns,
                     typ: NameableTypeInfo::$nameable(val),
                     generated_name_id: id,
                 };
@@ -672,8 +788,8 @@ impl_effectful_conversion_from_nameable_type_to_type_ref!(
 macro_rules! type_ref_from_prims {
     ($(,)*) => {};
     ($prim:ident => $builtin:ident, $($rest:tt)*) => {
-        impl From<$prim> for EffectContainer<TypeRef> {
-            fn from(_: $prim) -> EffectContainer<TypeRef> {
+        impl From<Namespaced<$prim>> for EffectContainer<TypeRef> {
+            fn from(_: Namespaced<$prim>) -> EffectContainer<TypeRef> {
                 EffectContainer::new(
                     TypeRef {
                         referent: TypeIdent::Builtin(Builtin::$builtin),
@@ -730,13 +846,15 @@ type_ref_from_prims!(
     BuiltinPromise => Promise,
 );
 
-impl From<Box<TypeInfoIR>> for EffectContainer<Box<FlattenedTypeInfo>> {
-    fn from(src: Box<TypeInfoIR>) -> EffectContainer<Box<FlattenedTypeInfo>> {
-        let ti = EffectContainer::from(*src);
-        combine_effects!(
-            ti => (effect_mappers::identity());
-            Box::new(ti)
-        )
+impl From<Namespaced<Box<TypeInfoIR>>> for EffectContainer<Box<FlattenedTypeInfo>> {
+    fn from(src: Namespaced<Box<TypeInfoIR>>) -> EffectContainer<Box<FlattenedTypeInfo>> {
+        src.map(|v, ns| {
+            let ti = EffectContainer::from(ns.in_ns(*v));
+            combine_effects!(
+                ti => (effect_mappers::identity());
+                Box::new(ti)
+            )
+        })
     }
 }
 
@@ -757,15 +875,22 @@ impl ApplyNames for Union {
     }
 }
 
-impl From<UnionIR> for EffectContainer<Union> {
-    fn from(src: UnionIR) -> EffectContainer<Union> {
-        let types = src.types.into_iter().map(EffectContainer::from).collect();
-        combine_effects!(
-            types => (effect_mappers::identity());
-            Union {
-                types,
-            }
-        )
+impl From<Namespaced<UnionIR>> for EffectContainer<Union> {
+    fn from(src: Namespaced<UnionIR>) -> EffectContainer<Union> {
+        src.map(|v, ns| {
+            let types = v
+                .types
+                .into_iter()
+                .map(|t| ns.in_ns(t))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                types => (effect_mappers::identity());
+                Union {
+                    types,
+                }
+            )
+        })
     }
 }
 
@@ -786,15 +911,22 @@ impl ApplyNames for Intersection {
     }
 }
 
-impl From<IntersectionIR> for EffectContainer<Intersection> {
-    fn from(src: IntersectionIR) -> EffectContainer<Intersection> {
-        let types = src.types.into_iter().map(EffectContainer::from).collect();
-        combine_effects!(
-            types => (effect_mappers::identity());
-            Intersection {
-                types,
-            }
-        )
+impl From<Namespaced<IntersectionIR>> for EffectContainer<Intersection> {
+    fn from(src: Namespaced<IntersectionIR>) -> EffectContainer<Intersection> {
+        src.map(|v, ns| {
+            let types = v
+                .types
+                .into_iter()
+                .map(|t| ns.in_ns(t))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                types => (effect_mappers::identity());
+                Intersection {
+                    types,
+                }
+            )
+        })
     }
 }
 
@@ -815,15 +947,22 @@ impl ApplyNames for Tuple {
     }
 }
 
-impl From<TupleIR> for EffectContainer<Tuple> {
-    fn from(src: TupleIR) -> EffectContainer<Tuple> {
-        let types = src.types.into_iter().map(EffectContainer::from).collect();
-        combine_effects!(
-            types => (effect_mappers::identity());
-            Tuple {
-                types,
-            }
-        )
+impl From<Namespaced<TupleIR>> for EffectContainer<Tuple> {
+    fn from(src: Namespaced<TupleIR>) -> EffectContainer<Tuple> {
+        src.map(|v, ns| {
+            let types = v
+                .types
+                .into_iter()
+                .map(|t| ns.in_ns(t))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                types => (effect_mappers::identity());
+                Tuple {
+                    types,
+                }
+            )
+        })
     }
 }
 
@@ -842,20 +981,23 @@ impl ApplyNames for TypeParamConfig {
     }
 }
 
-impl From<TypeParamConfigIR> for EffectContainer<TypeParamConfig> {
-    fn from(src: TypeParamConfigIR) -> EffectContainer<TypeParamConfig> {
-        let constraint: EffectContainer<Option<_>> = src.constraint.map(|c| c.into()).into();
-        let default_type_arg: EffectContainer<Option<_>> =
-            src.default_type_arg.map(|d| d.into()).into();
+impl From<Namespaced<TypeParamConfigIR>> for EffectContainer<TypeParamConfig> {
+    fn from(src: Namespaced<TypeParamConfigIR>) -> EffectContainer<TypeParamConfig> {
+        src.map(|v, ns| {
+            let constraint: EffectContainer<Option<_>> =
+                v.constraint.map(|c| ns.in_ns(c).into()).into();
+            let default_type_arg: EffectContainer<Option<_>> =
+                v.default_type_arg.map(|d| ns.in_ns(d).into()).into();
 
-        combine_effects!(
-            constraint => (effect_mappers::prepend_name("Constraint")),
-            default_type_arg => (effect_mappers::prepend_name("Default"));
-            TypeParamConfig {
-                constraint,
-                default_type_arg,
-            }
-        )
+            combine_effects!(
+                constraint => (effect_mappers::prepend_name("Constraint")),
+                default_type_arg => (effect_mappers::prepend_name("Default"));
+                TypeParamConfig {
+                    constraint,
+                    default_type_arg,
+                }
+            )
+        })
     }
 }
 
@@ -886,29 +1028,37 @@ impl ApplyNames for Func {
     }
 }
 
-impl From<FuncIR> for EffectContainer<Func> {
-    fn from(src: FuncIR) -> EffectContainer<Func> {
-        let params = src.params.into_iter().map(EffectContainer::from).collect();
-        let return_type = (*src.return_type).into();
-        let type_params = src
-            .type_params
-            .into_iter()
-            .map(|(n, p)| (n, p.into()))
-            .collect();
-        let class_name: EffectContainer<Option<_>> = src.class_name.map(|n| n.into()).into();
+impl From<Namespaced<FuncIR>> for EffectContainer<Func> {
+    fn from(src: Namespaced<FuncIR>) -> EffectContainer<Func> {
+        src.map(|v, ns| {
+            let params = v
+                .params
+                .into_iter()
+                .map(|p| ns.in_ns(p))
+                .map(EffectContainer::from)
+                .collect();
+            let return_type = ns.in_ns(*v.return_type).into();
+            let type_params = v
+                .type_params
+                .into_iter()
+                .map(|(n, p)| (n, ns.in_ns(p).into()))
+                .collect();
+            let class_name: EffectContainer<Option<_>> =
+                v.class_name.map(|n| ns.in_ns(n).into()).into();
 
-        combine_effects!(
-            params => (effect_mappers::prepend_name("Params")),
-            return_type => (effect_mappers::prepend_name("Return")),
-            type_params => (effect_mappers::identity()),
-            class_name => (effect_mappers::identity());
-            Func {
-                type_params,
-                params,
-                return_type: Box::new(return_type),
-                class_name,
-            }
-        )
+            combine_effects!(
+                params => (effect_mappers::prepend_name("Params")),
+                return_type => (effect_mappers::prepend_name("Return")),
+                type_params => (effect_mappers::identity()),
+                class_name => (effect_mappers::identity());
+                Func {
+                    type_params,
+                    params,
+                    return_type: Box::new(return_type),
+                    class_name,
+                }
+            )
+        })
     }
 }
 
@@ -929,18 +1079,20 @@ impl ApplyNames for Param {
     }
 }
 
-impl From<ParamIR> for EffectContainer<Param> {
-    fn from(src: ParamIR) -> EffectContainer<Param> {
-        let type_info = src.type_info.into();
+impl From<Namespaced<ParamIR>> for EffectContainer<Param> {
+    fn from(src: Namespaced<ParamIR>) -> EffectContainer<Param> {
+        src.map(|v, ns| {
+            let type_info = ns.in_ns(v.type_info).into();
 
-        combine_effects!(
-            type_info => (effect_mappers::prepend_name(src.name.clone() + "Param"));
-            Param {
-                name: src.name,
-                type_info,
-                is_variadic: src.is_variadic,
-            }
-        )
+            combine_effects!(
+                type_info => (effect_mappers::prepend_name(v.name.clone() + "Param"));
+                Param {
+                    name: v.name,
+                    type_info,
+                    is_variadic: v.is_variadic,
+                }
+            )
+        })
     }
 }
 
@@ -961,15 +1113,22 @@ impl ApplyNames for Ctor {
     }
 }
 
-impl From<CtorIR> for EffectContainer<Ctor> {
-    fn from(src: CtorIR) -> EffectContainer<Ctor> {
-        let params = src.params.into_iter().map(EffectContainer::from).collect();
-        combine_effects!(
-            params => (effect_mappers::identity());
-            Ctor {
-                params,
-            }
-        )
+impl From<Namespaced<CtorIR>> for EffectContainer<Ctor> {
+    fn from(src: Namespaced<CtorIR>) -> EffectContainer<Ctor> {
+        src.map(|v, ns| {
+            let params = v
+                .params
+                .into_iter()
+                .map(|p| ns.in_ns(p))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                params => (effect_mappers::identity());
+                Ctor {
+                    params,
+                }
+            )
+        })
     }
 }
 
@@ -1004,44 +1163,51 @@ impl ApplyNames for Class {
     }
 }
 
-impl From<ClassIR> for EffectContainer<Class> {
-    fn from(src: ClassIR) -> EffectContainer<Class> {
-        let super_class: EffectContainer<Option<_>> = src.super_class.map(|r| (*r).into()).into();
-        let type_params = src
-            .type_params
-            .into_iter()
-            .map(|(n, t)| {
-                let effects =
-                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
-                (n, effects)
-            })
-            .collect();
-        let members = src
-            .members
-            .into_iter()
-            .map(|(n, m)| {
-                let effects = EffectContainer::from(m).adapt_effects(effect_mappers::prepend_name(&n));
-                (n, effects)
-            })
-            .collect();
-        let implements = src.implements.into_iter().map(|i| i.into()).collect();
-        combine_effects!(
-            members => (effect_mappers::identity()),
-            super_class => (effect_mappers::identity()),
-            type_params => (effect_mappers::identity()),
-            implements => (effect_mappers::identity());
-            Class {
-                members,
-                super_class,
-                type_params,
-                implements,
-            }
-        )
+impl From<Namespaced<ClassIR>> for EffectContainer<Class> {
+    fn from(src: Namespaced<ClassIR>) -> EffectContainer<Class> {
+        src.map(|v, ns| {
+            let super_class: EffectContainer<Option<_>> =
+                v.super_class.map(|r| ns.in_ns(*r).into()).into();
+            let type_params = v
+                .type_params
+                .into_iter()
+                .map(|(n, t)| {
+                    let effects = EffectContainer::from(ns.in_ns(t))
+                        .adapt_effects(effect_mappers::prepend_name(&n));
+                    (n, effects)
+                })
+                .collect();
+            let members = v
+                .members
+                .into_iter()
+                .map(|(n, m)| {
+                    let effects = EffectContainer::from(ns.in_ns(m))
+                        .adapt_effects(effect_mappers::prepend_name(&n));
+                    (n, effects)
+                })
+                .collect();
+            let implements = v
+                .implements
+                .into_iter()
+                .map(|i| ns.in_ns(i).into())
+                .collect();
+            combine_effects!(
+                members => (effect_mappers::identity()),
+                super_class => (effect_mappers::identity()),
+                type_params => (effect_mappers::identity()),
+                implements => (effect_mappers::identity());
+                Class {
+                    members,
+                    super_class,
+                    type_params,
+                    implements,
+                }
+            )
+        })
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, FromEnum)]
-#[from_enum(MemberIR, effect_container = EffectContainer)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
     Constructor(Ctor),
     Method(Func),
@@ -1058,17 +1224,45 @@ impl ApplyNames for Member {
     }
 }
 
+impl From<Namespaced<MemberIR>> for EffectContainer<Member> {
+    fn from(src: Namespaced<MemberIR>) -> EffectContainer<Member> {
+        src.map(|v, ns| match v {
+            MemberIR::Constructor(c) => {
+                let ctor = ns.in_ns(c).into();
+                combine_effects!(
+                    ctor => (effect_mappers::identity());
+                    Member::Constructor(ctor)
+                )
+            }
+            MemberIR::Method(f) => {
+                let f = ns.in_ns(f).into();
+                combine_effects!(
+                    f => (effect_mappers::identity());
+                    Member::Method(f)
+                )
+            }
+            MemberIR::Property(t) => {
+                let t = ns.in_ns(t).into();
+                combine_effects!(
+                    t => (effect_mappers::identity());
+                    Member::Property(t)
+                )
+            }
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumMember {
     pub id: String,
     pub value: Option<EnumValue>,
 }
 
-impl From<EnumMemberIR> for EnumMember {
-    fn from(src: EnumMemberIR) -> EnumMember {
+impl From<Namespaced<EnumMemberIR>> for EnumMember {
+    fn from(src: Namespaced<EnumMemberIR>) -> EnumMember {
         EnumMember {
-            id: src.id,
-            value: src.value,
+            id: src.value.id,
+            value: src.value.value,
         }
     }
 }
@@ -1084,11 +1278,16 @@ impl ApplyNames for Enum {
     }
 }
 
-impl From<EnumIR> for Enum {
-    fn from(src: EnumIR) -> Enum {
-        Enum {
-            members: src.members.into_iter().map(EnumMember::from).collect(),
-        }
+impl From<Namespaced<EnumIR>> for Enum {
+    fn from(src: Namespaced<EnumIR>) -> Enum {
+        src.map(|v, ns| Enum {
+            members: v
+                .members
+                .into_iter()
+                .map(|m| ns.in_ns(m))
+                .map(EnumMember::from)
+                .collect(),
+        })
     }
 }
 
@@ -1098,24 +1297,26 @@ pub struct Alias {
     pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
-impl From<AliasIR> for EffectContainer<Alias> {
-    fn from(src: AliasIR) -> EffectContainer<Alias> {
-        let target: EffectContainer<_> = (*src.target).into();
-        let type_params = src
-            .type_params
-            .into_iter()
-            .map(|(n, t)| {
-                let effects =
-                    EffectContainer::from(t).adapt_effects(effect_mappers::prepend_name(&n));
-                (n, effects)
-            })
-            .collect();
+impl From<Namespaced<AliasIR>> for EffectContainer<Alias> {
+    fn from(src: Namespaced<AliasIR>) -> EffectContainer<Alias> {
+        src.map(|v, ns| {
+            let target: EffectContainer<_> = ns.in_ns(*v.target).into();
+            let type_params = v
+                .type_params
+                .into_iter()
+                .map(|(n, t)| {
+                    let effects = EffectContainer::from(ns.in_ns(t))
+                        .adapt_effects(effect_mappers::prepend_name(&n));
+                    (n, effects)
+                })
+                .collect();
 
-        combine_effects!(
-            target => (effect_mappers::prepend_name("Aliased")),
-            type_params => (effect_mappers::identity());
-            Alias { target, type_params }
-        )
+            combine_effects!(
+                target => (effect_mappers::prepend_name("Aliased")),
+                type_params => (effect_mappers::identity());
+                Alias { target, type_params }
+            )
+        })
     }
 }
 
@@ -1137,18 +1338,18 @@ pub enum TypeQuery {
     LookupRef(TypeRef),
 }
 
-impl From<TypeQueryIR> for EffectContainer<TypeQuery> {
-    fn from(src: TypeQueryIR) -> EffectContainer<TypeQuery> {
-        match src {
+impl From<Namespaced<TypeQueryIR>> for EffectContainer<TypeQuery> {
+    fn from(src: Namespaced<TypeQueryIR>) -> EffectContainer<TypeQuery> {
+        src.map(|v, ns| match v {
             TypeQueryIR::LookupRef(tr) => {
-                let our_ref = tr.into();
+                let our_ref = ns.in_ns(tr).into();
 
                 combine_effects!(
                     our_ref => (effect_mappers::identity());
                     TypeQuery::LookupRef(our_ref)
                 )
-            },
-        }
+            }
+        })
     }
 }
 
@@ -1160,11 +1361,17 @@ impl ApplyNames for TypeQuery {
     }
 }
 
+impl From<Namespaced<NamespaceImport>> for NamespaceImport {
+    fn from(src: Namespaced<NamespaceImport>) -> NamespaceImport {
+        src.value
+    }
+}
+
 macro_rules! impl_effectless_conversion {
     () => {};
     ($src:path => $dest:path) => {
-        impl From<$src> for EffectContainer<$dest> {
-            fn from(src: $src) -> EffectContainer<$dest> {
+        impl From<Namespaced<$src>> for EffectContainer<$dest> {
+            fn from(src: Namespaced<$src>) -> EffectContainer<$dest> {
                 EffectContainer::new(src.into(), Default::default())
             }
         }
@@ -1182,17 +1389,18 @@ impl_effectless_conversion!(
 );
 
 pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterator<Item = FlatType> {
-    types.into_iter()
+    types
+        .into_iter()
         .filter(|t| {
             // skip these marker types
             t.name.name != TypeIdentIR::TypeEnvironmentParent()
         })
         .flat_map(|t| {
-            let info = t.info.into();
+            let info = Namespaced::new(t.info, &t.name).into();
             let ft = combine_effects!(
                 info => (effect_mappers::prepend_name(&t.name.to_name()));
                 FlatType {
-                    name: t.name.into(),
+                    name: Namespaced::new(t.name.clone(), &t.name).into(),
                     is_exported: t.is_exported,
                     info,
                 }
@@ -1207,30 +1415,34 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
                         typ,
                         generated_name_id,
                     } => {
-                        let name = if ns.is_empty() {
-                            TypeIdent::Name {
-                                file,
-                                name,
-                            }
+                        let ident_ir = if ns.is_empty() {
+                            TypeIdentIR::Name(name)
                         } else {
                             let mut name_parts = ns;
                             name_parts.push(name);
 
-                            TypeIdent::QualifiedName {
-                                file,
-                                name_parts,
-                            }
+                            TypeIdentIR::QualifiedName(name_parts)
                         };
+                        let name_ir = TypeNameIR {
+                            name: ident_ir,
+                            file: file.clone(),
+                        };
+                        let name: TypeIdent = Namespaced {
+                            value: name_ir.clone(),
+                            file: file,
+                            ns: Default::default(),
+                        }
+                        .into();
 
                         (
                             FlatType {
                                 name: name.clone(),
                                 is_exported: true,
-                                info: typ.into(),
+                                info: Namespaced::new(typ, &name_ir).into(),
                             },
                             (generated_name_id, name),
                         )
-                    },
+                    }
                 })
                 .unzip();
             effs.into_iter()

@@ -149,38 +149,36 @@ impl ModDef {
                 // [a, b, c].
                 // given a path like /a/b/c (without a node_modules), we fold
                 // over [a, b, c].
-                types_by_name
-                    .iter()
-                    .for_each(|(name, typ)| {
-                        // TODO: might need to fix up to_mod_path_iter for LocalName, etc.
-                        let names = {
-                            let mut names: Vec<_> = name.to_mod_path_iter(fs).collect();
-                            if names.is_empty() {
-                                // TODO: names without a file should not exist (e.g. LocalName)
-                                names = path.to_mod_path_iter(fs).collect();
-                            }
-
-                            names
-                        };
-
+                types_by_name.iter().for_each(|(name, typ)| {
+                    // TODO: might need to fix up to_mod_path_iter for LocalName, etc.
+                    let names = {
+                        let mut names: Vec<_> = name.to_mod_path_iter(fs).collect();
                         if names.is_empty() {
-                            panic!("found name with no module");
+                            // TODO: names without a file should not exist (e.g. LocalName)
+                            names = path.to_mod_path_iter(fs).collect();
                         }
 
-                        let last_idx = names.len() - 1;
-                        names.iter().enumerate().fold(
-                            root.clone(),
-                            move |parent, (i, mod_name)| {
-                                let mut parent = parent.borrow_mut();
-                                let types = if i == last_idx {
-                                    vec![typ.clone()]
-                                } else {
-                                    Default::default()
-                                };
-                                parent.add_child_mod(mod_name.clone(), types)
-                            },
-                        );
-                    });
+                        names
+                    };
+
+                    if names.is_empty() {
+                        panic!("found name with no module");
+                    }
+
+                    let last_idx = names.len() - 1;
+                    names
+                        .iter()
+                        .enumerate()
+                        .fold(root.clone(), move |parent, (i, mod_name)| {
+                            let mut parent = parent.borrow_mut();
+                            let types = if i == last_idx {
+                                vec![typ.clone()]
+                            } else {
+                                Default::default()
+                            };
+                            parent.add_child_mod(mod_name.clone(), types)
+                        });
+                });
             });
 
         Rc::try_unwrap(root).unwrap().into_inner().into_mod_def()
@@ -331,7 +329,8 @@ mod mod_def_tests {
             Path::new("/abc/def/test/index.d.ts"),
             r#"namespace A {
                 export class Test {}
-            }"#.to_string(),
+            }"#
+            .to_string(),
         );
 
         let arc_fs = Arc::new(fs) as ArcFs;

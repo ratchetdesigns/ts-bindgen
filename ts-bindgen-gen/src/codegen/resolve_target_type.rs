@@ -1,7 +1,7 @@
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::ir::{
-    Alias, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeRef,
-    TypesByIdentByPath, TypeQuery
+    Alias, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeQuery,
+    TypeRef, TypesByIdentByPath,
 };
 use std::cell::RefCell;
 use std::path::Path;

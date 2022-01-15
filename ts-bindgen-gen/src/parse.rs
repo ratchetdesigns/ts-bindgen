@@ -810,8 +810,7 @@ impl TsTypes {
         TypeRef {
             referent: TypeName {
                 file: referent.file,
-                name: self
-                    .get_possibly_ns_qualified_name(referent.name),
+                name: self.get_possibly_ns_qualified_name(referent.name),
             },
             type_params,
         }
@@ -835,15 +834,14 @@ impl TsTypes {
         module_base: Option<PathBuf>,
         module_name: &str,
     ) -> Result<PathBuf, InternalError> {
-        self.process_module_with_items(
-            module_base,
-            module_name,
-            false,
-            |t, p| t.load_module(p).map(|m| m.body.clone()),
-        )
+        self.process_module_with_items(module_base, module_name, false, |t, p| {
+            t.load_module(p).map(|m| m.body.clone())
+        })
     }
 
-    fn process_module_with_items<G: FnMut(&mut TsTypes, &Path) -> Result<Vec<ModuleItem>, InternalError>> (
+    fn process_module_with_items<
+        G: FnMut(&mut TsTypes, &Path) -> Result<Vec<ModuleItem>, InternalError>,
+    >(
         &mut self,
         module_base: Option<PathBuf>,
         module_name: &str,
@@ -862,9 +860,9 @@ impl TsTypes {
         match self.types_by_name_by_file.entry(ts_path.clone()) {
             Entry::Occupied(_) => {
                 if !allow_incremental {
-                    return Ok(ts_path)
+                    return Ok(ts_path);
                 }
-            },
+            }
             Entry::Vacant(v) => {
                 v.insert(Default::default());
             }
@@ -876,10 +874,7 @@ impl TsTypes {
         Ok(ts_path)
     }
 
-    fn get_possibly_ns_qualified_name(
-        &self,
-        name: TypeIdent,
-    ) -> TypeIdent {
+    fn get_possibly_ns_qualified_name(&self, name: TypeIdent) -> TypeIdent {
         match self.namespace_stack.last() {
             Some(ns) => {
                 let mut ns = ns.clone();
@@ -926,7 +921,7 @@ impl TsTypes {
                     .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
                         names_to_types.insert(name, typ);
                     });
-            },
+            }
         }
     }
 
@@ -1005,7 +1000,8 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self
+                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info,
                     }),
@@ -1015,7 +1011,8 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self
+                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::Default {
                             src: file.to_path_buf(),
@@ -1027,7 +1024,8 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self
+                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::All {
                             src: file.to_path_buf(),
@@ -1730,9 +1728,7 @@ impl TsTypes {
                     None, // TODO: should we resolve relative to ts_path?
                     &name,
                     true,
-                    |_, _| {
-                        Ok(block.body.clone())
-                    },
+                    |_, _| Ok(block.body.clone()),
                 );
 
                 let file = match file_result {
@@ -1753,7 +1749,7 @@ impl TsTypes {
                             },
                             is_exported: false,
                             info: TypeInfo::NamespaceImport(NamespaceImport::All {
-                                src: file.clone()
+                                src: file.clone(),
                             }),
                         }),
                     );
@@ -1859,7 +1855,10 @@ impl TsTypes {
                         let exported = exported.as_ref().unwrap();
 
                         let typ = Type {
-                            name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym.to_string())),
+                            name: self.ns_type_name(TypeName::for_name(
+                                ts_path,
+                                &exported.sym.to_string(),
+                            )),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
                                 target: Box::new(TypeInfo::Ref(self.make_type_ref(
@@ -2550,7 +2549,8 @@ mod test {
                 environment: {[key: string]: string};
             }"#,
             "A",
-            TypeInfo::Interface(i), {
+            TypeInfo::Interface(i),
+            {
                 assert_eq!(i.fields.len(), 1);
                 let environment = i.fields.get("environment");
                 assert!(environment.is_some());
