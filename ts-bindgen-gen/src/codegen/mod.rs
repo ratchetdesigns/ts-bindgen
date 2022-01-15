@@ -783,11 +783,12 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         quote! { pub std::marker::PhantomData #full_type_params },
                     ]
                 };
-                let wrapper_from_internal_args = if type_params.is_empty() {
-                    vec![quote! { internal }]
+                let extra_args = if type_params.is_empty() {
+                    Default::default()
                 } else {
-                    vec![quote! { internal }, quote! { std::marker::PhantomData }]
+                    quote! { std::marker::PhantomData }
                 };
+                let wrapper_from_internal_args = vec![quote! { internal }, extra_args.clone()];
                 let type_params_with_de_lifetime =
                     render_type_params_with_lifetimes(type_params, &["de"]);
                 let type_params_with_a_lifetime =
@@ -994,6 +995,13 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         type Abi = <#internal_class_name as wasm_bindgen::convert::IntoWasmAbi>::Abi;
                         fn into_abi(self) -> Self::Abi {
                             wasm_bindgen::convert::IntoWasmAbi::into_abi(self.0)
+                        }
+                    }
+
+                    impl #full_type_params wasm_bindgen::convert::FromWasmAbi for #name #full_type_params {
+                        type Abi = <#internal_class_name as wasm_bindgen::convert::FromWasmAbi>::Abi;
+                        unsafe fn from_abi(js: Self::Abi) -> Self {
+                            #name(wasm_bindgen::convert::FromWasmAbi::from_abi(js), #extra_args)
                         }
                     }
 
