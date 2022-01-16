@@ -854,7 +854,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 );
                                 let param_toks = ctor
                                     .params()
-                                    .map(|p| p.as_exposed_to_rust_named_param_list());
+                                    .map(|p| p.as_exposed_to_js_named_param_list());
 
                                 let member_def = quote! {
                                     #[wasm_bindgen(constructor, js_class = #js_name)]
