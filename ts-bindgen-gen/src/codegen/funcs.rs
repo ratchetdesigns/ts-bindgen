@@ -332,6 +332,10 @@ pub mod fn_types {
     use quote::quote;
     use std::borrow::Cow;
 
+    fn is_void(typ: &TypeRef) -> bool {
+        matches!(&typ.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid))
+    }
+
     fn exposed_to_js_type(typ: &TypeRefLike) -> TokenStream2 {
         let serialization_type = typ.serialization_type();
         match serialization_type {
@@ -377,15 +381,7 @@ pub mod fn_types {
                 std::result::Result<#t, JsValue>
             })
         } else {
-            let target = typ.resolve_target_type();
-            let is_void = match target {
-                Some(TargetEnrichedTypeInfo::Ref(typ)) => {
-                    matches!(&typ.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid))
-                }
-                _ => false,
-            };
-
-            if is_void {
+            if is_void(&typ) {
                 None
             } else {
                 Some(quote! {
@@ -411,15 +407,19 @@ pub mod fn_types {
         exposed_to_rust_type(typ)
     }
 
-    pub fn exposed_to_rust_return_type(typ: &TypeRef, is_fallible: bool) -> TokenStream2 {
+    pub fn exposed_to_rust_return_type(typ: &TypeRef, is_fallible: bool) -> Option<TokenStream2> {
         let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
         if is_fallible {
-            quote! {
+            Some(quote! {
                 std::result::Result<#rendered_type, JsValue>
-            }
+            })
         } else {
-            quote! {
-                #rendered_type
+            if is_void(&typ) {
+                None
+            } else {
+                Some(quote! {
+                    #rendered_type
+                })
             }
         }
     }
@@ -566,8 +566,9 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             .params()
             .map(|p| p.as_exposed_to_rust_named_param_list());
         let ret = fn_types::exposed_to_rust_return_type(&self.return_type(), is_fallible);
+        let ret = fn_types::render_return(&ret);
         quote! {
-            fn #name(#(#params),*) -> #ret
+            fn #name(#(#params),*) #ret
         }
     }
 
