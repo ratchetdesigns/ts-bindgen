@@ -49,6 +49,9 @@ pub trait HasFnPrototype {
     fn is_variadic(&self) -> bool {
         self.params().any(|p| p.is_variadic())
     }
+    fn is_fallible(&self) -> bool {
+        true
+    }
 }
 
 // it's a bit of a stretch to impl HasFnPrototype for TypeRef since this is
@@ -264,6 +267,10 @@ impl HasFnPrototype for PropertyAccessor {
     fn is_member(&self) -> bool {
         true
     }
+
+    fn is_fallible(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -356,10 +363,35 @@ pub mod fn_types {
         exposed_to_js_type(typ)
     }
 
-    pub fn exposed_to_js_return_type(typ: &TypeRef) -> TokenStream2 {
+    pub fn render_return(ret: &Option<TokenStream2>) -> TokenStream2 {
+        match ret.as_ref() {
+            Some(t) => quote! { -> #t },
+            None => Default::default(),
+        }
+    }
+
+    pub fn exposed_to_js_return_type(typ: &TypeRef, is_fallible: bool) -> Option<TokenStream2> {
         let t = exposed_to_js_param_type(&typ.into());
-        quote! {
-            std::result::Result<#t, JsValue>
+        if is_fallible {
+            Some(quote! {
+                std::result::Result<#t, JsValue>
+            })
+        } else {
+            let target = typ.resolve_target_type();
+            let is_void = match target {
+                Some(TargetEnrichedTypeInfo::Ref(typ)) => {
+                    matches!(&typ.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid))
+                }
+                _ => false,
+            };
+
+            if is_void {
+                None
+            } else {
+                Some(quote! {
+                    #t
+                })
+            }
         }
     }
 
@@ -454,10 +486,11 @@ fn is_generic_type<T: ResolveTargetType>(t: &T) -> bool {
 impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
     fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
         let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+        let ret = fn_types::render_return(&ret);
 
         quote! {
-            move |#(#params),*| -> #ret {
+            move |#(#params),*| #ret {
                 #body
             }
         }
@@ -467,9 +500,10 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let params = self
             .params()
             .map(|p| p.as_exposed_to_js_unnamed_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+        let ret = fn_types::render_return(&ret);
         quote! {
-            dyn Fn(#(#params),*) -> #ret
+            dyn Fn(#(#params),*) #ret
         }
     }
 
@@ -492,9 +526,10 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
 
     fn exposed_to_js_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
         let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type());
+        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+        let ret = fn_types::render_return(&ret);
         quote! {
-            fn #name(#(#params),*) -> #ret
+            fn #name(#(#params),*) #ret
         }
     }
 
@@ -952,7 +987,11 @@ pub struct InternalFunc<'a> {
 
 impl<'a> InternalFunc<'a> {
     pub fn to_internal_rust_name(js_name: &str) -> Identifier {
-        to_snake_case_ident(js_name).prefix_name("__TSB_")
+        Self::to_internal_rust_ident(&to_snake_case_ident(js_name))
+    }
+
+    pub fn to_internal_rust_ident(id: &Identifier) -> Identifier {
+        id.prefix_name("__TSB_")
     }
 }
 

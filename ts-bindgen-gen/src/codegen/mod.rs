@@ -914,17 +914,42 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 (member_def, pub_fn)
                             }
                             Member::Property(typ) => {
-                                let resolved_type = typ.resolve_generic_in_env(&type_env);
+                                let resolved_type = typ.resolve_generic_in_env(&type_env).into_owned();
                                 let member_name = to_snake_case_ident(member_js_name);
-                                let setter_name = format_ident!("set_{}", member_name.to_string());
-                                // TODO: don't add structural if the property is actually a
-                                // javascript getter/setter
+                                let setter_name = member_name.prefix_name("set_");
+
+                                let (internal_getter_name, internal_setter_name) = if resolved_type.serialization_type() == SerializationType::Raw {
+                                    (member_name.clone(), setter_name.clone())
+                                } else {
+                                    (
+                                        InternalFunc::to_internal_rust_ident(&member_name),
+                                        InternalFunc::to_internal_rust_ident(&setter_name),
+                                    )
+                                };
+
+                                let internal_getter = PropertyAccessor {
+                                    property_name: member_name.clone(),
+                                    typ: resolved_type.clone(),
+                                    class_name: TypeIdent::ExactName(internal_class_name.to_string()),
+                                    access_type: AccessType::Getter,
+                                };
+
+                                let internal_setter = PropertyAccessor {
+                                    property_name: member_name.clone(),
+                                    typ: resolved_type.clone(),
+                                    class_name: TypeIdent::ExactName(internal_class_name.to_string()),
+                                    access_type: AccessType::Setter,
+                                };
+
+
+                                let member_getter = internal_getter.exposed_to_js_fn_decl(&internal_getter_name);
+                                let member_setter = internal_setter.exposed_to_js_fn_decl(&internal_setter_name);
                                 let member_def = quote! {
                                     #[wasm_bindgen(method, structural, getter = #member_js_ident, js_class = #js_name)]
-                                    fn #member_name(this: &#internal_class_name) -> #resolved_type;
+                                    #member_getter;
 
                                     #[wasm_bindgen(method, structural, setter = #member_js_ident, js_class = #js_name)]
-                                    fn #setter_name(this: &#internal_class_name, value: #resolved_type);
+                                    #member_setter;
                                 };
 
                                 let getter = PropertyAccessor {
@@ -942,9 +967,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }.setter_fn();
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &member_name, false, rc, &type_env);
-                                let setter_ident = Identifier::new_ident(setter_name);
-                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_ident, Some(&target), &setter_ident, false, rc, &type_env);
+                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, false, rc, &type_env);
+                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, false, rc, &type_env);
 
                                 let pub_fn = quote! {
                                     #getter_fn
