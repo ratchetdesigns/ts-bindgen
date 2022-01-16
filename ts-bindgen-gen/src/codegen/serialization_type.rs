@@ -26,10 +26,10 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
     fn serialization_type(&self) -> SerializationType {
         match self {
             TargetEnrichedTypeInfo::Func(_) => SerializationType::Fn,
-            TargetEnrichedTypeInfo::Enum(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
                 TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,
+                TypeIdent::Builtin(Builtin::Array) => SerializationType::SerdeJson,
                 TypeIdent::Builtin(_) => SerializationType::Raw,
                 _ => SerializationType::SerdeJson,
             },
