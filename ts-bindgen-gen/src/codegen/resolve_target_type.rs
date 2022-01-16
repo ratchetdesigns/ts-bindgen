@@ -1,11 +1,10 @@
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::ir::{
-    Alias, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent, TypeQuery,
-    TypeRef, TypesByIdentByPath,
+    Alias, Context, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, TypeIdent,
+    TypeQuery, TypeRef,
 };
 use std::cell::RefCell;
 use std::path::Path;
-use std::rc::Rc;
 
 pub trait ResolveTargetType {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo>;
@@ -28,12 +27,16 @@ macro_rules! if_requires_resolution {
     };
 }
 
-fn resolve_type(
-    types_by_ident_by_path: &Rc<RefCell<TypesByIdentByPath>>,
-    path: &Path,
-    id: &TypeIdent,
-) -> Option<TargetEnrichedTypeInfo> {
-    let ti = RefCell::borrow(types_by_ident_by_path)
+fn resolve_type(context: &Context, path: &Path, id: &TypeIdent) -> Option<TargetEnrichedTypeInfo> {
+    if matches!(id, TypeIdent::Builtin(_)) {
+        return Some(TargetEnrichedTypeInfo::Ref(TypeRef {
+            referent: id.clone(),
+            type_params: Default::default(),
+            context: context.clone(),
+        }));
+    }
+
+    let ti = RefCell::borrow(&context.types_by_ident_by_path)
         .get(path)
         .and_then(|t_by_id| {
             t_by_id.get(id).or_else(|| match id {
@@ -74,20 +77,18 @@ impl ResolveTargetType for TypeRef {
             _ => return Some(TargetEnrichedTypeInfo::Ref(self.clone())),
         };
 
-        resolve_type(&self.context.types_by_ident_by_path, file, &self.referent)
+        resolve_type(&self.context, file, &self.referent)
     }
 }
 
 impl ResolveTargetType for NamespaceImport {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         match self {
-            NamespaceImport::Default { src, context } => resolve_type(
-                &context.types_by_ident_by_path,
-                src,
-                &TypeIdent::DefaultExport(src.clone()),
-            ),
+            NamespaceImport::Default { src, context } => {
+                resolve_type(&context, src, &TypeIdent::DefaultExport(src.clone()))
+            }
             NamespaceImport::Named { src, name, context } => resolve_type(
-                &context.types_by_ident_by_path,
+                &context,
                 src,
                 &TypeIdent::Name {
                     file: src.clone(),
