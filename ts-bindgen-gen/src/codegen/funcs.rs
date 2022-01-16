@@ -339,7 +339,8 @@ pub mod fn_types {
     fn exposed_to_js_type(typ: &TypeRefLike) -> TokenStream2 {
         let serialization_type = typ
             .resolve_target_type()
-            .map(|t| t.serialization_type())
+            .as_ref()
+            .map(SerializationTypeGetter::serialization_type)
             .unwrap_or(SerializationType::SerdeJson);
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
@@ -395,7 +396,11 @@ pub mod fn_types {
     }
 
     fn exposed_to_rust_type(typ: &TypeRefLike) -> TokenStream2 {
-        let serialization_type = typ.serialization_type();
+        let serialization_type = typ
+            .resolve_target_type()
+            .as_ref()
+            .map(SerializationTypeGetter::serialization_type)
+            .unwrap_or(SerializationType::SerdeJson);
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
             SerializationType::Fn => match typ {
