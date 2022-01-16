@@ -15,7 +15,7 @@ pub fn generic_cloner<T: Clone>(t: SimpleGeneric<T>) -> Result<SimpleGeneric<T>,
 }
 
 pub fn run_end_to_end_test() -> Result<(), wasm_bindgen::JsValue>{
-    assert!(run_test(&cloner, &generic_cloner, &generic_cloner, &generic_cloner, &[1f64])?);
+    assert!(run_test(&cloner, &generic_cloner, &generic_cloner, &generic_cloner, Box::new([1f64]))?);
     let cmi = ClassMethodInvokerTest::new("rust string".to_string());
     assert_eq!(cmi.get_info()?, "hello world rust string");
     Ok(())

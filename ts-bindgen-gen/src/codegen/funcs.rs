@@ -24,7 +24,7 @@ impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
         let typ = xform(&param.type_info);
         let full_type = if param.is_variadic {
             quote! {
-                &[#typ]
+                Box<[#typ]>
             }
         } else {
             quote! {
@@ -798,7 +798,7 @@ impl<T: WrappedParam> ParamExt for T {
         let wrapped = self.wrapped_type();
         let typ = fn_types::exposed_to_js_param_type(&wrapped);
         if self.is_variadic() {
-            quote! { &[#typ] }
+            quote! { Box<[#typ]> }
         } else {
             quote! { #typ }
         }
@@ -814,7 +814,7 @@ impl<T: WrappedParam> ParamExt for T {
         let wrapped = self.wrapped_type();
         let typ = fn_types::exposed_to_rust_param_type(&wrapped);
         if self.is_variadic() {
-            quote! { &[#typ] }
+            quote! { Box<[#typ]> }
         } else {
             quote! { #typ }
         }
