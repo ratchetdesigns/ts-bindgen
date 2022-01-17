@@ -226,7 +226,6 @@ impl TypeRef {
                 }
             })
             .or_else(|| {
-                println!("UNCANON {:?}", &referent);
                 // if our referent refers to an item in our type environment,
                 // leave as-is
                 if let TypeIdent::Name(n) = &referent.name {
