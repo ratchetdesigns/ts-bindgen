@@ -54,6 +54,25 @@ impl<'a> TraitMember<'a> {
     }
 }
 
+pub fn to_type_ref(
+    js_name: &str,
+    type_params: &[(String, TypeParamConfig)],
+    ctx: &Context,
+) -> TypeRef {
+    TypeRef {
+        referent: TypeIdent::LocalName(js_name.to_string()),
+        type_params: type_params
+            .iter()
+            .map(|(n, _)| TypeRef {
+                referent: TypeIdent::LocalName(n.clone()),
+                type_params: Default::default(),
+                context: ctx.clone(),
+            })
+            .collect(),
+        context: ctx.clone(),
+    }
+}
+
 pub fn render_trait_defn<T>(
     name: &Identifier,
     js_name: &str,
@@ -78,18 +97,7 @@ where
         ],
     );
     let class_name = || TypeIdent::LocalName(js_name.to_string());
-    let item_ref = TypeRef {
-        referent: class_name(),
-        type_params: type_params
-            .iter()
-            .map(|(n, _)| TypeRef {
-                referent: TypeIdent::LocalName(n.clone()),
-                type_params: Default::default(),
-                context: ctx.clone(),
-            })
-            .collect(),
-        context: ctx.clone(),
-    };
+    let item_ref = to_type_ref(js_name, type_params, ctx);
     let member_to_trait_member = |type_env: &HashMap<String, TypeRef>, (n, m): (String, Member)| {
         let name = to_snake_case_ident(&n);
         match m {
@@ -216,7 +224,7 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Super {
     /// `item` is the superclass or implemented interface.
-    item: TypeRef,
+    pub item: TypeRef,
     /// `implementor` is set to the type that contains the actual implementation.
     /// For example, a typescript interface, `I`, embeds all members from extended
     /// interfaces directly within it so implementor will always refer to
@@ -225,7 +233,7 @@ pub struct Super {
     /// contain `Base`'s members so when `Super::item` is set to `Base` or an
     /// interface implemented by `Base`, `Super::implementor` will be set
     /// to `Base`.
-    implementor: TypeRef,
+    pub implementor: TypeRef,
 }
 
 type BoxedSuperIter<'a> = Box<dyn Iterator<Item = Super> + 'a>;

@@ -10,6 +10,7 @@ use crate::ir::flattened::{
 pub use crate::ir::flattened::{Builtin, EnumValue, TypeIdent};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
 use strum_macros::Display as StrumDisplay;
@@ -491,6 +492,13 @@ pub struct TypeRef {
     pub referent: TypeIdent,
     pub type_params: Vec<TypeRef>,
     pub context: Context,
+}
+
+impl Hash for TypeRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.referent.hash(state);
+        self.type_params.hash(state);
+    }
 }
 
 from_struct!(

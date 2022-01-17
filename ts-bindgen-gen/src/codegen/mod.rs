@@ -12,12 +12,12 @@ use crate::codegen::funcs::{
 };
 use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
-    render_type_params_with_lifetimes, ResolveGeneric,
+    render_type_params_with_lifetimes, ResolveGeneric, TypeEnvImplying,
 };
 use crate::codegen::named::{CasedTypeIdent, Named, SimpleNamed};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
-use crate::codegen::traits::{render_trait_defn, IsTraitable, TraitName};
+use crate::codegen::traits::{render_trait_defn, to_type_ref, IsTraitable, TraitName, Traitable};
 use crate::codegen::type_ref_like::OwnedTypeRef;
 use crate::fs::Fs;
 use crate::identifier::{
@@ -34,7 +34,7 @@ use crate::mod_def::ToModPathIter;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::path::{Path, PathBuf};
 use syn::Token;
@@ -794,36 +794,45 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let type_params_with_a_lifetime =
                     render_type_params_with_lifetimes(type_params, &["a"]);
                 let path = context.js_module_path();
-                let mut super_as_ref_impls: Vec<TokenStream2> = Default::default();
+                let class_ref = to_type_ref(js_name, type_params, &class.context);
+                let super_as_ref_impls = class
+                    .recursive_super_traits(class_ref.clone(), &class_ref.type_env())
+                    .map(|s| s.implementor)
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .map(|super_ref| {
+                        let (_, super_name) = super_ref.to_name();
+                        let super_name_without_tps = super_name.without_type_params();
+                        let internal_super_name = to_internal_class_name(&super_name_without_tps);
+                        let super_wrapper_from_src_args = if super_ref.type_params.is_empty() {
+                            vec![quote! { src.clone() }]
+                        } else {
+                            vec![quote! { src.clone() }, quote! { std::marker::PhantomData }]
+                        };
+                        quote! {
+                            impl #full_type_params std::convert::From<&#name #full_type_params> for #super_name {
+                                fn from(src: &#name #full_type_params) -> #super_name {
+                                    let src: &#internal_super_name = src.0.as_ref();
+                                    #super_name_without_tps(#(#super_wrapper_from_src_args),*)
+                                }
+                            }
+
+                            impl #full_type_params std::convert::From<&mut #name #full_type_params> for #super_name {
+                                fn from(src: &mut #name #full_type_params) -> #super_name {
+                                    let src: &#internal_super_name = src.0.as_ref();
+                                    #super_name_without_tps(#(#super_wrapper_from_src_args),*)
+                                }
+                            }
+                        }
+                    });
                 let mut attrs = vec![quote! { js_name = #js_name }];
                 if let Some(super_ref) = super_class.as_ref() {
                     let (_, super_name) = super_ref.to_name();
                     let super_name_without_tps = super_name.without_type_params();
                     let internal_super_name = to_internal_class_name(&super_name_without_tps);
-                    let super_wrapper_from_src_args = if super_ref.type_params.is_empty() {
-                        vec![quote! { src.clone() }]
-                    } else {
-                        vec![quote! { src.clone() }, quote! { std::marker::PhantomData }]
-                    };
 
                     attrs.push(quote! {
                         extends = #internal_super_name
-                    });
-
-                    super_as_ref_impls.push(quote! {
-                        impl #full_type_params std::convert::From<&#name #full_type_params> for #super_name {
-                            fn from(src: &#name #full_type_params) -> #super_name {
-                                let src: &#internal_super_name = src.0.as_ref();
-                                #super_name_without_tps(#(#super_wrapper_from_src_args),*)
-                            }
-                        }
-
-                        impl #full_type_params std::convert::From<&mut #name #full_type_params> for #super_name {
-                            fn from(src: &mut #name #full_type_params) -> #super_name {
-                                let src: &#internal_super_name = src.0.as_ref();
-                                #super_name_without_tps(#(#super_wrapper_from_src_args),*)
-                            }
-                        }
                     });
                 }
                 let type_env: HashMap<_, _> = type_params
