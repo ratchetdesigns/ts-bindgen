@@ -640,7 +640,15 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .map(|super_ref| {
+                        let ns = super_ref.to_ns_path(*fs, type_name);
                         let (_, super_name) = super_ref.to_name();
+                        let super_name = if let TypeIdent::LocalName(_) = super_ref.referent {
+                            // TODO: get rid of local names and make everything namespaced to avoid
+                            // special handling like this
+                            super_name
+                        } else {
+                            super_name.in_namespace_parts(&ns)
+                        };
                         let super_name_without_tps = super_name.without_type_params();
                         let internal_super_name = to_internal_class_name(&super_name_without_tps);
                         let super_wrapper_from_src_args = if super_ref.type_params.is_empty() {
