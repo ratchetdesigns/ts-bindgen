@@ -2,6 +2,7 @@ use heck::{CamelCase, SnakeCase};
 use proc_macro2::Ident;
 use quote::format_ident;
 use std::fmt::{Display, Formatter};
+use std::iter;
 use syn::parse_str as parse_syn_str;
 use unicode_xid::UnicodeXID;
 
@@ -44,6 +45,23 @@ impl Identifier {
             type_parts: ns
                 .type_parts
                 .iter()
+                .chain(self.type_parts.iter())
+                .cloned()
+                .collect(),
+            type_params: self.type_params.clone(),
+        }
+    }
+
+    pub fn in_namespace_parts(&self, ns: &[Identifier]) -> Identifier {
+        Identifier {
+            type_parts: ns
+                .iter()
+                .fold(
+                    Box::new(iter::empty()) as Box<dyn Iterator<Item = &Ident>>,
+                    |i, n| {
+                        Box::new(i.chain(n.type_parts.iter())) as Box<dyn Iterator<Item = &Ident>>
+                    },
+                )
                 .chain(self.type_parts.iter())
                 .cloned()
                 .collect(),
