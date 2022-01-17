@@ -705,6 +705,13 @@ fn canonicalize_type(
                     return None;
                 }
 
+                // TODO: this is wrong. if we have a module structure like:
+                // A { B, C } and we are in module A.B and we reference
+                // C.Z, our name_parts will be [C, Z] and we will only look
+                // for A.B.Z, A.Z, and Z. We need to redo namespace handling
+                // so that all names have a home namespace and a qualified
+                // name. The qualified name will be searched for within all
+                // ancestors of the home namespace.
                 let name = name_parts.last().unwrap();
                 let ns = &name_parts[0..name_parts.len() - 1];
 
