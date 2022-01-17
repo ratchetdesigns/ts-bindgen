@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::iter;
 use std::path::PathBuf;
 use strum_macros::Display as StrumDisplay;
 
@@ -205,6 +206,38 @@ pub struct TypeRef {
     pub type_params: Vec<TypeInfo>,
 }
 
+impl TypeRef {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeParamConfig>,
+    ) -> Option<Self> {
+        let TypeRef {
+            referent,
+            type_params: alias_type_params,
+        } = self;
+
+        canonicalize_type(types_by_name_by_file, referent)
+            .map(|canonical_referent| {
+                // look up the type just to make sure it exists, we get a builtin if it doesn't exist below
+                TypeRef {
+                    referent: canonical_referent,
+                    type_params: alias_type_params.clone(),
+                }
+            })
+            .or_else(|| {
+                println!("UNCANON {:?}", &referent);
+                // if our referent refers to an item in our type environment,
+                // leave as-is
+                if let TypeIdent::Name(n) = &referent.name {
+                    type_params.get(n).map(|_| self.clone())
+                } else {
+                    None
+                }
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceImport {
     Default { src: PathBuf },
@@ -370,87 +403,86 @@ pub enum TypeInfo {
     TypeQuery(TypeQuery),
 }
 
-impl TypeInfo {
-    fn resolve_builtin(
-        &self,
-        referent: &TypeName,
-        alias_type_params: &[TypeInfo],
-        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
-        type_params: &HashMap<String, TypeParamConfig>,
-    ) -> Option<TypeInfo> {
-        if referent.name == TypeIdent::Name("Array".to_string()) {
-            assert_eq!(
-                alias_type_params.len(),
-                1,
-                "expected 1 type param for Array"
-            );
-            return Some(TypeInfo::Array {
-                item_type: Box::new(
-                    alias_type_params
-                        .first()
-                        .as_ref()
-                        .unwrap()
-                        .resolve_names(types_by_name_by_file, type_params),
-                ),
-            });
-        }
-
-        if referent.name == TypeIdent::Name("Record".to_string()) {
-            assert_eq!(
-                alias_type_params.len(),
-                2,
-                "expected 2 type params for Record"
-            );
-            // TODO: do we care about key type?
-            return Some(TypeInfo::Mapped {
-                value_type: Box::new(
-                    alias_type_params
-                        .get(1)
-                        .as_ref()
-                        .unwrap()
-                        .resolve_names(types_by_name_by_file, type_params),
-                ),
-            });
-        }
-
-        if referent.name == TypeIdent::Name("Date".to_string()) {
-            return Some(TypeInfo::BuiltinDate(BuiltinDate()));
-        }
-
-        if referent.name == TypeIdent::Name("Function".to_string()) {
-            return Some(TypeInfo::Func(Func {
-                type_params: Default::default(),
-                return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
-                class_name: None,
-                params: vec![Param {
-                    name: "args".to_string(),
-                    type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
-                    is_variadic: true,
-                }],
-            }));
-        }
-
-        if referent.name == TypeIdent::Name("Object".to_string()) {
-            return Some(TypeInfo::Mapped {
-                value_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
-            });
-        }
-
-        if referent.name == TypeIdent::Name("Promise".to_string()) {
-            return Some(TypeInfo::BuiltinPromise(BuiltinPromise {
-                value_type: Box::new(
-                    alias_type_params
-                        .first()
-                        .as_ref()
-                        .map(|p| p.resolve_names(types_by_name_by_file, type_params))
-                        .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
-                ),
-            }));
-        }
-
-        None
+fn resolve_builtin(
+    referent: &TypeName,
+    alias_type_params: &[TypeInfo],
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    type_params: &HashMap<String, TypeParamConfig>,
+) -> Option<TypeInfo> {
+    if referent.name == TypeIdent::Name("Array".to_string()) {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for Array"
+        );
+        return Some(TypeInfo::Array {
+            item_type: Box::new(
+                alias_type_params
+                    .first()
+                    .as_ref()
+                    .unwrap()
+                    .resolve_names(types_by_name_by_file, type_params),
+            ),
+        });
     }
 
+    if referent.name == TypeIdent::Name("Record".to_string()) {
+        assert_eq!(
+            alias_type_params.len(),
+            2,
+            "expected 2 type params for Record"
+        );
+        // TODO: do we care about key type?
+        return Some(TypeInfo::Mapped {
+            value_type: Box::new(
+                alias_type_params
+                    .get(1)
+                    .as_ref()
+                    .unwrap()
+                    .resolve_names(types_by_name_by_file, type_params),
+            ),
+        });
+    }
+
+    if referent.name == TypeIdent::Name("Date".to_string()) {
+        return Some(TypeInfo::BuiltinDate(BuiltinDate()));
+    }
+
+    if referent.name == TypeIdent::Name("Function".to_string()) {
+        return Some(TypeInfo::Func(Func {
+            type_params: Default::default(),
+            return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+            class_name: None,
+            params: vec![Param {
+                name: "args".to_string(),
+                type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
+                is_variadic: true,
+            }],
+        }));
+    }
+
+    if referent.name == TypeIdent::Name("Object".to_string()) {
+        return Some(TypeInfo::Mapped {
+            value_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+        });
+    }
+
+    if referent.name == TypeIdent::Name("Promise".to_string()) {
+        return Some(TypeInfo::BuiltinPromise(BuiltinPromise {
+            value_type: Box::new(
+                alias_type_params
+                    .first()
+                    .as_ref()
+                    .map(|p| p.resolve_names(types_by_name_by_file, type_params))
+                    .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
+            ),
+        }));
+    }
+
+    None
+}
+
+impl TypeInfo {
     fn resolve_names(
         &self,
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
@@ -497,36 +529,19 @@ impl TypeInfo {
                         .map(|c| c.resolve_names(types_by_name_by_file, &our_type_params)),
                 })
             }
-            Self::Ref(TypeRef {
-                referent,
-                type_params: alias_type_params,
-            }) => canonicalize_type(types_by_name_by_file, referent)
-                .map(|canonical_referent| {
-                    // look up the type just to make sure it exists, we get a builtin if it doesn't exist below
-                    Self::Ref(TypeRef {
-                        referent: canonical_referent,
-                        type_params: alias_type_params.clone(),
-                    })
-                })
+            Self::Ref(tr) => tr
+                .resolve_names(types_by_name_by_file, type_params)
+                .map(|canonicalized_tr| Self::Ref(canonicalized_tr))
                 .or_else(|| {
-                    // if our referent refers to an item in our type environment,
-                    // leave as-is
-                    if let TypeIdent::Name(n) = &referent.name {
-                        type_params.get(n).map(|_| self.clone())
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    self.resolve_builtin(
-                        referent,
-                        alias_type_params,
+                    resolve_builtin(
+                        &tr.referent,
+                        &tr.type_params,
                         types_by_name_by_file,
                         type_params,
                     )
                 })
                 .unwrap_or_else(|| {
-                    //println!("unresolved alias {:?}, leaving as any", referent);
+                    println!("unresolved alias {:?}", &tr.referent);
                     Self::PrimitiveAny(PrimitiveAny())
                 }),
             Self::Alias(a) => Self::Alias(a.clone()),
@@ -605,7 +620,10 @@ impl TypeInfo {
                 let tps = extend_type_params(type_params, &class_type_params);
 
                 Self::Class(Class {
-                    super_class: super_class.clone(),
+                    super_class: super_class
+                        .as_ref()
+                        .and_then(|s| s.resolve_names(types_by_name_by_file, &tps))
+                        .map(Box::new),
                     members: members
                         .iter()
                         .map(|(n, m)| (n.to_string(), m.resolve_names(types_by_name_by_file, &tps)))
@@ -673,6 +691,36 @@ fn canonicalize_type(
                     )
                 }
             })
+        })
+        .or_else(|| {
+            // if we don't find the type in our immediate environment or our explicit parent type
+            // environment, check if it's in a parent namespace
+            if let TypeIdent::QualifiedName(name_parts) = &referent.name {
+                if name_parts.is_empty() {
+                    return None;
+                }
+
+                let name = name_parts.last().unwrap();
+                let ns = &name_parts[0..name_parts.len() - 1];
+
+                for ns_len in 0..ns.len() {
+                    let ns = &ns[0..ns_len];
+                    let name_parts: Vec<_> =
+                        ns.iter().cloned().chain(iter::once(name.clone())).collect();
+                    let ancestor_name = TypeName {
+                        file: referent.file.clone(),
+                        name: TypeIdent::QualifiedName(name_parts),
+                    };
+                    let resolved = lookup_type(types_by_name_by_file, &ancestor_name);
+                    if let Some(_) = resolved {
+                        return Some(ancestor_name);
+                    }
+                }
+
+                None
+            } else {
+                None
+            }
         })
 }
 
