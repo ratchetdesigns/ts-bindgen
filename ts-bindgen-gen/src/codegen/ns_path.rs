@@ -26,7 +26,9 @@ where
             let tar = target_mod_path.next();
 
             if tar.is_none() {
-                ns.push(make_identifier!(super));
+                if cur.is_some() {
+                    ns.push(make_identifier!(super));
+                }
                 for _ in cur_mod_path {
                     ns.push(make_identifier!(super));
                 }
@@ -160,6 +162,33 @@ mod test {
                 cur.to_ns_path(&fs, full_path.as_path()),
                 expected
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_to_ns_path_for_same_mod(
+            prefix in arb_abs_path(),
+            cur_suffix in arb_path_part(),
+            tar_suffix in arb_path_part(),
+        ) {
+            let fs = {
+                let mut fs: MemFs = Default::default();
+                fs.set_cwd(Path::new("/"));
+                fs
+            };
+            let prefix_path = Path::new(&prefix);
+            let cur = TypeIdent::Name {
+                file: prefix_path.to_path_buf(),
+                name: cur_suffix,
+            };
+
+            let tar = TypeIdent::Name {
+                file: prefix_path.to_path_buf(),
+                name: tar_suffix,
+            };
+
+            prop_assert!(cur.to_ns_path(&fs, &tar).is_empty());
         }
     }
 }
