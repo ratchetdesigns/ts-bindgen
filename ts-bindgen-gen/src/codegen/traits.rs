@@ -213,6 +213,7 @@ where
 }
 
 /// Represents a superclass or implemented interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Super {
     /// `item` is the superclass or implemented interface.
     item: TypeRef,
@@ -437,6 +438,134 @@ impl Traitable for Class {
                     #inv
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::fs::MemFs;
+    use crate::ir::to_final_ir;
+    use crate::parse::{ArcFs, TsTypes};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_recursive_traits() {
+        let ts_code = r#"
+            class First {}
+            class Second extends First {}
+            class Third extends Second {}
+        "#;
+        let test_path: &Path = Path::new("/test.d.ts");
+        let mut fs: MemFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_file_at(test_path, ts_code.to_string());
+
+        let tbnbf = TsTypes::parse(Arc::new(fs) as ArcFs, &test_path.to_string_lossy()).unwrap();
+
+        let tbnbf = to_final_ir(tbnbf);
+        let tbnbf = tbnbf.borrow();
+        let types = tbnbf.get(test_path).unwrap();
+
+        let name = TypeIdent::Name {
+            name: "Third".to_string(),
+            file: test_path.to_path_buf(),
+        };
+        let third = types.get(&name).unwrap();
+
+        if let TargetEnrichedTypeInfo::Class(c) = &third.info {
+            let implementor = TypeRef {
+                referent: name,
+                type_params: Default::default(),
+                context: c.context.clone(),
+            };
+            let supers: Vec<_> = c
+                .recursive_super_traits(implementor, &Default::default())
+                .collect();
+            assert_eq!(supers.len(), 2);
+            assert!(supers.iter().any(|s| {
+                if let TypeIdent::Name { file: _, name } = &s.item.referent {
+                    name == "First"
+                } else {
+                    false
+                }
+            }));
+            assert!(supers.iter().any(|s| {
+                if let TypeIdent::Name { file: _, name } = &s.item.referent {
+                    name == "Second"
+                } else {
+                    false
+                }
+            }));
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn test_recursive_traits_with_namespaces() {
+        let ts_code = r#"
+            declare namespace n {
+                class First {}
+                namespace First {
+                    class Second extends First {}
+                    class Third extends Second {}
+                }
+            }
+        "#;
+        let test_path: &Path = Path::new("/test.d.ts");
+        let mut fs: MemFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_file_at(test_path, ts_code.to_string());
+
+        let tbnbf = TsTypes::parse(Arc::new(fs) as ArcFs, &test_path.to_string_lossy()).unwrap();
+
+        let tbnbf = to_final_ir(tbnbf);
+        let tbnbf = tbnbf.borrow();
+        let types = tbnbf.get(test_path).unwrap();
+
+        let name = TypeIdent::QualifiedName {
+            name_parts: vec!["n".to_string(), "First".to_string(), "Third".to_string()],
+            file: test_path.to_path_buf(),
+        };
+        let third = types.get(&name).unwrap();
+
+        if let TargetEnrichedTypeInfo::Class(c) = &third.info {
+            let implementor = TypeRef {
+                referent: name,
+                type_params: Default::default(),
+                context: c.context.clone(),
+            };
+            let supers: Vec<_> = c
+                .recursive_super_traits(implementor, &Default::default())
+                .collect();
+            assert_eq!(supers.len(), 2);
+            assert!(supers.iter().any(|s| {
+                if let TypeIdent::QualifiedName {
+                    file: _,
+                    name_parts,
+                } = &s.item.referent
+                {
+                    name_parts.last() == Some(&"First".to_string())
+                } else {
+                    false
+                }
+            }));
+            assert!(supers.iter().any(|s| {
+                if let TypeIdent::QualifiedName {
+                    file: _,
+                    name_parts,
+                } = &s.item.referent
+                {
+                    name_parts.last() == Some(&"Second".to_string())
+                } else {
+                    false
+                }
+            }));
+        } else {
+            assert!(false);
         }
     }
 }
