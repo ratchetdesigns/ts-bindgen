@@ -629,7 +629,13 @@ impl TypeInfo {
                         .map(|(n, m)| (n.to_string(), m.resolve_names(types_by_name_by_file, &tps)))
                         .collect(),
                     type_params: class_type_params,
-                    implements: implements.clone(),
+                    implements: implements
+                        .iter()
+                        .map(|i| {
+                            i.resolve_names(types_by_name_by_file, &tps)
+                                .unwrap_or_else(|| i.clone())
+                        })
+                        .collect(),
                 })
             }
             Self::Var { type_info } => Self::Var {
