@@ -8,8 +8,8 @@ pub trait ToNsPath<T: ?Sized> {
 
 impl<T, U> ToNsPath<T> for U
 where
-    T: ToModPathIter + ?Sized + std::fmt::Debug,
-    U: ToModPathIter + ?Sized + std::fmt::Debug,
+    T: ToModPathIter + ?Sized,
+    U: ToModPathIter + ?Sized,
 {
     fn to_ns_path<FS: Fs + ?Sized>(&self, fs: &FS, current_mod: &T) -> Vec<Identifier> {
         let mut cur_mod_path = current_mod.to_mod_path_iter(fs);

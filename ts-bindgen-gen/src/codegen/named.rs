@@ -1,11 +1,27 @@
+use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
+use crate::fs::Fs;
 use crate::identifier::{
     make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, Identifier,
 };
 use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use crate::mod_def::ToModPathIter;
 
 pub trait Named {
+    /// Returns a tuple of the the js name as a string and the corresponding rust identifier
     fn to_name(&self) -> (&str, Identifier);
+
+    /// Returns a tuple of the js name as a string and the corresponding rust identifier.
+    /// The identifier is qualified relative to the provided ns_base.
+    ///
+    /// For example, if the provided base is in namespace A::B::C
+    /// and self is in namespace A::B::D, the returned relative qualified
+    /// name would be super::D::<name>.
+    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+        &self,
+        fs: &FS,
+        ns_base: &T,
+    ) -> (&str, Identifier);
 }
 
 impl Named for Builtin {
@@ -43,8 +59,21 @@ impl Named for Builtin {
             Builtin::Variadic => ("", to_ident("")),
         }
     }
+
+    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+        &self,
+        _fs: &FS,
+        _ns_base: &T,
+    ) -> (&str, Identifier) {
+        // builtins are global - no namespacing required
+        self.to_name()
+    }
 }
 
+/// A `CasedTypeIdent` holds a `TypeIdent` along with a `TargetEnrichedTypeInfo` where the
+/// `TargetEnrichedTypeInfo` determines the casing that will be applied to the `TypeIdent`.
+///
+/// For example, functions are snake_case, enums are CamelCase, and classes are CamelCase.
 pub struct CasedTypeIdent<'a> {
     pub type_ident: &'a TypeIdent,
     pub type_info: &'a TargetEnrichedTypeInfo,
@@ -53,6 +82,7 @@ pub struct CasedTypeIdent<'a> {
 fn name_for_type_ident_and_info<'a>(
     type_ident: &'a TypeIdent,
     type_info: &TargetEnrichedTypeInfo,
+    ns: &[Identifier],
 ) -> (&'a str, Identifier) {
     let target_type = type_info.resolve_target_type();
     let caser = target_type
@@ -65,11 +95,13 @@ fn name_for_type_ident_and_info<'a>(
             panic!("expected all generated names to be resolved")
         }
         TypeIdent::LocalName(n) => (n, caser(n)),
-        TypeIdent::Name { file: _, name } => (name, caser(name)),
-        TypeIdent::DefaultExport(_) => ("default", make_identifier!(default)),
+        TypeIdent::Name { file: _, name } => (name, caser(name).in_namespace_parts(ns)),
+        TypeIdent::DefaultExport(_) => {
+            ("default", make_identifier!(default).in_namespace_parts(ns))
+        }
         TypeIdent::QualifiedName { name_parts, .. } => {
             let n = name_parts.last().expect("bad qualified name");
-            (n, caser(n))
+            (n, caser(n).in_namespace_parts(ns))
         }
         TypeIdent::ExactName(n) => (n, to_ident(n)),
     }
@@ -77,7 +109,16 @@ fn name_for_type_ident_and_info<'a>(
 
 impl<'a> Named for CasedTypeIdent<'a> {
     fn to_name(&self) -> (&str, Identifier) {
-        name_for_type_ident_and_info(self.type_ident, self.type_info)
+        name_for_type_ident_and_info(self.type_ident, self.type_info, &[])
+    }
+
+    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+        &self,
+        fs: &FS,
+        ns_base: &T,
+    ) -> (&str, Identifier) {
+        let ns = self.type_ident.to_ns_path(fs, ns_base);
+        name_for_type_ident_and_info(self.type_ident, self.type_info, &ns)
     }
 }
 
@@ -94,19 +135,32 @@ fn retain_target_type_params(type_ref: &TypeRef, id: &Identifier) -> bool {
         )
 }
 
+fn name_for_type_ref<'a>(tr: &'a TypeRef, ns: &[Identifier]) -> (&'a str, Identifier) {
+    let target_type = tr.resolve_target_type();
+    let (n, mut id) = target_type
+        .map(|t| name_for_type_ident_and_info(&tr.referent, &t, &ns))
+        .unwrap_or_else(|| {
+            let js_name = tr.referent.js_name();
+            (js_name, to_camel_case_ident(js_name))
+        });
+    if !retain_target_type_params(tr, &id) {
+        id.type_params = tr.type_params.iter().map(|t| t.to_name().1).collect();
+    }
+    (n, id.in_namespace_parts(ns))
+}
+
 impl Named for TypeRef {
     fn to_name(&self) -> (&str, Identifier) {
-        let target_type = self.resolve_target_type();
-        let (n, mut id) = target_type
-            .map(|t| name_for_type_ident_and_info(&self.referent, &t))
-            .unwrap_or_else(|| {
-                let js_name = self.referent.js_name();
-                (js_name, to_camel_case_ident(js_name))
-            });
-        if !retain_target_type_params(self, &id) {
-            id.type_params = self.type_params.iter().map(|t| t.to_name().1).collect();
-        }
-        (n, id)
+        name_for_type_ref(self, &[])
+    }
+
+    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+        &self,
+        fs: &FS,
+        ns_base: &T,
+    ) -> (&str, Identifier) {
+        let ns = self.to_ns_path(fs, ns_base);
+        name_for_type_ref(self, &ns)
     }
 }
 
