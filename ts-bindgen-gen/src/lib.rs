@@ -113,7 +113,7 @@ where
 {
     let arc_fs = Arc::new(fs) as ArcFs;
     let tbnbf = TsTypes::parse(arc_fs.clone(), module.as_ref())?;
-    let final_ir = to_final_ir(tbnbf);
+    let final_ir = to_final_ir(tbnbf, arc_fs.clone());
     let final_ir = &*final_ir.borrow();
     let mod_def = ModDef::new(&*arc_fs, final_ir);
     let mod_defs = mod_def

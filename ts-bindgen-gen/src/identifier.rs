@@ -6,7 +6,7 @@ use std::iter;
 use syn::parse_str as parse_syn_str;
 use unicode_xid::UnicodeXID;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Identifier {
     pub type_parts: Vec<Ident>,
     pub type_params: Vec<Identifier>,

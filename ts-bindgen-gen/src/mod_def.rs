@@ -202,12 +202,15 @@ mod mod_def_tests {
     fn mod_def_from_types_by_name_by_file() -> std::io::Result<()> {
         let mut tbnbf: HashMap<PathBuf, HashMap<TypeIdent, TargetEnrichedType>> = HashMap::new();
         let b_c = PathBuf::from("/tmp/a/node_modules/b/c");
+        let fs = Arc::new(StdFs);
         DirBuilder::new()
             .recursive(true)
             .create(b_c.parent().unwrap())?;
         let context = Context {
             types_by_ident_by_path: Rc::new(RefCell::new(Default::default())),
             path: b_c.clone(),
+            fs: fs.clone(),
+            base_namespace: b_c.to_mod_path_iter(fs.as_ref()).collect(),
         };
         File::create(&b_c)?;
 
@@ -235,7 +238,7 @@ mod mod_def_tests {
             tbn
         });
 
-        let mods = ModDef::new(&StdFs, &tbnbf);
+        let mods = ModDef::new(fs.as_ref(), &tbnbf);
         assert_eq!(
             mods,
             ModDef {
@@ -280,7 +283,7 @@ mod mod_def_tests {
 
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/test")?;
-        let ir = to_final_ir(tbnbf);
+        let ir = to_final_ir(tbnbf, arc_fs.clone());
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
@@ -306,7 +309,7 @@ mod mod_def_tests {
 
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
-        let ir = to_final_ir(tbnbf);
+        let ir = to_final_ir(tbnbf, arc_fs.clone());
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
@@ -335,7 +338,7 @@ mod mod_def_tests {
 
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
-        let ir = to_final_ir(tbnbf);
+        let ir = to_final_ir(tbnbf, arc_fs.clone());
         let mods = ModDef::new(&*arc_fs, &*ir.borrow());
 
         assert_eq!(mods.children.len(), 1);

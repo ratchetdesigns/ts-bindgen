@@ -1,3 +1,4 @@
+use crate::fs::Fs;
 use crate::ir::base::{Type as TypeIR, TypeIdent as TypeIdentIR};
 use crate::ir::flattened::{flatten_types, FlatType, TypeIdent as FlatTypeIdent};
 use crate::ir::target_enriched::{
@@ -7,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 type Init = HashMap<PathBuf, HashMap<TypeIdentIR, TypeIR>>;
 type Flat = HashMap<PathBuf, HashMap<FlatTypeIdent, FlatType>>;
@@ -30,6 +32,6 @@ fn init_to_flat(src: Init) -> Flat {
         .collect()
 }
 
-pub fn to_final_ir(src: Init) -> Rc<RefCell<Final>> {
-    target_enrich(init_to_flat(src))
+pub fn to_final_ir(src: Init, fs: Arc<dyn Fs>) -> Rc<RefCell<Final>> {
+    target_enrich(init_to_flat(src), fs)
 }
