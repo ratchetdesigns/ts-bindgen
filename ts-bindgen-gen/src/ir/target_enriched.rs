@@ -1,3 +1,5 @@
+use crate::fs::Fs;
+use crate::identifier::Identifier;
 use crate::ir::flattened::{
     Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor, Enum as FlattenedEnum,
     EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
@@ -8,11 +10,13 @@ use crate::ir::flattened::{
     TypeRef as FlattenedTypeRef, Union as FlattenedUnion,
 };
 pub use crate::ir::flattened::{Builtin, EnumValue, TypeIdent};
+use crate::mod_def::ToModPathIter;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use strum_macros::Display as StrumDisplay;
 
 type SourceTypesByIdentByPath = HashMap<PathBuf, HashMap<TypeIdent, FlatType>>;
@@ -516,10 +520,15 @@ impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Context {
     pub types_by_ident_by_path: WrappedTypesByIdentByPath,
     pub path: PathBuf,
+    pub base_namespace: Vec<Identifier>,
+    // TODO: no reason for this to be an Arc but we always have an Arc when we
+    // want to use this and adding a lifetime to Context poisons all target
+    // enriched types, which is a huge pain.
+    pub fs: Arc<dyn Fs>,
 }
 
 impl Context {
@@ -529,7 +538,45 @@ impl Context {
             context: self.clone(),
         }
     }
+
+    /// Construct a dummy context.
+    /// This is obviously a bad smell. There are some areas in code where
+    /// we need to construct some of our TargetEnriched types, all of which
+    /// require a Context. Sometimes we don't have a context to chain from.
+    pub fn dummy() -> Context {
+        Context {
+            types_by_ident_by_path: Default::default(),
+            path: PathBuf::new(),
+            base_namespace: Default::default(),
+            fs: Arc::new(crate::fs::MemFs::default()),
+        }
+    }
 }
+
+impl std::cmp::PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        // we implement eq ourselves due to the Arc<dyn Fs>
+
+        // destructure to catch structural changes
+        let Context {
+            types_by_ident_by_path: other_tbibp,
+            path: other_path,
+            base_namespace: other_bn,
+            fs: other_fs,
+        } = other;
+
+        let Context {
+            types_by_ident_by_path: tbibp,
+            path,
+            base_namespace: bn,
+            fs,
+        } = self;
+
+        tbibp == other_tbibp && path == other_path && bn == other_bn && Arc::ptr_eq(fs, other_fs)
+    }
+}
+
+impl std::cmp::Eq for Context {}
 
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -548,6 +595,7 @@ struct WithContext<T> {
 // doable.
 pub fn target_enrich(
     types_by_ident_by_path: SourceTypesByIdentByPath,
+    fs: Arc<dyn Fs>,
 ) -> WrappedTypesByIdentByPath {
     types_by_ident_by_path.into_iter().fold(
         Rc::new(RefCell::new(Default::default())),
@@ -555,6 +603,7 @@ pub fn target_enrich(
             let types_by_ident = types_by_ident
                 .into_iter()
                 .map(|(id, typ)| {
+                    let base_namespace = typ.name.to_mod_path_iter(fs.as_ref()).collect();
                     (
                         id,
                         WithContext {
@@ -562,6 +611,8 @@ pub fn target_enrich(
                             context: Context {
                                 types_by_ident_by_path: Rc::clone(&enriched),
                                 path: path.clone(),
+                                fs: fs.clone(),
+                                base_namespace,
                             },
                         }
                         .into(),

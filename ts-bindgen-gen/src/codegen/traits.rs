@@ -471,9 +471,11 @@ mod test {
         fs.set_cwd(Path::new("/"));
         fs.add_file_at(test_path, ts_code.to_string());
 
-        let tbnbf = TsTypes::parse(Arc::new(fs) as ArcFs, &test_path.to_string_lossy()).unwrap();
+        let arc_fs = Arc::new(fs) as ArcFs;
 
-        let tbnbf = to_final_ir(tbnbf);
+        let tbnbf = TsTypes::parse(arc_fs.clone(), &test_path.to_string_lossy()).unwrap();
+
+        let tbnbf = to_final_ir(tbnbf, arc_fs);
         let tbnbf = tbnbf.borrow();
         let types = tbnbf.get(test_path).unwrap();
 
@@ -528,9 +530,11 @@ mod test {
         fs.set_cwd(Path::new("/"));
         fs.add_file_at(test_path, ts_code.to_string());
 
-        let tbnbf = TsTypes::parse(Arc::new(fs) as ArcFs, &test_path.to_string_lossy()).unwrap();
+        let arc_fs = Arc::new(fs) as ArcFs;
 
-        let tbnbf = to_final_ir(tbnbf);
+        let tbnbf = TsTypes::parse(arc_fs.clone(), &test_path.to_string_lossy()).unwrap();
+
+        let tbnbf = to_final_ir(tbnbf, arc_fs);
         let tbnbf = tbnbf.borrow();
         let types = tbnbf.get(test_path).unwrap();
 

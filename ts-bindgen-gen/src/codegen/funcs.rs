@@ -12,7 +12,6 @@ use quote::{quote, ToTokens};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::iter;
-use std::path::{Path, PathBuf};
 
 struct TransformedParam<'a, T: Fn(&TypeRef) -> TokenStream2>(&'a Param, T);
 
@@ -929,10 +928,7 @@ impl ParamExt for SelfParam {
                 members: Default::default(),
                 type_params: Default::default(),
                 implements: Default::default(),
-                context: Context {
-                    types_by_ident_by_path: Default::default(),
-                    path: Path::new("/").to_path_buf(),
-                },
+                context: Context::dummy(),
             }),
         };
         let class_name = class_name.to_name().1;
@@ -980,11 +976,7 @@ impl ParamExt for SelfParam {
         TypeRefLike::TypeRef(Cow::Owned(TypeRef {
             referent: self.class_name.clone(),
             type_params: Default::default(),
-            context: Context {
-                // we really have to get rid of this context bs
-                types_by_ident_by_path: Default::default(),
-                path: PathBuf::new(),
-            },
+            context: Context::dummy(),
         }))
     }
 }
