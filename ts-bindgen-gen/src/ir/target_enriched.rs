@@ -21,58 +21,30 @@ type WrappedTypesByIdentByPath = Rc<RefCell<TypesByIdentByPath>>;
 
 macro_rules! from_field {
     ($value:ident, $ctx:ident, $field:ident, .) => {
-        WithContext {
-            value: $value.$field,
-            context: $ctx.clone(),
-        }
-        .into()
+        $ctx.wrap($value.$field).into()
     };
     ($value:ident, $ctx:ident, $field:ident, nc) => {
         $value.$field.into()
     };
     ($value:ident, $ctx:ident, $field:ident, box) => {
-        Box::new(
-            WithContext {
-                value: (*$value.$field),
-                context: $ctx.clone(),
-            }
-            .into(),
-        )
+        Box::new($ctx.wrap(*$value.$field).into())
     };
     ($value:ident, $ctx:ident, $field:ident, []) => {
         $value
             .$field
             .into_iter()
-            .map(|value| WithContext {
-                value,
-                context: $ctx.clone(),
-            })
+            .map(|value| $ctx.wrap(value))
             .map(Into::into)
             .collect()
     };
     ($value:ident, $ctx:ident, $field:ident, Option) => {
-        $value
-            .$field
-            .map(|value| WithContext {
-                value,
-                context: $ctx.clone(),
-            })
-            .map(Into::into)
+        $value.$field.map(|value| $ctx.wrap(value)).map(Into::into)
     };
     ($value:ident, $ctx:ident, $field:ident, {}) => {
         $value
             .$field
             .into_iter()
-            .map(|(k, v)| {
-                (
-                    k.into(),
-                    WithContext {
-                        value: v,
-                        context: $ctx.clone(),
-                    }
-                    .into(),
-                )
-            })
+            .map(|(k, v)| (k.into(), $ctx.wrap(v).into()))
             .collect()
     };
 }
@@ -196,13 +168,7 @@ macro_rules! case_conv {
     };
 
     ($dest:ident :: $variant:ident, $x:ident, $ctx:ident) => {
-        $dest::$variant(
-            WithContext {
-                value: $x,
-                context: $ctx,
-            }
-            .into(),
-        )
+        $dest::$variant($ctx.wrap($x).into())
     };
 
     (match $field:ident => $src:ident :: $variant:ident, $x:ident) => {
@@ -211,13 +177,7 @@ macro_rules! case_conv {
 
     ($field:ident => $dest:ident :: $variant:ident, $x:ident, $ctx:ident) => {
         $dest::$variant {
-            $field: Box::new(
-                WithContext {
-                    value: *$x,
-                    context: $ctx,
-                }
-                .into(),
-            ),
+            $field: Box::new($ctx.wrap(*$x).into()),
         }
     };
 }
@@ -549,11 +509,7 @@ impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
         let context = src.context;
         match value {
             FlattenedTypeQuery::LookupRef(type_ref) => TypeQuery::LookupRef {
-                type_ref: WithContext {
-                    value: type_ref,
-                    context: context.clone(),
-                }
-                .into(),
+                type_ref: context.wrap(type_ref).into(),
                 context,
             },
         }
@@ -564,6 +520,15 @@ impl From<WithContext<FlattenedTypeQuery>> for TypeQuery {
 pub struct Context {
     pub types_by_ident_by_path: WrappedTypesByIdentByPath,
     pub path: PathBuf,
+}
+
+impl Context {
+    fn wrap<T>(&self, value: T) -> WithContext<T> {
+        WithContext {
+            value,
+            context: self.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Context {
