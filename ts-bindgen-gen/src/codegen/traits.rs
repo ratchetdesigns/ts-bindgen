@@ -5,13 +5,13 @@ use crate::codegen::named::Named;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::identifier::{make_identifier, to_snake_case_ident, Identifier};
 use crate::ir::{
-    Class, Context, Func, Interface, Member, TargetEnrichedTypeInfo, TypeIdent, TypeParamConfig,
-    TypeRef,
+    Class, Context, Func, Interface, Intersection, Member, TargetEnrichedTypeInfo, TypeIdent,
+    TypeParamConfig, TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter;
 
 #[derive(Debug, Clone)]
@@ -590,6 +590,7 @@ macro_rules! delegate_traitable_for_type_info {
         match $self {
             TargetEnrichedTypeInfo::Class($x) => $invocation,
             TargetEnrichedTypeInfo::Interface($x) => $invocation,
+            TargetEnrichedTypeInfo::Intersection($x) => $invocation,
             _ => $default,
         }
     };
@@ -672,6 +673,75 @@ impl Traitable for TypeRef {
         self.resolve_target_type()
             .map(|t| t.wrap_invocation(member_defn_source, trait_member))
             .unwrap_or_else(|| quote! {})
+    }
+}
+
+impl Traitable for Intersection {
+    // TODO: we should support classes in intersections too
+
+    fn has_super_traits(&self) -> bool {
+        self.types
+            .iter()
+            .filter_map(|t| t.resolve_target_type())
+            .any(|t| t.has_super_traits())
+    }
+
+    fn super_traits(&self) -> BoxedTypeRefIter<'_> {
+        Box::new(
+            self.types
+                .iter()
+                .filter_map(|t| t.resolve_target_type())
+                .flat_map(|t| t.super_traits().collect::<Vec<_>>().into_iter())
+                .collect::<HashSet<_>>()
+                .into_iter(),
+        ) as BoxedTypeRefIter<'_>
+    }
+
+    fn methods(&self) -> BoxedMemberIter<'_> {
+        Box::new(
+            self.types
+                .iter()
+                .filter_map(|t| t.resolve_target_type())
+                .flat_map(|t| t.methods().collect::<Vec<_>>().into_iter()),
+        ) as BoxedMemberIter<'_>
+    }
+
+    fn contains_implementation(&self) -> bool {
+        false
+    }
+
+    fn wrap_invocation(
+        &self,
+        member_defn_source: &TypeRef,
+        trait_member: &TraitMember,
+    ) -> TokenStream2 {
+        let desired_name = trait_member.name();
+        let is_desired_name = |n: &str| {
+            &to_snake_case_ident(n) == desired_name
+                || &to_snake_case_ident(format!("set_{}", n)) == desired_name
+        };
+        let desire_ctor = match trait_member {
+            TraitMember::Constructor { .. } => true,
+            _ => false,
+        };
+
+        self.types
+            .iter()
+            .filter_map(|t| t.resolve_target_type())
+            .find_map(|t| {
+                t.methods().find_map(|(name, m)| {
+                    let is_ctor = match m {
+                        Member::Constructor(_) => true,
+                        _ => false,
+                    };
+                    if is_desired_name(&name) || (is_ctor && desire_ctor) {
+                        Some(t.wrap_invocation(member_defn_source, trait_member))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_default()
     }
 }
 
