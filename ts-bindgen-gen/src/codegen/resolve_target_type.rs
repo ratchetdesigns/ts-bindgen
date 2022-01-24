@@ -40,15 +40,26 @@ fn resolve_type(context: &Context, path: &Path, id: &TypeIdent) -> Option<Target
         .get(path)
         .and_then(|t_by_id| {
             t_by_id.get(id).or_else(|| match id {
-                // TODO: Name and Local are interchangable. should be resolved as part of ir
-                // transformation...
+                // TODO: Name and Local are interchangable. and Name and QualifiedName
+                // are intercahngable with a one-part qualified name.
+                // should be resolved as part of ir transformation...
                 TypeIdent::LocalName(n) => t_by_id.get(&TypeIdent::Name {
                     file: path.to_path_buf(),
                     name: n.clone(),
                 }),
-                TypeIdent::Name { file: _, name } => {
-                    t_by_id.get(&TypeIdent::LocalName(name.clone()))
-                }
+                TypeIdent::Name { file, name } => t_by_id
+                    .get(&TypeIdent::LocalName(name.clone()))
+                    .or_else(|| {
+                        t_by_id.get(&TypeIdent::QualifiedName {
+                            file: file.clone(),
+                            name_parts: vec![name.clone()],
+                        })
+                    }),
+                TypeIdent::QualifiedName { file, name_parts } if name_parts.len() == 1 => t_by_id
+                    .get(&TypeIdent::Name {
+                        file: file.clone(),
+                        name: name_parts.first().unwrap().clone(),
+                    }),
                 _ => None,
             })
         })
