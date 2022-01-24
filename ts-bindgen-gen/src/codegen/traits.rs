@@ -55,12 +55,12 @@ impl<'a> TraitMember<'a> {
 }
 
 pub fn to_type_ref(
-    js_name: &str,
+    referent: &TypeIdent,
     type_params: &[(String, TypeParamConfig)],
     ctx: &Context,
 ) -> TypeRef {
     TypeRef {
-        referent: TypeIdent::LocalName(js_name.to_string()),
+        referent: referent.clone(),
         type_params: type_params
             .iter()
             .map(|(n, _)| TypeRef {
@@ -73,9 +73,9 @@ pub fn to_type_ref(
     }
 }
 
-pub fn render_trait_defn<T>(
+pub fn render_trait_defn<T: std::fmt::Debug>(
     name: &Identifier,
-    js_name: &str,
+    item_name: &TypeIdent,
     type_params: &[(String, TypeParamConfig)],
     is_public: bool,
     item: &T,
@@ -96,8 +96,8 @@ where
             quote! { serde::de::DeserializeOwned },
         ],
     );
-    let class_name = || TypeIdent::LocalName(js_name.to_string());
-    let item_ref = to_type_ref(js_name, type_params, ctx);
+    let class_name = || item_name.clone();
+    let item_ref = to_type_ref(item_name, type_params, ctx);
     let member_to_trait_member = |type_env: &HashMap<String, TypeRef>, (n, m): (String, Member)| {
         let name = to_snake_case_ident(&n);
         match m {
@@ -135,14 +135,18 @@ where
             }
         }
     };
-    let (super_decl, super_impls) = if item.has_super_traits() {
+    let super_decl = if item.has_super_traits() {
+        let supers = item.super_traits().map(|s| s.trait_name());
+        quote! {
+            : #(#supers)+*
+        }
+    } else {
+        Default::default()
+    };
+    let super_impls = {
         // TODO: would be nice to mark Identifiers with the type of identifier they are
         // e.g. mark anything coming out of a TraitName::trait_name as a trait
         // identifier
-        let supers = item.super_traits().map(|s| s.trait_name());
-        let super_decl = quote! {
-            : #(#supers)+*
-        };
         let make_impl = |i: Super| {
             let tr = &i.item;
             let trait_name = tr.trait_name();
@@ -161,8 +165,11 @@ where
                 .methods()
                 .flat_map(|(n, m)| member_to_trait_member(&tr.type_env(), (n, m)).into_iter())
                 .map(|trait_member| {
-                    let proto = trait_member
-                        .exposed_to_rust_fn_decl(trait_member.name(), trait_member.is_fallible());
+                    let proto = trait_member.exposed_to_rust_fn_decl(
+                        trait_member.name(),
+                        trait_member.is_fallible(),
+                        Some(ctx),
+                    );
                     let imp = item.wrap_invocation(&i.implementor, &trait_member);
                     quote! {
                         #proto {
@@ -183,19 +190,15 @@ where
                 implementor: item_ref.clone(),
             })))
             .map(&make_impl);
-        let super_impls = quote! {
+        quote! {
             #(#super_impls)*
-        };
-
-        (super_decl, super_impls)
-    } else {
-        (quote! {}, quote! {})
+        }
     };
 
     let method_decls = item
         .methods()
         .flat_map(|nm| member_to_trait_member(&Default::default(), nm))
-        .map(|f| f.exposed_to_rust_fn_decl(f.name(), f.is_fallible()))
+        .map(|f| f.exposed_to_rust_fn_decl(f.name(), f.is_fallible(), Some(ctx)))
         .map(|t| {
             quote! {
                 #t;

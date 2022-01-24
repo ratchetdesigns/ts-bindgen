@@ -17,7 +17,7 @@ pub trait Named {
     /// For example, if the provided base is in namespace A::B::C
     /// and self is in namespace A::B::D, the returned relative qualified
     /// name would be super::D::<name>.
-    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+    fn to_rel_qualified_name<FS: Fs + ?Sized, T: ToModPathIter>(
         &self,
         fs: &FS,
         ns_base: &T,
@@ -60,7 +60,7 @@ impl Named for Builtin {
         }
     }
 
-    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+    fn to_rel_qualified_name<FS: Fs + ?Sized, T: ToModPathIter>(
         &self,
         _fs: &FS,
         _ns_base: &T,
@@ -112,7 +112,7 @@ impl<'a> Named for CasedTypeIdent<'a> {
         name_for_type_ident_and_info(self.type_ident, self.type_info, &[])
     }
 
-    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+    fn to_rel_qualified_name<FS: Fs + ?Sized, T: ToModPathIter>(
         &self,
         fs: &FS,
         ns_base: &T,
@@ -138,7 +138,9 @@ fn retain_target_type_params(type_ref: &TypeRef, id: &Identifier) -> bool {
 fn name_for_type_ref<'a>(tr: &'a TypeRef, ns: &[Identifier]) -> (&'a str, Identifier) {
     let target_type = tr.resolve_target_type();
     let (n, mut id) = target_type
-        .map(|t| name_for_type_ident_and_info(&tr.referent, &t, &ns))
+        // we pass an empty namespace to name_for_type_ident_and_info
+        // so we can namespace_for_ident later
+        .map(|t| name_for_type_ident_and_info(&tr.referent, &t, &[]))
         .unwrap_or_else(|| {
             let js_name = tr.referent.js_name();
             (js_name, to_camel_case_ident(js_name))
@@ -146,7 +148,20 @@ fn name_for_type_ref<'a>(tr: &'a TypeRef, ns: &[Identifier]) -> (&'a str, Identi
     if !retain_target_type_params(tr, &id) {
         id.type_params = tr.type_params.iter().map(|t| t.to_name().1).collect();
     }
-    (n, id.in_namespace_parts(ns))
+    (n, namespace_for_ident(id, ns, &tr.referent))
+}
+
+/// Place `id` in namespace, `ns`, if namespacing makes sense for a `t`.
+fn namespace_for_ident(id: Identifier, ns: &[Identifier], t: &TypeIdent) -> Identifier {
+    match t {
+        TypeIdent::Builtin(_)
+        | TypeIdent::GeneratedName { .. }
+        | TypeIdent::LocalName(_)
+        | TypeIdent::ExactName(_) => id,
+        TypeIdent::Name { .. } | TypeIdent::DefaultExport(_) | TypeIdent::QualifiedName { .. } => {
+            id.in_namespace_parts(ns)
+        }
+    }
 }
 
 impl Named for TypeRef {
@@ -154,7 +169,7 @@ impl Named for TypeRef {
         name_for_type_ref(self, &[])
     }
 
-    fn to_rel_qualified_name<FS: Fs, T: ToModPathIter>(
+    fn to_rel_qualified_name<FS: Fs + ?Sized, T: ToModPathIter>(
         &self,
         fs: &FS,
         ns_base: &T,
