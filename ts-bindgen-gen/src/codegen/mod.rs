@@ -941,6 +941,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
             TargetEnrichedTypeInfo::Intersection(isect) => {
                 if let Some(first_type) = isect.types.first().and_then(|t| t.resolve_target_type())
                 {
+                    // TODO: we should support classes too
                     if let TargetEnrichedTypeInfo::Interface(_) = first_type {
                         let interface_types = || {
                             isect
