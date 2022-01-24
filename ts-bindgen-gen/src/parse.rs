@@ -2563,4 +2563,23 @@ mod test {
             }
         )
     }
+
+    #[test]
+    fn test_ns_super() -> Result<(), Error> {
+        let ts_code = r#"
+            export class A {
+                b: B;
+            }
+            class B {}
+            namespace other {
+                export class Inner extends A {
+                    i: number;
+                }
+            }
+        "#;
+        let name = TypeIdent::QualifiedName(vec!["other".to_string(), "Inner".to_string()]);
+        test_exported_type!(ts_code, name, TypeInfo::Class(c), {
+            assert!(c.super_class.is_some());
+        })
+    }
 }

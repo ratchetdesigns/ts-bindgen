@@ -742,7 +742,19 @@ fn lookup_type<'a>(
 ) -> Option<&'a Type> {
     types_by_name_by_file
         .get(&referent.file)
-        .and_then(|types_by_name| types_by_name.get(&referent.name))
+        .and_then(|types_by_name| {
+            types_by_name
+                .get(&referent.name)
+                .or_else(|| match &referent.name {
+                    TypeIdent::QualifiedName(name_parts) if name_parts.len() == 1 => {
+                        types_by_name.get(&TypeIdent::Name(name_parts.first().unwrap().clone()))
+                    }
+                    TypeIdent::Name(name) => {
+                        types_by_name.get(&TypeIdent::QualifiedName(vec![name.clone()]))
+                    }
+                    _ => None,
+                })
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
