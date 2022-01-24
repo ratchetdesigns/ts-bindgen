@@ -170,7 +170,7 @@ where
                         trait_member.is_fallible(),
                         Some(ctx),
                     );
-                    let imp = item.wrap_invocation(&i.implementor, &trait_member);
+                    let imp = item.wrap_invocation(&i.implementor, &trait_member, ctx);
                     quote! {
                         #proto {
                             #imp
@@ -269,6 +269,7 @@ pub trait Traitable {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2;
 
     fn recursive_super_traits(
@@ -333,10 +334,13 @@ impl Traitable for Interface {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2 {
         let class_name = &member_defn_source.referent;
         let name = trait_member.name();
-        let cn = member_defn_source.to_name().1;
+        let cn = member_defn_source
+            .to_rel_qualified_name(in_context.fs.as_ref(), &in_context.base_namespace)
+            .1;
         let fq_name = &name.in_namespace(&cn);
         let slf = quote! { self };
         match trait_member {
@@ -391,9 +395,12 @@ impl Traitable for Class {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2 {
         let class_name = &member_defn_source.referent;
-        let cn = member_defn_source.to_name().1;
+        let cn = member_defn_source
+            .to_rel_qualified_name(in_context.fs.as_ref(), &in_context.base_namespace)
+            .1;
         let name = trait_member.name();
         let name = &name.in_namespace(&cn);
         let slf = quote! { self };
@@ -627,12 +634,13 @@ impl Traitable for TargetEnrichedTypeInfo {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2 {
         let empty = quote! {};
         delegate_traitable_for_type_info!(
             self,
             x,
-            x.wrap_invocation(member_defn_source, trait_member),
+            x.wrap_invocation(member_defn_source, trait_member, in_context),
             empty,
         )
     }
@@ -669,9 +677,10 @@ impl Traitable for TypeRef {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2 {
         self.resolve_target_type()
-            .map(|t| t.wrap_invocation(member_defn_source, trait_member))
+            .map(|t| t.wrap_invocation(member_defn_source, trait_member, in_context))
             .unwrap_or_else(|| quote! {})
     }
 }
@@ -714,6 +723,7 @@ impl Traitable for Intersection {
         &self,
         member_defn_source: &TypeRef,
         trait_member: &TraitMember,
+        in_context: &Context,
     ) -> TokenStream2 {
         let desired_name = trait_member.name();
         let is_desired_name = |n: &str| {
@@ -735,7 +745,7 @@ impl Traitable for Intersection {
                         _ => false,
                     };
                     if is_desired_name(&name) || (is_ctor && desire_ctor) {
-                        Some(t.wrap_invocation(member_defn_source, trait_member))
+                        Some(t.wrap_invocation(member_defn_source, trait_member, in_context))
                     } else {
                         None
                     }
