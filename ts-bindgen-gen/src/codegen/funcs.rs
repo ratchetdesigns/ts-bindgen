@@ -324,7 +324,7 @@ impl<'b> HasFnPrototype for TypeRefLike<'b> {
 
 pub mod fn_types {
     use super::{
-        Builtin, HasFnPrototype, OwnedTypeRef, ResolveTargetType, SerializationType,
+        Builtin, Context, HasFnPrototype, OwnedTypeRef, ResolveTargetType, SerializationType,
         SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2, TypeIdent, TypeRef,
         TypeRefLike,
     };
@@ -414,8 +414,19 @@ pub mod fn_types {
         exposed_to_rust_type(typ)
     }
 
-    pub fn exposed_to_rust_return_type(typ: &TypeRef, is_fallible: bool) -> Option<TokenStream2> {
-        let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
+    pub fn exposed_to_rust_return_type(
+        typ: &TypeRef,
+        is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> Option<TokenStream2> {
+        let rendered_type = OwnedTypeRef(match in_context {
+            None => Cow::Borrowed(typ),
+            Some(ctx) => {
+                let mut typ = typ.clone();
+                typ.context = ctx.clone();
+                Cow::Owned(typ)
+            }
+        });
         if is_fallible {
             Some(quote! {
                 std::result::Result<#rendered_type, JsValue>
@@ -454,6 +465,7 @@ pub trait FnPrototypeExt {
         &self,
         name: Name,
         is_fallible: bool,
+        in_context: Option<&Context>,
     ) -> TokenStream2;
 
     /// Returns a token stream defining local closures for any parameters
@@ -470,6 +482,7 @@ pub trait FnPrototypeExt {
         &self,
         fn_name: &Identifier,
         internal_fn_name: &Identifier,
+        in_context: Option<&Context>,
     ) -> TokenStream2;
 
     fn exposed_to_rust_generic_wrapper_fn<ResConverter>(
@@ -480,6 +493,7 @@ pub trait FnPrototypeExt {
         is_fallible: bool,
         result_converter: Option<&ResConverter>,
         type_env: &HashMap<String, TypeRef>,
+        in_context: Option<&Context>,
     ) -> TokenStream2
     where
         ResConverter: Fn(TokenStream2) -> TokenStream2;
@@ -568,11 +582,13 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         &self,
         name: Name,
         is_fallible: bool,
+        in_context: Option<&Context>,
     ) -> TokenStream2 {
         let params = self
             .params()
             .map(|p| p.as_exposed_to_rust_named_param_list());
-        let ret = fn_types::exposed_to_rust_return_type(&self.return_type(), is_fallible);
+        let ret =
+            fn_types::exposed_to_rust_return_type(&self.return_type(), is_fallible, in_context);
         let ret = fn_types::render_return(&ret);
         quote! {
             fn #name(#(#params),*) #ret
@@ -600,6 +616,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         &self,
         fn_name: &Identifier,
         internal_fn_name: &Identifier,
+        in_context: Option<&Context>,
     ) -> TokenStream2 {
         let args = self.args().map(|p| p.rust_to_js_conversion());
         let self_access = if self.is_member() {
@@ -613,7 +630,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value, true);
         let wrapper_fns = self.exposed_to_rust_param_wrappers();
 
-        let f = self.exposed_to_rust_fn_decl(fn_name, true);
+        let f = self.exposed_to_rust_fn_decl(fn_name, true, in_context);
 
         quote! {
             #[allow(dead_code)]
@@ -633,6 +650,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         is_fallible: bool,
         result_converter: Option<&ResConverter>,
         _type_env: &HashMap<String, TypeRef>,
+        in_context: Option<&Context>,
     ) -> TokenStream2
     where
         ResConverter: Fn(TokenStream2) -> TokenStream2,
@@ -676,7 +694,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let ret = render_wasm_bindgen_return_to_js(&ret_type, &return_value, is_fallible);
         let wrapper_fns = self.exposed_to_rust_param_wrappers();
 
-        let f = self.exposed_to_rust_fn_decl(fn_name, is_fallible);
+        let f = self.exposed_to_rust_fn_decl(fn_name, is_fallible, in_context);
 
         quote! {
             #[allow(dead_code)]
@@ -1107,7 +1125,7 @@ impl<'a> ToTokens for WrapperFunc<'a> {
         let internal_fn_name = InternalFunc::to_internal_rust_name(self.js_name);
         let our_toks = self
             .func
-            .exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name);
+            .exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name, None);
 
         toks.extend(our_toks);
     }

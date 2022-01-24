@@ -460,7 +460,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 }
                 let trait_defn = render_trait_defn(
                     &name,
-                    js_name,
+                    type_name,
                     type_params,
                     is_exported,
                     iface,
@@ -633,7 +633,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let type_params_with_a_lifetime =
                     render_type_params_with_lifetimes(type_params, &["a"]);
                 let path = context.js_module_path();
-                let class_ref = to_type_ref(js_name, type_params, &class.context);
+                let class_ref = to_type_ref(type_name, type_params, &class.context);
                 let super_as_ref_impls = class
                     .recursive_super_traits(class_ref.clone(), &class_ref.type_env())
                     .map(|s| s.implementor)
@@ -731,7 +731,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                         #name(#(#args),*)
                                     }
                                 };
-                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&make_identifier!(new), None, &fq_internal_ctor, false, Some(&res_converter), &type_env);
+                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&make_identifier!(new), None, &fq_internal_ctor, false, Some(&res_converter), &type_env, None);
 
                                 (member_def, pub_fn)
                             }
@@ -765,7 +765,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 };
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env);
+                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env, None);
 
                                 (member_def, pub_fn)
                             }
@@ -823,8 +823,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }.setter_fn();
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, false, rc, &type_env);
-                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, false, rc, &type_env);
+                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, false, rc, &type_env, None);
+                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, false, rc, &type_env, None);
 
                                 let pub_fn = quote! {
                                     #getter_fn
@@ -840,7 +840,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
 
                 let trait_defn = render_trait_defn(
                     &name,
-                    js_name,
+                    type_name,
                     type_params,
                     is_exported,
                     class,
@@ -1243,14 +1243,19 @@ impl ToTokens for TypeRef {
                 let params = self
                     .params()
                     .map(|p| p.as_exposed_to_rust_unnamed_param_list());
-                let ret = fn_types::exposed_to_rust_return_type(&self.return_type(), true);
+                let ret = fn_types::exposed_to_rust_return_type(
+                    &self.return_type(),
+                    true,
+                    Some(&self.context),
+                );
                 quote! {
                     dyn #name(#(#params),*) -> #ret
                 }
             } else if matches!(&self.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid)) {
                 quote! { () }
             } else {
-                let (_, name) = self.to_name();
+                let (_, name) = self
+                    .to_rel_qualified_name(self.context.fs.as_ref(), &self.context.base_namespace);
                 quote! { #name }
             }
         };

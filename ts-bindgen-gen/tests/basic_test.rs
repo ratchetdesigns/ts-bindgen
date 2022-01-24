@@ -6,3 +6,10 @@ fn basic() -> Result<(), Error> {
     generate_rust_for_typescript(StdFs, "./tests/examples/basic")?;
     Ok(())
 }
+
+#[test]
+fn ns_trait() -> Result<(), Error> {
+    // just making sure we don't crash for now...
+    generate_rust_for_typescript(StdFs, "./tests/examples/ns-trait")?;
+    Ok(())
+}
