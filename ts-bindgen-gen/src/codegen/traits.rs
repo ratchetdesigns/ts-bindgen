@@ -1,25 +1,20 @@
-use crate::codegen::funcs::{AccessType, Constructor, FnPrototypeExt, PropertyAccessor};
+use crate::codegen::funcs::{AccessType, FnPrototypeExt, PropertyAccessor};
 use crate::codegen::generics::{render_type_params, render_type_params_with_constraints};
 use crate::codegen::generics::{ResolveGeneric, TypeEnvImplying};
 use crate::codegen::named::Named;
 use crate::codegen::resolve_target_type::ResolveTargetType;
-use crate::identifier::{make_identifier, to_snake_case_ident, Identifier};
+use crate::identifier::{to_snake_case_ident, Identifier};
 use crate::ir::{
     Class, Context, Func, Interface, Intersection, Member, TargetEnrichedTypeInfo, TypeIdent,
     TypeParamConfig, TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 
 #[derive(Debug, Clone)]
-pub enum TraitMember<'a> {
-    Constructor {
-        name: Identifier,
-        ctor: Constructor<'a>,
-    },
+pub enum TraitMember {
     Method {
         name: Identifier,
         method: Func,
@@ -34,10 +29,9 @@ pub enum TraitMember<'a> {
     },
 }
 
-impl<'a> TraitMember<'a> {
-    fn name(&'a self) -> &'a Identifier {
+impl TraitMember {
+    fn name<'a>(&'a self) -> &'a Identifier {
         match self {
-            TraitMember::Constructor { name, .. } => name,
             TraitMember::Method { name, .. } => name,
             TraitMember::Getter { name, .. } => name,
             TraitMember::Setter { name, .. } => name,
@@ -46,7 +40,6 @@ impl<'a> TraitMember<'a> {
 
     fn is_fallible(&self) -> bool {
         match self {
-            TraitMember::Constructor { .. } => false,
             TraitMember::Method { .. } => true,
             TraitMember::Getter { .. } => false,
             TraitMember::Setter { .. } => false,
@@ -101,16 +94,7 @@ where
     let member_to_trait_member = |type_env: &HashMap<String, TypeRef>, (n, m): (String, Member)| {
         let name = to_snake_case_ident(&n);
         match m {
-            Member::Constructor(ctor) => {
-                let ctor = Constructor {
-                    class: Cow::Borrowed(&item_ref),
-                    ctor: Cow::Owned(ctor),
-                };
-                vec![TraitMember::Constructor {
-                    name: make_identifier!(new),
-                    ctor,
-                }]
-            }
+            Member::Constructor(_) => Default::default(),
             Member::Method(f) => vec![TraitMember::Method { name, method: f }],
             Member::Property(t) => {
                 let getter = PropertyAccessor {
@@ -336,7 +320,6 @@ impl Traitable for Interface {
         trait_member: &TraitMember,
         in_context: &Context,
     ) -> TokenStream2 {
-        let class_name = &member_defn_source.referent;
         let name = trait_member.name();
         let cn = member_defn_source
             .to_rel_qualified_name(in_context.fs.as_ref(), &in_context.base_namespace)
@@ -344,10 +327,6 @@ impl Traitable for Interface {
         let fq_name = &name.in_namespace(&cn);
         let slf = quote! { self };
         match trait_member {
-            TraitMember::Constructor { ctor, .. } => {
-                Constructor::new(Cow::Borrowed(&ctor.ctor), class_name.clone())
-                    .fully_qualified_invoke_with_name(fq_name, Some(slf))
-            }
             TraitMember::Method { method, .. } => {
                 method.fully_qualified_invoke_with_name(fq_name, Some(slf))
             }
@@ -397,7 +376,6 @@ impl Traitable for Class {
         trait_member: &TraitMember,
         in_context: &Context,
     ) -> TokenStream2 {
-        let class_name = &member_defn_source.referent;
         let cn = member_defn_source
             .to_rel_qualified_name(in_context.fs.as_ref(), &in_context.base_namespace)
             .1;
@@ -428,10 +406,6 @@ impl Traitable for Class {
             }
         };
         match trait_member {
-            TraitMember::Constructor { ctor, .. } => {
-                Constructor::new(Cow::Borrowed(&ctor.ctor), class_name.clone())
-                    .fully_qualified_invoke_with_name(name, None as Option<TokenStream2>)
-            }
             TraitMember::Method { method, .. } => {
                 let inv = method.fully_qualified_invoke_with_name(name, Some(&target));
                 quote! {
@@ -730,21 +704,13 @@ impl Traitable for Intersection {
             &to_snake_case_ident(n) == desired_name
                 || &to_snake_case_ident(format!("set_{}", n)) == desired_name
         };
-        let desire_ctor = match trait_member {
-            TraitMember::Constructor { .. } => true,
-            _ => false,
-        };
 
         self.types
             .iter()
             .filter_map(|t| t.resolve_target_type())
             .find_map(|t| {
-                t.methods().find_map(|(name, m)| {
-                    let is_ctor = match m {
-                        Member::Constructor(_) => true,
-                        _ => false,
-                    };
-                    if is_desired_name(&name) || (is_ctor && desire_ctor) {
+                t.methods().find_map(|(name, _)| {
+                    if is_desired_name(&name) {
                         Some(t.wrap_invocation(member_defn_source, trait_member, in_context))
                     } else {
                         None

@@ -1203,7 +1203,6 @@ impl<'a> ToTokens for WrapperFunc<'a> {
 macro_rules! impl_fn_proto_for_trait_member {
     ($slf:ident, $f:ident) => {
         match $slf {
-            TraitMember::Constructor { ctor, .. } => ctor.$f(),
             TraitMember::Method { method, .. } => method.$f(),
             TraitMember::Getter { prop, .. } => prop.$f(),
             TraitMember::Setter { prop, .. } => prop.$f(),
@@ -1211,7 +1210,7 @@ macro_rules! impl_fn_proto_for_trait_member {
     };
 }
 
-impl<'b> HasFnPrototype for TraitMember<'b> {
+impl HasFnPrototype for TraitMember {
     fn return_type(&self) -> TypeRef {
         impl_fn_proto_for_trait_member!(self, return_type)
     }
