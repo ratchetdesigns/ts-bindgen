@@ -7,6 +7,7 @@ pub enum SerializationType {
     Raw,
     SerdeJson,
     Fn,
+    JsValue,
 }
 
 pub trait SerializationTypeGetter {
@@ -30,6 +31,9 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
                 TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,
                 TypeIdent::Builtin(Builtin::Array) => SerializationType::SerdeJson,
+                TypeIdent::Builtin(Builtin::PrimitiveAny | Builtin::PrimitiveObject) => {
+                    SerializationType::JsValue
+                }
                 TypeIdent::Builtin(_) => SerializationType::Raw,
                 _ => SerializationType::SerdeJson,
             },

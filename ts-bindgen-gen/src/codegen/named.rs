@@ -26,6 +26,7 @@ pub trait Named {
 
 impl Named for Builtin {
     fn to_name(&self) -> (&str, Identifier) {
+        // TODO: anything that returns JsValue here should have SerializationType::JsValue
         match self {
             Builtin::PrimitiveAny => ("JsValue", to_ident("JsValue")),
             Builtin::PrimitiveNumber => ("f64", to_ident("f64")),

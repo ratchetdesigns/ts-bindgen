@@ -98,6 +98,15 @@ where
     serializer.serialize_newtype_struct(JSVALUE_NEWTYPE_STRUCT, &idx)
 }
 
+pub fn serialize_jsvalue<S, V>(value: &V, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: ser::Serializer,
+    V: Clone + IntoWasmAbi<Abi = u32>,
+{
+    let idx = value.clone().into_abi();
+    serializer.serialize_newtype_struct(JSVALUE_NEWTYPE_STRUCT, &idx)
+}
+
 pub fn serialize_undefined<S>(serializer: S) -> Result<S::Ok, S::Error>
 where
     S: ser::Serializer,

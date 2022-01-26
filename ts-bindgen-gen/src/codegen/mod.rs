@@ -537,29 +537,52 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 // deserialize unions into the "larger" variant in case of overlaps
                 not_undefined_members.sort_by_key(|m| get_field_count(*m));
                 not_undefined_members.reverse();
-                let member_cases = not_undefined_members
+                let member_cases_by_name = not_undefined_members
                     .iter()
                     .map(|t| {
+                        let attrs = if t.serialization_type() == SerializationType::JsValue {
+                            quote! {
+                                #[serde(
+                                    serialize_with = "ts_bindgen_rt::serialize_jsvalue",
+                                    deserialize_with = "ts_bindgen_rt::deserialize_as_jsvalue")
+                                ]
+                            }
+                        } else {
+                            Default::default()
+                        };
                         let case = type_to_union_case_name(t);
 
                         if t.is_uninhabited() {
-                            quote! {
-                                #case
-                            }
+                            (
+                                case.clone(),
+                                quote! {
+                                    #attrs
+                                    #case
+                                },
+                            )
                         } else {
-                            quote! {
-                                #case(#t)
-                            }
+                            (
+                                case.clone(),
+                                quote! {
+                                    #attrs
+                                    #case(#t)
+                                },
+                            )
                         }
                     })
                     .chain(undefined_members.iter().map(|t| {
                         let case = type_to_union_case_name(t);
 
-                        quote! {
-                            #[serde(serialize_with="ts_bindgen_rt::serialize_undefined", deserialize_with="ts_bindgen_rt::deserialize_undefined")]
-                            #case
-                        }
-                    }));
+                        (
+                            case.clone(),
+                            quote! {
+                                #[serde(serialize_with="ts_bindgen_rt::serialize_undefined", deserialize_with="ts_bindgen_rt::deserialize_undefined")]
+                                #case
+                            },
+                        )
+                    }))
+                    .collect::<HashMap<_, _>>(); // to de-dupe names
+                let member_cases = member_cases_by_name.values();
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
