@@ -1,3 +1,4 @@
+mod contextual;
 mod funcs;
 mod generics;
 mod named;
@@ -583,7 +584,11 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     }
                     attrs
                 };
-                let internal_func = InternalFunc { js_name, func };
+                let internal_func = InternalFunc {
+                    js_name,
+                    func,
+                    in_context: &None,
+                };
                 let wrapper_func = WrapperFunc { js_name, func };
 
                 quote! {
@@ -710,7 +715,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 );
                                 let param_toks = ctor
                                     .params()
-                                    .map(|p| p.as_exposed_to_js_named_param_list());
+                                    .map(|p| p.as_exposed_to_js_named_param_list(None));
 
                                 let member_def = quote! {
                                     #[wasm_bindgen(constructor, js_class = #js_name)]
@@ -746,7 +751,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 let func = func.resolve_generic_in_env(&type_env);
                                 let fn_name = InternalFunc::to_internal_rust_name(member_js_name);
 
-                                let f = func.exposed_to_js_fn_decl(fn_name);
+                                let f = func.exposed_to_js_fn_decl(fn_name, None);
 
                                 let mut attrs = vec![
                                     quote! {js_name = #member_js_ident},
@@ -798,8 +803,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 };
 
 
-                                let member_getter = internal_getter.exposed_to_js_fn_decl(&internal_getter_name);
-                                let member_setter = internal_setter.exposed_to_js_fn_decl(&internal_setter_name);
+                                let member_getter = internal_getter.exposed_to_js_fn_decl(&internal_getter_name, None);
+                                let member_setter = internal_setter.exposed_to_js_fn_decl(&internal_setter_name, None);
                                 let member_def = quote! {
                                     #[wasm_bindgen(method, structural, getter = #member_js_ident, js_class = #js_name)]
                                     #member_getter;
@@ -1243,7 +1248,7 @@ impl ToTokens for TypeRef {
                 let name = self.to_simple_name();
                 let params = self
                     .params()
-                    .map(|p| p.as_exposed_to_rust_unnamed_param_list());
+                    .map(|p| p.as_exposed_to_rust_unnamed_param_list(Some(&self.context)));
                 let ret = fn_types::exposed_to_rust_return_type(
                     &self.return_type(),
                     true,
@@ -1342,12 +1347,14 @@ fn render_deserialize_fn(
         let return_value = quote! { ret };
         let ret = render_raw_return_to_js(&return_type, &return_value);
         let args = quote! { args };
-        let params = tr.params().map(|p| p.as_exposed_to_rust_named_param_list());
+        let params = tr
+            .params()
+            .map(|p| p.as_exposed_to_rust_named_param_list(None));
         let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
         // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
         let conversions = tr.args().map(|p| {
             let name = p.rust_name();
-            let conv = p.rust_to_jsvalue_conversion();
+            let conv = p.rust_to_jsvalue_conversion(None);
             quote! {
                 let #name = #conv;
             }
@@ -1401,7 +1408,7 @@ fn render_serialize_fn(
     {
         let serialize_fn_name = field_name.prefix_name("__tsb__serialize_");
         let invocation = tr.invoke_with_name(field_name);
-        let closure = tr.exposed_to_js_wrapped_closure(invocation);
+        let closure = tr.exposed_to_js_wrapped_closure(invocation, None);
         let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
         Some(quote! {
             #[allow(non_snake_case)]
