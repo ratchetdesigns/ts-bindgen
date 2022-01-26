@@ -676,7 +676,9 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         internal_fn_name: &Identifier,
         in_context: Option<&Context>,
     ) -> TokenStream2 {
-        let args = self.args().map(|p| p.rust_to_js_conversion(true, in_context));
+        let args = self
+            .args()
+            .map(|p| p.rust_to_js_conversion(true, in_context));
         let self_access = if self.is_member() {
             quote! { self. }
         } else {
@@ -747,7 +749,9 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let final_ret_converter = result_converter
             .map(|conv| conv(quote! { result }))
             .unwrap_or_else(|| quote! { result });
-        let args = self.args().map(|p| p.rust_to_js_conversion(is_fallible, in_context));
+        let args = self
+            .args()
+            .map(|p| p.rust_to_js_conversion(is_fallible, in_context));
         let internal_fn_target = internal_fn_target
             .map(|t| quote! { #t.})
             .unwrap_or_else(|| quote! {});
@@ -800,7 +804,11 @@ pub trait ParamExt {
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a js type.
-    fn rust_to_js_conversion(&self, is_fallible: bool, in_context: Option<&Context>) -> TokenStream2;
+    fn rust_to_js_conversion(
+        &self,
+        is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> TokenStream2;
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a JsValue.
@@ -923,20 +931,49 @@ impl<T: WrappedParam> ParamExt for T {
         to_snake_case_ident(self.name()).prefix_name("__TSB_Local_")
     }
 
-    fn rust_to_js_conversion(&self, is_fallible: bool, _in_context: Option<&Context>) -> TokenStream2 {
+    fn rust_to_js_conversion(
+        &self,
+        is_fallible: bool,
+        _in_context: Option<&Context>,
+    ) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
-        render_rust_to_js_conversion(
+        let is_variadic = self.is_variadic();
+        let (is_conv_fallible, conv) = render_rust_to_js_conversion(
             &name,
             &fn_name,
             &wrapped,
             if is_fallible {
-                quote! { .map_err(ts_bindgen_rt::Error::from)? }
+                let suffix = if is_variadic {
+                    Default::default()
+                } else {
+                    quote! { ? }
+                };
+                quote! {
+                    .map_err(ts_bindgen_rt::Error::from)
+                    .map_err(JsValue::from) #suffix
+                }
             } else {
                 quote! { .unwrap() }
             },
-        )
+        );
+        if is_variadic && is_conv_fallible {
+            let err_mapper = quote! { ? };
+            let target = quote! { std::result::Result<Vec<_>, _> };
+
+            quote! {
+                #name
+                    .into_iter()
+                    .map(|#name| {
+                        #conv
+                    })
+                    .collect::<#target>() #err_mapper
+                    .into_boxed_slice()
+            }
+        } else {
+            conv
+        }
     }
 
     fn rust_to_jsvalue_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
@@ -967,7 +1004,7 @@ impl<T: WrappedParam> ParamExt for T {
             let args = typ.args().map(|p| p.js_to_rust_conversion(in_context));
             let result = to_snake_case_ident("result");
             let fn_name = to_snake_case_ident("result_adapter");
-            let conversion = render_rust_to_js_conversion(
+            let (_, conversion) = render_rust_to_js_conversion(
                 &result,
                 &fn_name,
                 &typ.return_type().into(),
@@ -1051,7 +1088,11 @@ impl ParamExt for SelfParam {
         self.rust_name()
     }
 
-    fn rust_to_js_conversion(&self, _is_fallible: bool, in_context: Option<&Context>) -> TokenStream2 {
+    fn rust_to_js_conversion(
+        &self,
+        _is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
         self.as_exposed_to_rust_named_param_list(in_context)
     }
 
@@ -1158,21 +1199,24 @@ pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream
     }
 }
 
+/// Return a tuple of whether the conversion is fallible (returns a Result) and the quoted
+/// conversion itself.
+///
+/// NB: the provided `error_mapper` may alter the return type.
 fn render_rust_to_js_conversion(
     name: &Identifier,
     fn_name: &Identifier,
     typ: &TypeRefLike,
     error_mapper: TokenStream2,
-) -> TokenStream2 {
+) -> (bool, TokenStream2) {
     let serialization_type = typ.serialization_type();
     match serialization_type {
-        SerializationType::Raw => quote! { #name },
-        SerializationType::SerdeJson => {
-            quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
-        }
-        SerializationType::Fn => {
-            quote! { &#fn_name }
-        }
+        SerializationType::Raw => (false, quote! { #name }),
+        SerializationType::SerdeJson => (
+            true,
+            quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper },
+        ),
+        SerializationType::Fn => (false, quote! { &#fn_name }),
     }
 }
 
