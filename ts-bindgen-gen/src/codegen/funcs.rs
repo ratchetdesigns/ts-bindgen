@@ -1,3 +1,4 @@
+use crate::codegen::contextual::Contextual;
 use crate::codegen::named::{CasedTypeIdent, Named};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -324,9 +325,9 @@ impl<'b> HasFnPrototype for TypeRefLike<'b> {
 
 pub mod fn_types {
     use super::{
-        Builtin, Context, HasFnPrototype, OwnedTypeRef, ResolveTargetType, SerializationType,
-        SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2, TypeIdent, TypeRef,
-        TypeRefLike,
+        Builtin, Context, Contextual, HasFnPrototype, OwnedTypeRef, ResolveTargetType,
+        SerializationType, SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2,
+        TypeIdent, TypeRef, TypeRefLike,
     };
     use quote::quote;
     use std::borrow::Cow;
@@ -335,12 +336,13 @@ pub mod fn_types {
         matches!(&typ.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid))
     }
 
-    fn exposed_to_js_type(typ: &TypeRefLike) -> TokenStream2 {
+    fn exposed_to_js_type(typ: &TypeRefLike, in_context: Option<&Context>) -> TokenStream2 {
         let serialization_type = typ
             .resolve_target_type()
             .as_ref()
             .map(SerializationTypeGetter::serialization_type)
             .unwrap_or(SerializationType::SerdeJson);
+        let typ = with_context(typ, in_context);
         match serialization_type {
             SerializationType::Raw => quote! { #typ },
             SerializationType::SerdeJson => quote! { JsValue },
@@ -352,10 +354,11 @@ pub mod fn_types {
                     {
                         let params = typ
                             .params()
-                            .map(|p| p.as_exposed_to_js_unnamed_param_list());
-                        let ret = exposed_to_js_param_type(&typ.return_type().into());
+                            .map(|p| p.as_exposed_to_js_unnamed_param_list(in_context));
+                        let ret =
+                            exposed_to_js_return_type(&typ.return_type().into(), true, in_context);
                         quote! {
-                            &Closure<dyn Fn(#(#params),*) -> std::result::Result<#ret, JsValue>>
+                            &Closure<dyn Fn(#(#params),*) -> #ret>
                         }
                     }
                     _ => {
@@ -366,8 +369,11 @@ pub mod fn_types {
         }
     }
 
-    pub fn exposed_to_js_param_type(typ: &TypeRefLike) -> TokenStream2 {
-        exposed_to_js_type(typ)
+    pub fn exposed_to_js_param_type(
+        typ: &TypeRefLike,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        exposed_to_js_type(typ, in_context)
     }
 
     pub fn render_return(ret: &Option<TokenStream2>) -> TokenStream2 {
@@ -377,8 +383,12 @@ pub mod fn_types {
         }
     }
 
-    pub fn exposed_to_js_return_type(typ: &TypeRef, is_fallible: bool) -> Option<TokenStream2> {
-        let t = exposed_to_js_param_type(&typ.into());
+    pub fn exposed_to_js_return_type(
+        typ: &TypeRef,
+        is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> Option<TokenStream2> {
+        let t = exposed_to_js_param_type(&typ.into(), in_context);
         if is_fallible {
             Some(quote! {
                 std::result::Result<#t, JsValue>
@@ -394,12 +404,14 @@ pub mod fn_types {
         }
     }
 
-    fn exposed_to_rust_type(typ: &TypeRefLike) -> TokenStream2 {
+    fn exposed_to_rust_type(typ: &TypeRefLike, in_context: Option<&Context>) -> TokenStream2 {
         let serialization_type = typ
             .resolve_target_type()
             .as_ref()
             .map(SerializationTypeGetter::serialization_type)
             .unwrap_or(SerializationType::SerdeJson);
+        let typ = with_context(typ, in_context);
+        let typ = typ.as_ref();
         match serialization_type {
             SerializationType::Raw | SerializationType::SerdeJson => quote! { #typ },
             SerializationType::Fn => match typ {
@@ -410,8 +422,21 @@ pub mod fn_types {
         }
     }
 
-    pub fn exposed_to_rust_param_type(typ: &TypeRefLike) -> TokenStream2 {
-        exposed_to_rust_type(typ)
+    pub fn exposed_to_rust_param_type(
+        typ: &TypeRefLike,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        exposed_to_rust_type(typ, in_context)
+    }
+
+    fn with_context<'a, C: Contextual + Clone>(
+        item: &'a C,
+        in_context: Option<&Context>,
+    ) -> Cow<'a, C> {
+        match in_context {
+            None => Cow::Borrowed(item),
+            Some(ctx) => Cow::Owned(item.with_context(ctx)),
+        }
     }
 
     pub fn exposed_to_rust_return_type(
@@ -419,14 +444,7 @@ pub mod fn_types {
         is_fallible: bool,
         in_context: Option<&Context>,
     ) -> Option<TokenStream2> {
-        let rendered_type = OwnedTypeRef(match in_context {
-            None => Cow::Borrowed(typ),
-            Some(ctx) => {
-                let mut typ = typ.clone();
-                typ.context = ctx.clone();
-                Cow::Owned(typ)
-            }
-        });
+        let rendered_type = OwnedTypeRef(with_context(typ, in_context));
         if is_fallible {
             Some(quote! {
                 std::result::Result<#rendered_type, JsValue>
@@ -444,14 +462,26 @@ pub mod fn_types {
 }
 
 pub trait FnPrototypeExt {
-    fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2;
-    fn exposed_to_js_fn_type(&self) -> TokenStream2;
+    fn exposed_to_js_closure<Body: ToTokens>(
+        &self,
+        body: Body,
+        in_context: Option<&Context>,
+    ) -> TokenStream2;
+    fn exposed_to_js_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
 
-    fn exposed_to_js_boxed_fn_type(&self) -> TokenStream2;
+    fn exposed_to_js_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
 
-    fn exposed_to_js_wrapped_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2;
+    fn exposed_to_js_wrapped_closure<Body: ToTokens>(
+        &self,
+        body: Body,
+        in_context: Option<&Context>,
+    ) -> TokenStream2;
 
-    fn exposed_to_js_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2;
+    fn exposed_to_js_fn_decl<Name: ToTokens>(
+        &self,
+        name: Name,
+        in_context: Option<&Context>,
+    ) -> TokenStream2;
 
     fn invoke_with_name<Name: ToTokens>(&self, name: Name) -> TokenStream2;
 
@@ -473,7 +503,7 @@ pub trait FnPrototypeExt {
     /// This is named exposed_to_rust because it is used when constructing
     /// a function that may be called from rust (and, hence, might have
     /// rust closures in need of wrapping).
-    fn exposed_to_rust_param_wrappers(&self) -> TokenStream2;
+    fn exposed_to_rust_param_wrappers(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Renders a wrapper function intended to be called idiomatically from
     /// rust, which wraps an invocation of a corresponding underlying js
@@ -505,9 +535,19 @@ fn is_generic_type<T: ResolveTargetType>(t: &T) -> bool {
 }
 
 impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
-    fn exposed_to_js_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
-        let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+    fn exposed_to_js_closure<Body: ToTokens>(
+        &self,
+        body: Body,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        let params = self
+            .params()
+            .map(|p| p.as_exposed_to_js_named_param_list(in_context));
+        let ret = fn_types::exposed_to_js_return_type(
+            &self.return_type(),
+            self.is_fallible(),
+            in_context,
+        );
         let ret = fn_types::render_return(&ret);
 
         quote! {
@@ -517,27 +557,35 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         }
     }
 
-    fn exposed_to_js_fn_type(&self) -> TokenStream2 {
+    fn exposed_to_js_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
         let params = self
             .params()
-            .map(|p| p.as_exposed_to_js_unnamed_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+            .map(|p| p.as_exposed_to_js_unnamed_param_list(in_context));
+        let ret = fn_types::exposed_to_js_return_type(
+            &self.return_type(),
+            self.is_fallible(),
+            in_context,
+        );
         let ret = fn_types::render_return(&ret);
         quote! {
             dyn Fn(#(#params),*) #ret
         }
     }
 
-    fn exposed_to_js_boxed_fn_type(&self) -> TokenStream2 {
-        let fn_type = self.exposed_to_js_fn_type();
+    fn exposed_to_js_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let fn_type = self.exposed_to_js_fn_type(in_context);
         quote! {
             Box<#fn_type>
         }
     }
 
-    fn exposed_to_js_wrapped_closure<Body: ToTokens>(&self, body: Body) -> TokenStream2 {
-        let closure = self.exposed_to_js_closure(body);
-        let boxed_fn_type = self.exposed_to_js_boxed_fn_type();
+    fn exposed_to_js_wrapped_closure<Body: ToTokens>(
+        &self,
+        body: Body,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        let closure = self.exposed_to_js_closure(body, in_context);
+        let boxed_fn_type = self.exposed_to_js_boxed_fn_type(in_context);
         quote! {
             Closure::wrap(Box::new(
                 #closure
@@ -545,9 +593,19 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         }
     }
 
-    fn exposed_to_js_fn_decl<Name: ToTokens>(&self, name: Name) -> TokenStream2 {
-        let params = self.params().map(|p| p.as_exposed_to_js_named_param_list());
-        let ret = fn_types::exposed_to_js_return_type(&self.return_type(), self.is_fallible());
+    fn exposed_to_js_fn_decl<Name: ToTokens>(
+        &self,
+        name: Name,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        let params = self
+            .params()
+            .map(|p| p.as_exposed_to_js_named_param_list(in_context));
+        let ret = fn_types::exposed_to_js_return_type(
+            &self.return_type(),
+            self.is_fallible(),
+            in_context,
+        );
         let ret = fn_types::render_return(&ret);
         quote! {
             fn #name(#(#params),*) #ret
@@ -586,7 +644,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
     ) -> TokenStream2 {
         let params = self
             .params()
-            .map(|p| p.as_exposed_to_rust_named_param_list());
+            .map(|p| p.as_exposed_to_rust_named_param_list(in_context));
         let ret =
             fn_types::exposed_to_rust_return_type(&self.return_type(), is_fallible, in_context);
         let ret = fn_types::render_return(&ret);
@@ -595,10 +653,10 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         }
     }
 
-    fn exposed_to_rust_param_wrappers(&self) -> TokenStream2 {
+    fn exposed_to_rust_param_wrappers(&self, in_context: Option<&Context>) -> TokenStream2 {
         let wrapper_fns = self.params().filter_map(|p| {
             let name = p.local_fn_name();
-            let f = p.js_wrapper_fn();
+            let f = p.js_wrapper_fn(in_context);
             f.map(|f| {
                 quote! {
                     #[allow(non_snake_case)]
@@ -618,7 +676,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         internal_fn_name: &Identifier,
         in_context: Option<&Context>,
     ) -> TokenStream2 {
-        let args = self.args().map(|p| p.rust_to_js_conversion());
+        let args = self.args().map(|p| p.rust_to_js_conversion(in_context));
         let self_access = if self.is_member() {
             quote! { self. }
         } else {
@@ -628,7 +686,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             #self_access #internal_fn_name(#(#args),*)?
         };
         let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value, true);
-        let wrapper_fns = self.exposed_to_rust_param_wrappers();
+        let wrapper_fns = self.exposed_to_rust_param_wrappers(in_context);
 
         let f = self.exposed_to_rust_fn_decl(fn_name, true, in_context);
 
@@ -677,7 +735,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let final_ret_converter = result_converter
             .map(|conv| conv(quote! { result }))
             .unwrap_or_else(|| quote! { result });
-        let args = self.args().map(|p| p.rust_to_js_conversion());
+        let args = self.args().map(|p| p.rust_to_js_conversion(in_context));
         let internal_fn_target = internal_fn_target
             .map(|t| quote! { #t.})
             .unwrap_or_else(|| quote! {});
@@ -692,7 +750,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             return_value
         };
         let ret = render_wasm_bindgen_return_to_js(&ret_type, &return_value, is_fallible);
-        let wrapper_fns = self.exposed_to_rust_param_wrappers();
+        let wrapper_fns = self.exposed_to_rust_param_wrappers(in_context);
 
         let f = self.exposed_to_rust_fn_decl(fn_name, is_fallible, in_context);
 
@@ -718,30 +776,30 @@ pub trait ParamExt {
     /// Returns a token stream suitable for inclusion in a named parameter
     /// list, such as that of a function definition, where the param type
     /// is able to be exposed to javascript.
-    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2;
+    fn as_exposed_to_js_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Returns a token stream suitable for inclusing in an un-named parameter
     /// list, such as that of a function type, where the param type is able
     /// to be exposed to javascript
-    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2;
+    fn as_exposed_to_js_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Returns a token stream suitable for inclusion in a named parameter
     /// list, such as that of a function definition, where the param type
     /// is idiomatic to be exposed to rust callers.
-    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2;
+    fn as_exposed_to_rust_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Returns a token stream suitable for inclusion in an un-named parameter
     /// list, such as that of a function type, where the param type
     /// is idiomatic to be exposed to rust callers.
-    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2;
+    fn as_exposed_to_rust_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a js type.
-    fn rust_to_js_conversion(&self) -> TokenStream2;
+    fn rust_to_js_conversion(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a JsValue.
-    fn rust_to_jsvalue_conversion(&self) -> TokenStream2;
+    fn rust_to_jsvalue_conversion(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// Returns an Identifier representing the name of the local wrapper
     /// function corresponding to this parameter if this parameter is of
@@ -750,12 +808,12 @@ pub trait ParamExt {
 
     /// Renders a conversion from a local JsValue with the same name as the
     /// parameter to a rust type.
-    fn js_to_rust_conversion(&self) -> TokenStream2;
+    fn js_to_rust_conversion(&self, in_context: Option<&Context>) -> TokenStream2;
 
     /// If this parameter is a function, return a Some(TokenStream) where the
     /// TokenStream defines an exposed-to-js closure that will proxy calls
     /// to the underlying param.
-    fn js_wrapper_fn(&self) -> Option<TokenStream2>;
+    fn js_wrapper_fn(&self, in_context: Option<&Context>) -> Option<TokenStream2>;
 
     /// Is the parameter the final parameter of a variadic function?
     fn is_variadic(&self) -> bool;
@@ -805,15 +863,15 @@ impl<T: WrappedParam> ParamExt for T {
         to_snake_case_ident(self.name())
     }
 
-    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
-        let full_type = self.as_exposed_to_js_unnamed_param_list();
+    fn as_exposed_to_js_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let full_type = self.as_exposed_to_js_unnamed_param_list(in_context);
         let n = self.rust_name();
         quote! { #n: #full_type }
     }
 
-    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
+    fn as_exposed_to_js_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
         let wrapped = self.wrapped_type();
-        let typ = fn_types::exposed_to_js_param_type(&wrapped);
+        let typ = fn_types::exposed_to_js_param_type(&wrapped, in_context);
         if self.is_variadic() {
             quote! { Box<[#typ]> }
         } else {
@@ -821,15 +879,15 @@ impl<T: WrappedParam> ParamExt for T {
         }
     }
 
-    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
-        let full_type = self.as_exposed_to_rust_unnamed_param_list();
+    fn as_exposed_to_rust_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let full_type = self.as_exposed_to_rust_unnamed_param_list(in_context);
         let n = self.rust_name();
         quote! { #n: #full_type }
     }
 
-    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
+    fn as_exposed_to_rust_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
         let wrapped = self.wrapped_type();
-        let typ = fn_types::exposed_to_rust_param_type(&wrapped);
+        let typ = fn_types::exposed_to_rust_param_type(&wrapped, in_context);
         if self.is_variadic() {
             quote! { Box<[#typ]> }
         } else {
@@ -837,7 +895,7 @@ impl<T: WrappedParam> ParamExt for T {
         }
     }
 
-    fn js_to_rust_conversion(&self) -> TokenStream2 {
+    fn js_to_rust_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
         let wrapped = self.wrapped_type();
         let serialization_type = wrapped.serialization_type();
         let name = self.rust_name();
@@ -860,7 +918,7 @@ impl<T: WrappedParam> ParamExt for T {
         to_snake_case_ident(self.name()).prefix_name("__TSB_Local_")
     }
 
-    fn rust_to_js_conversion(&self) -> TokenStream2 {
+    fn rust_to_js_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
@@ -872,14 +930,14 @@ impl<T: WrappedParam> ParamExt for T {
         )
     }
 
-    fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
+    fn rust_to_jsvalue_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
         render_rust_to_jsvalue_conversion(&name, &fn_name, &wrapped, quote! {})
     }
 
-    fn js_wrapper_fn(&self) -> Option<TokenStream2> {
+    fn js_wrapper_fn(&self, in_context: Option<&Context>) -> Option<TokenStream2> {
         let wrapped = self.wrapped_type();
         let type_info = wrapped.resolve_target_type();
         if type_info
@@ -897,7 +955,7 @@ impl<T: WrappedParam> ParamExt for T {
 
             // TODO: needs to render wrappers for typ.params() that are
             // functions
-            let args = typ.args().map(|p| p.js_to_rust_conversion());
+            let args = typ.args().map(|p| p.js_to_rust_conversion(in_context));
             let result = to_snake_case_ident("result");
             let fn_name = to_snake_case_ident("result_adapter");
             let conversion = render_rust_to_js_conversion(
@@ -911,7 +969,7 @@ impl<T: WrappedParam> ParamExt for T {
                 let #result = #name(#(#args),*)?;
                 Ok(#conversion)
             };
-            Some(typ.exposed_to_js_wrapped_closure(invocation))
+            Some(typ.exposed_to_js_wrapped_closure(invocation, in_context))
         } else {
             None
         }
@@ -926,17 +984,27 @@ impl<T: WrappedParam> ParamExt for T {
     }
 }
 
+fn get_name<N: Named>(item: N, in_context: Option<&Context>) -> Identifier {
+    match in_context {
+        None => item.to_name().1,
+        Some(ctx) => {
+            item.to_rel_qualified_name(ctx.fs.as_ref(), &ctx.base_namespace)
+                .1
+        }
+    }
+}
+
 impl ParamExt for SelfParam {
     fn rust_name(&self) -> Identifier {
         to_snake_case_ident("self")
     }
 
-    fn as_exposed_to_js_named_param_list(&self) -> TokenStream2 {
-        let class_name = self.as_exposed_to_js_unnamed_param_list();
+    fn as_exposed_to_js_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let class_name = self.as_exposed_to_js_unnamed_param_list(in_context);
         quote! { this: #class_name }
     }
 
-    fn as_exposed_to_js_unnamed_param_list(&self) -> TokenStream2 {
+    fn as_exposed_to_js_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
         // TODO: this is very ugly... would love to just pass in the "type"
         // instead of an instance of type info.
         let class_name = CasedTypeIdent {
@@ -949,11 +1017,11 @@ impl ParamExt for SelfParam {
                 context: Context::dummy(),
             }),
         };
-        let class_name = class_name.to_name().1;
+        let class_name = get_name(class_name, in_context);
         quote! { &#class_name}
     }
 
-    fn as_exposed_to_rust_named_param_list(&self) -> TokenStream2 {
+    fn as_exposed_to_rust_named_param_list(&self, _in_context: Option<&Context>) -> TokenStream2 {
         if self.is_mut {
             quote! { &mut self }
         } else {
@@ -961,12 +1029,12 @@ impl ParamExt for SelfParam {
         }
     }
 
-    fn as_exposed_to_rust_unnamed_param_list(&self) -> TokenStream2 {
-        self.as_exposed_to_rust_named_param_list()
+    fn as_exposed_to_rust_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.as_exposed_to_rust_named_param_list(in_context)
     }
 
-    fn js_to_rust_conversion(&self) -> TokenStream2 {
-        self.as_exposed_to_rust_named_param_list()
+    fn js_to_rust_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.as_exposed_to_rust_named_param_list(in_context)
     }
 
     fn local_fn_name(&self) -> Identifier {
@@ -974,15 +1042,15 @@ impl ParamExt for SelfParam {
         self.rust_name()
     }
 
-    fn rust_to_js_conversion(&self) -> TokenStream2 {
-        self.as_exposed_to_rust_named_param_list()
+    fn rust_to_js_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.as_exposed_to_rust_named_param_list(in_context)
     }
 
-    fn rust_to_jsvalue_conversion(&self) -> TokenStream2 {
-        self.as_exposed_to_rust_named_param_list()
+    fn rust_to_jsvalue_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.as_exposed_to_rust_named_param_list(in_context)
     }
 
-    fn js_wrapper_fn(&self) -> Option<TokenStream2> {
+    fn js_wrapper_fn(&self, _in_context: Option<&Context>) -> Option<TokenStream2> {
         None
     }
 
@@ -1002,6 +1070,7 @@ impl ParamExt for SelfParam {
 pub struct InternalFunc<'a> {
     pub func: &'a Func,
     pub js_name: &'a str,
+    pub in_context: &'a Option<&'a Context>,
 }
 
 impl<'a> InternalFunc<'a> {
@@ -1018,7 +1087,7 @@ impl<'a> ToTokens for InternalFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let fn_name = Self::to_internal_rust_name(self.js_name);
 
-        let f = self.func.exposed_to_js_fn_decl(fn_name);
+        let f = self.func.exposed_to_js_fn_decl(fn_name, *self.in_context);
 
         let our_toks = quote! {
             pub #f;
