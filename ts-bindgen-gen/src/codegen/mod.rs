@@ -604,7 +604,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
             }
             TargetEnrichedTypeInfo::Class(class) => {
                 let Class {
-                    super_class,
+                    super_class: _,
                     members,
                     context,
                     type_params,
@@ -639,12 +639,15 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     render_type_params_with_lifetimes(type_params, &["a"]);
                 let path = context.js_module_path();
                 let class_ref = to_type_ref(type_name, type_params, &class.context);
-                let super_as_ref_impls = class
-                    .recursive_super_traits(class_ref.clone(), &class_ref.type_env())
-                    .map(|s| s.implementor)
-                    .collect::<HashSet<_>>()
-                    .into_iter()
-                    .map(|super_ref| {
+                let parent_classes = || {
+                    class
+                        .recursive_super_traits(class_ref.clone(), &class_ref.type_env())
+                        .map(|s| s.implementor)
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                };
+                let super_as_ref_impls = parent_classes()
+                   .map(|super_ref| {
                         let ns = super_ref.to_ns_path(*fs, type_name);
                         let (_, super_name) = super_ref.to_name();
                         let super_name = if let TypeIdent::LocalName(_) = super_ref.referent {
@@ -677,16 +680,23 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                             }
                         }
                     });
-                let mut attrs = vec![quote! { js_name = #js_name }];
-                if let Some(super_ref) = super_class.as_ref() {
-                    let (_, super_name) = super_ref.to_name();
-                    let super_name_without_tps = super_name.without_type_params();
-                    let internal_super_name = to_internal_class_name(&super_name_without_tps);
+                let attrs = iter::once(quote! { js_name = #js_name }).chain(
+                    parent_classes()
+                        .filter(|super_ref| {
+                            // only get proper super classes
+                            super_ref.referent != class_ref.referent
+                        })
+                        .map(|super_ref| {
+                            let (_, super_name) = super_ref.to_name();
+                            let super_name_without_tps = super_name.without_type_params();
+                            let internal_super_name =
+                                to_internal_class_name(&super_name_without_tps);
 
-                    attrs.push(quote! {
-                        extends = #internal_super_name
-                    });
-                }
+                            quote! {
+                                extends = #internal_super_name
+                            }
+                        }),
+                );
                 let type_env: HashMap<_, _> = type_params
                     .iter()
                     .map(|(n, _)| {
