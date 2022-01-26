@@ -41,8 +41,8 @@ impl TraitMember {
     fn is_fallible(&self) -> bool {
         match self {
             TraitMember::Method { .. } => true,
-            TraitMember::Getter { .. } => false,
-            TraitMember::Setter { .. } => false,
+            TraitMember::Getter { .. } => true,
+            TraitMember::Setter { .. } => true,
         }
     }
 }
@@ -333,13 +333,14 @@ impl Traitable for Interface {
             TraitMember::Getter { prop, .. } => {
                 let property_name = &prop.property_name;
                 quote! {
-                    self.#property_name.clone()
+                    Ok(self.#property_name.clone())
                 }
             }
             TraitMember::Setter { prop, .. } => {
                 let property_name = &prop.property_name;
                 quote! {
                     self.#property_name = value;
+                    Ok(())
                 }
             }
         }
