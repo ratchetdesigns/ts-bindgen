@@ -1,4 +1,4 @@
-use js_sys::Reflect;
+use js_sys::{Error as JsError, Reflect};
 use serde::{de, ser};
 use std::error;
 use std::fmt::{Display, Formatter};
@@ -37,6 +37,12 @@ impl From<JsValue> for Error {
         };
 
         Error::JsError { msg, stack }
+    }
+}
+
+impl From<Error> for JsValue {
+    fn from(src: Error) -> Self {
+        JsError::new(&src.to_string()).into()
     }
 }
 

@@ -816,10 +816,10 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 let member_getter = internal_getter.exposed_to_js_fn_decl(&internal_getter_name, None);
                                 let member_setter = internal_setter.exposed_to_js_fn_decl(&internal_setter_name, None);
                                 let member_def = quote! {
-                                    #[wasm_bindgen(method, structural, getter = #member_js_ident, js_class = #js_name)]
+                                    #[wasm_bindgen(method, structural, catch, getter = #member_js_ident, js_class = #js_name)]
                                     #member_getter;
 
-                                    #[wasm_bindgen(method, structural, setter = #member_js_ident, js_class = #js_name)]
+                                    #[wasm_bindgen(method, structural, catch, setter = #member_js_ident, js_class = #js_name)]
                                     #member_setter;
                                 };
 
@@ -838,8 +838,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }.setter_fn();
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, false, rc, &type_env, None);
-                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, false, rc, &type_env, None);
+                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, true, rc, &type_env, None);
+                                let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, true, rc, &type_env, None);
 
                                 let pub_fn = quote! {
                                     #getter_fn

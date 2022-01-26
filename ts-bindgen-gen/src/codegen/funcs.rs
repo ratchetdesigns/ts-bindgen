@@ -269,7 +269,7 @@ impl HasFnPrototype for PropertyAccessor {
     }
 
     fn is_fallible(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -676,14 +676,14 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         internal_fn_name: &Identifier,
         in_context: Option<&Context>,
     ) -> TokenStream2 {
-        let args = self.args().map(|p| p.rust_to_js_conversion(in_context));
+        let args = self.args().map(|p| p.rust_to_js_conversion(true, in_context));
         let self_access = if self.is_member() {
             quote! { self. }
         } else {
             quote! {}
         };
         let return_value = quote! {
-            #self_access #internal_fn_name(#(#args),*)?
+            #self_access #internal_fn_name(#(#args),*)
         };
         let ret = render_wasm_bindgen_return_to_js(&self.return_type(), &return_value, true);
         let wrapper_fns = self.exposed_to_rust_param_wrappers(in_context);
@@ -717,17 +717,29 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             let tr = arg.type_ref();
             if is_generic_type(&tr) {
                 let a_name = arg.rust_name();
-                Some(quote! {
-                    let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).unwrap();
-                })
+                if is_fallible {
+                    Some(quote! {
+                        let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).map_err(ts_bindgen_rt::Error::from)?;
+                    })
+                } else {
+                    Some(quote! {
+                        let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).unwrap();
+                    })
+                }
             } else {
                 None
             }
         });
         let ret_type = self.return_type();
         let ret_converter = if is_generic_type(&ret_type) {
-            quote! {
-                let result = ts_bindgen_rt::jsvalue_serde::from_jsvalue(&result).unwrap();
+            if is_fallible {
+                quote! {
+                    let result = ts_bindgen_rt::jsvalue_serde::from_jsvalue(&result?).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from);
+                }
+            } else {
+                quote! {
+                    let result = ts_bindgen_rt::jsvalue_serde::from_jsvalue(&result).unwrap();
+                }
             }
         } else {
             quote! {}
@@ -735,19 +747,12 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let final_ret_converter = result_converter
             .map(|conv| conv(quote! { result }))
             .unwrap_or_else(|| quote! { result });
-        let args = self.args().map(|p| p.rust_to_js_conversion(in_context));
+        let args = self.args().map(|p| p.rust_to_js_conversion(is_fallible, in_context));
         let internal_fn_target = internal_fn_target
             .map(|t| quote! { #t.})
             .unwrap_or_else(|| quote! {});
         let return_value = quote! {
             #internal_fn_target #internal_fn_name(#(#args),*)
-        };
-        let return_value = if is_fallible {
-            quote! {
-                #return_value?
-            }
-        } else {
-            return_value
         };
         let ret = render_wasm_bindgen_return_to_js(&ret_type, &return_value, is_fallible);
         let wrapper_fns = self.exposed_to_rust_param_wrappers(in_context);
@@ -795,7 +800,7 @@ pub trait ParamExt {
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a js type.
-    fn rust_to_js_conversion(&self, in_context: Option<&Context>) -> TokenStream2;
+    fn rust_to_js_conversion(&self, is_fallible: bool, in_context: Option<&Context>) -> TokenStream2;
 
     /// Renders a conversion from a local rust type with the same name as the
     /// parameter to a JsValue.
@@ -918,7 +923,7 @@ impl<T: WrappedParam> ParamExt for T {
         to_snake_case_ident(self.name()).prefix_name("__TSB_Local_")
     }
 
-    fn rust_to_js_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
+    fn rust_to_js_conversion(&self, is_fallible: bool, _in_context: Option<&Context>) -> TokenStream2 {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
@@ -926,7 +931,11 @@ impl<T: WrappedParam> ParamExt for T {
             &name,
             &fn_name,
             &wrapped,
-            quote! { .map_err(ts_bindgen_rt::Error::from)? },
+            if is_fallible {
+                quote! { .map_err(ts_bindgen_rt::Error::from)? }
+            } else {
+                quote! { .unwrap() }
+            },
         )
     }
 
@@ -1042,7 +1051,7 @@ impl ParamExt for SelfParam {
         self.rust_name()
     }
 
-    fn rust_to_js_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+    fn rust_to_js_conversion(&self, _is_fallible: bool, in_context: Option<&Context>) -> TokenStream2 {
         self.as_exposed_to_rust_named_param_list(in_context)
     }
 
@@ -1103,22 +1112,31 @@ fn render_wasm_bindgen_return_to_js(
     is_fallible: bool,
 ) -> TokenStream2 {
     let serialization_type = return_type.serialization_type();
-    let res = match serialization_type {
+    match serialization_type {
         SerializationType::Raw => return_value.clone(),
         SerializationType::SerdeJson => {
-            quote! {
-                ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
+            if is_fallible {
+                quote! {
+                    ts_bindgen_rt::from_jsvalue(&#return_value?).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)
+                }
+            } else {
+                quote! {
+                    ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
+                }
             }
         }
         SerializationType::Fn => {
             // TODO - should be a js_sys::Function that we wrap
-            quote! { #return_value.into_serde().unwrap() }
+            if is_fallible {
+                quote! {
+                    #return_value?.into_serde().map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)
+                }
+            } else {
+                quote! {
+                    #return_value.into_serde().unwrap()
+                }
+            }
         }
-    };
-    if is_fallible {
-        quote! { std::result::Result::Ok(#res) }
-    } else {
-        quote! { #res }
     }
 }
 
