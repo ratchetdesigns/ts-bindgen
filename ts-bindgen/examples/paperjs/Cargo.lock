@@ -127,7 +127,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ts-bindgen-example-threejs"
+name = "ts-bindgen-example-paperjs"
 version = "0.1.0"
 dependencies = [
  "js-sys",
@@ -135,6 +135,7 @@ dependencies = [
  "ts-bindgen-rt",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-sys",
 ]
 
 [[package]]
