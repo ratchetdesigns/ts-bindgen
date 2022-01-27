@@ -110,11 +110,11 @@ where
                     access_type: AccessType::Setter,
                 };
                 vec![
-                    TraitMember::Getter { name, prop: getter },
                     TraitMember::Setter {
-                        name: to_snake_case_ident(format!("set_{}", n)),
+                        name: name.prefix_name("set_"),
                         prop: setter,
                     },
+                    TraitMember::Getter { name, prop: getter },
                 ]
             }
         }
