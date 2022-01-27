@@ -2044,8 +2044,23 @@ impl TsTypes {
         if let Stmt::Decl(decl) = stmt {
             self.process_decl(ts_path, decl)
                 .into_iter()
-                .for_each(|typ| self.set_type_for_file(ts_path, typ));
+                .for_each(|typ| {
+                    let typ = if self.currently_in_namespace() {
+                        // decls in namespaces or modules are exported by default
+                        typ.map(|mut t| {
+                            t.is_exported = true;
+                            t
+                        })
+                    } else {
+                        typ
+                    };
+                    self.set_type_for_file(ts_path, typ)
+                });
         }
+    }
+
+    fn currently_in_namespace(&self) -> bool {
+        !self.namespace_stack.is_empty()
     }
 }
 
