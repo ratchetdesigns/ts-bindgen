@@ -2,14 +2,9 @@
   <head>
     <meta charset="utf-8" />
     <script type="application/javascript" src="./node_modules/paper/dist/paper-full.js"></script>
+    <script type="application/javascript" src="./pkg/bundle.js"></script>
   </head>
   <body style="width:100%; height:100%">
     <canvas id="canvas" resize style="width:100%; height: 100%"></canvas>
   </body>
-  <script type="module">
-    import init, { chain_example } from './pkg/ts_bindgen_example_paperjs.js';
-    window.onload = function() {
-      init().then(() => chain_example(document.getElementById('canvas')));
-    };
-  </script>
 </html>

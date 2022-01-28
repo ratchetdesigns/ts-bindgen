@@ -5,4 +5,5 @@
 1. Run `cargo check` to execute `npm ci` and `cargo run --manifest-path ../../Cargo.toml -- --output src/paper.rs paperjs`, which regenerates rust bindings in `./src/paper.rs`.
 2. Update the rust code in `./src/lib.rs`.
 3. Build the wasm bundle: `wasm-pack build --target web --dev`
-4. Start a web server to serve the paperjs directory and load `index.html`.
+4. Build the js bundle: `npx --yes --package=rollup -- rollup index.js --file pkg/bundle.js --format iife -g node_modules/paper/dist/paper.js:paper`
+5. Start a web server to serve the paperjs directory and load `index.html`.
