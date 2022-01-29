@@ -8,7 +8,7 @@ edition = "2021"
 publish = false
 repository = "https://github.com/ratchetdesigns/ts-bindgen"
 readme = "README.md"
-keywords = ["wasm", "webassembly", "web", "bindings", "typescript", "wasm-bindgen", "javascript", "ffi"]
+keywords = ["wasm", "bindings", "typescript", "wasm-bindgen", "javascript"]
 categories = ["compilers", "command-line-utilities", "development-tools::ffi", "wasm", "web-programming"]
 
 [lib]
