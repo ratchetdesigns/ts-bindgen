@@ -21,7 +21,9 @@ ts-bindgen-rt provides the runtime library that our generated bindings depend on
 
 # License
 
-ts-bindgen is dual-licensed under the [MIT](https://github.com/ratchetdesigns/ts-bindgen/blob/master/LICENSE-MIT) and [Apache](https://github.com/ratchetdesigns/ts-bindgen/blob/master/LICENSE-APACHE) licenses.
+Copyright 2022 Adam Berger, Ratchet Designs.
+
+ts-bindgen is licensed under either of the [MIT](https://github.com/ratchetdesigns/ts-bindgen/blob/master/LICENSE-MIT) or [Apache](https://github.com/ratchetdesigns/ts-bindgen/blob/master/LICENSE-APACHE) licenses, at your option.
 
 # Credit
 
