@@ -1,3 +1,7 @@
+#![deny(missing_docs)]
+
+//! ts-bindgen-rt is the runtime library that ts-bindgen bindings depend on.
+
 extern crate js_sys;
 extern crate wasm_bindgen;
 
@@ -12,10 +16,13 @@ use wasm_bindgen::{
     JsCast, JsValue,
 };
 
+/// Represents a null in javascript
 pub struct Null;
 
+/// Represents undefined in javascript
 pub struct Undefined;
 
+/// Error for any fallible ts-bindgen-rt operations
 #[derive(Debug)]
 pub struct Error;
 
@@ -61,6 +68,7 @@ impl From<SerdeError> for Error {
     }
 }
 
+/// Deserialize the JsValue into the requested type
 pub fn deserialize_as_jsvalue<'de, D, R>(deserializer: D) -> Result<R, D::Error>
 where
     D: de::Deserializer<'de>,
@@ -89,6 +97,7 @@ where
     })
 }
 
+/// Serialize the provided value into a JsValue
 pub fn serialize_as_jsvalue<S, V>(serializer: S, value: &V) -> Result<S::Ok, S::Error>
 where
     S: ser::Serializer,
@@ -98,15 +107,16 @@ where
     serializer.serialize_newtype_struct(JSVALUE_NEWTYPE_STRUCT, &idx)
 }
 
+/// Serialize the provided value into a JsValue
 pub fn serialize_jsvalue<S, V>(value: &V, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: ser::Serializer,
     V: Clone + IntoWasmAbi<Abi = u32>,
 {
-    let idx = value.clone().into_abi();
-    serializer.serialize_newtype_struct(JSVALUE_NEWTYPE_STRUCT, &idx)
+    serialize_as_jsvalue(serializer, value)
 }
 
+/// Serialize a javascript undefined
 pub fn serialize_undefined<S>(serializer: S) -> Result<S::Ok, S::Error>
 where
     S: ser::Serializer,
@@ -114,6 +124,7 @@ where
     serializer.serialize_unit_struct(UNDEFINED_UNIT_STRUCT)
 }
 
+/// Deserialize a javascript undefined
 pub fn deserialize_undefined<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
     D: de::Deserializer<'de>,

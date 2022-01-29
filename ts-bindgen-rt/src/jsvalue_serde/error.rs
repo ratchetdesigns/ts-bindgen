@@ -6,12 +6,18 @@ use wasm_bindgen::JsValue;
 
 pub type Result<R> = std::result::Result<R, Error>;
 
+/// Error type for serde errors
 #[derive(Debug, Clone)]
 pub enum Error {
+    /// A custom error with a message
     Custom(String),
+    /// An error indicating that an invalid type was found
     InvalidType(String),
+    /// A javascript error occured
     JsError {
+        /// The message from the javascript error
         msg: Option<String>,
+        /// The stack from the javascript error
         stack: Option<String>,
     },
 }

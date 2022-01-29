@@ -3,6 +3,7 @@ use serde::{de, Deserialize};
 use std::borrow::{Borrow, Cow};
 use wasm_bindgen::{convert::IntoWasmAbi, JsCast, JsValue};
 
+/// Deserialize the provided JsValue into the requested T
 pub fn from_jsvalue<'de, T>(jsv: &'de JsValue) -> Result<T>
 where
     T: Deserialize<'de>,

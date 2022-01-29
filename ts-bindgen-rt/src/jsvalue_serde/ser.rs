@@ -5,11 +5,12 @@ use wasm_bindgen::{convert::FromWasmAbi, JsValue};
 /// Marker name to indicate that we want to serialize a WasmAbi (u32)
 /// into a JsValue.
 pub const JSVALUE_NEWTYPE_STRUCT: &str = "__tsb__JsValue";
-///
+
 /// Marker name to indicate that we want to serialize into an undefined
 /// JsValue.
 pub const UNDEFINED_UNIT_STRUCT: &str = "__tsb__undefined";
 
+/// Serialize the provided val into a JsValue
 pub fn to_jsvalue<T: Serialize + ?Sized>(val: &T) -> Result<JsValue> {
     let mut s = Serializer::new();
     val.serialize(&mut s)

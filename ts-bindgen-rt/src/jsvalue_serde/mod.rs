@@ -1,3 +1,5 @@
+//! serde implementation for JsValues
+
 mod de;
 mod error;
 mod ser;
