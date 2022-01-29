@@ -537,7 +537,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 // deserialize unions into the "larger" variant in case of overlaps
                 not_undefined_members.sort_by_key(|m| get_field_count(*m));
                 not_undefined_members.reverse();
-                let member_cases_by_name = not_undefined_members
+                let member_cases = not_undefined_members
                     .iter()
                     .map(|t| {
                         let attrs = if t.serialization_type() == SerializationType::JsValue {
@@ -581,8 +581,16 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                             },
                         )
                     }))
-                    .collect::<HashMap<_, _>>(); // to de-dupe names
-                let member_cases = member_cases_by_name.values();
+                    .fold(
+                        (HashSet::new(), Vec::new()),
+                        |(mut names, mut cases), (name, case)| {
+                            // de-dupe names
+                            if names.insert(name) {
+                                cases.push(case);
+                            }
+                            (names, cases)
+                        }
+                    ).1;
 
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
