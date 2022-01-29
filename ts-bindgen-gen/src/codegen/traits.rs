@@ -30,7 +30,7 @@ pub enum TraitMember {
 }
 
 impl TraitMember {
-    fn name<'a>(&'a self) -> &'a Identifier {
+    fn name(&self) -> &Identifier {
         match self {
             TraitMember::Method { name, .. } => name,
             TraitMember::Getter { name, .. } => name,
@@ -171,7 +171,7 @@ where
             .recursive_super_traits(item_ref.clone(), &item_ref.type_env())
             .chain(Box::new(iter::once(Super {
                 item: item_ref.clone(),
-                implementor: item_ref.clone(),
+                implementor: item_ref,
             })))
             .map(&make_impl);
         quote! {

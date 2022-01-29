@@ -530,7 +530,7 @@ impl TypeInfo {
             }
             Self::Ref(tr) => tr
                 .resolve_names(types_by_name_by_file, type_params)
-                .map(|canonicalized_tr| Self::Ref(canonicalized_tr))
+                .map(Self::Ref)
                 .or_else(|| {
                     resolve_builtin(
                         &tr.referent,
@@ -724,7 +724,7 @@ fn canonicalize_type(
                         name: TypeIdent::QualifiedName(name_parts),
                     };
                     let resolved = lookup_type(types_by_name_by_file, &ancestor_name);
-                    if let Some(_) = resolved {
+                    if resolved.is_some() {
                         return Some(ancestor_name);
                     }
                 }

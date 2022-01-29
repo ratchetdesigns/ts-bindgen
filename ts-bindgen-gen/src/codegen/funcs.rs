@@ -355,8 +355,7 @@ pub mod fn_types {
                         let params = typ
                             .params()
                             .map(|p| p.as_exposed_to_js_unnamed_param_list(in_context));
-                        let ret =
-                            exposed_to_js_return_type(&typ.return_type().into(), true, in_context);
+                        let ret = exposed_to_js_return_type(&typ.return_type(), true, in_context);
                         quote! {
                             &Closure<dyn Fn(#(#params),*) -> #ret>
                         }
@@ -393,14 +392,12 @@ pub mod fn_types {
             Some(quote! {
                 std::result::Result<#t, JsValue>
             })
+        } else if is_void(typ) {
+            None
         } else {
-            if is_void(&typ) {
-                None
-            } else {
-                Some(quote! {
-                    #t
-                })
-            }
+            Some(quote! {
+                #t
+            })
         }
     }
 
@@ -451,14 +448,12 @@ pub mod fn_types {
             Some(quote! {
                 std::result::Result<#rendered_type, JsValue>
             })
+        } else if is_void(typ) {
+            None
         } else {
-            if is_void(&typ) {
-                None
-            } else {
-                Some(quote! {
-                    #rendered_type
-                })
-            }
+            Some(quote! {
+                #rendered_type
+            })
         }
     }
 }
@@ -517,6 +512,7 @@ pub trait FnPrototypeExt {
         in_context: Option<&Context>,
     ) -> TokenStream2;
 
+    #[allow(clippy::too_many_arguments)]
     fn exposed_to_rust_generic_wrapper_fn<ResConverter>(
         &self,
         fn_name: &Identifier,

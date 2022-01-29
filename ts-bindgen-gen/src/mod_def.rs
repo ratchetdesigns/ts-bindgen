@@ -133,8 +133,7 @@ impl ToModPathIter for TypeRef {
 
 impl ToModPathIter for Vec<Identifier> {
     fn to_mod_path_iter<FS: Fs + ?Sized>(&self, _fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
-        Box::new(self.iter().cloned().collect::<Vec<_>>().into_iter())
-            as Box<dyn Iterator<Item = Identifier>>
+        Box::new(self.to_vec().into_iter()) as Box<dyn Iterator<Item = Identifier>>
     }
 }
 

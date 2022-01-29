@@ -96,10 +96,10 @@ impl ResolveTargetType for NamespaceImport {
     fn resolve_target_type(&self) -> Option<TargetEnrichedTypeInfo> {
         match self {
             NamespaceImport::Default { src, context } => {
-                resolve_type(&context, src, &TypeIdent::DefaultExport(src.clone()))
+                resolve_type(context, src, &TypeIdent::DefaultExport(src.clone()))
             }
             NamespaceImport::Named { src, name, context } => resolve_type(
-                &context,
+                context,
                 src,
                 &TypeIdent::Name {
                     file: src.clone(),

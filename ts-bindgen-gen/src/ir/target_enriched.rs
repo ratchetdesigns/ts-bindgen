@@ -451,7 +451,7 @@ from_struct!(
     type_params => {},
 );
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct TypeRef {
     pub referent: TypeIdent,
     pub type_params: Vec<TypeRef>,
@@ -462,6 +462,28 @@ impl Hash for TypeRef {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.referent.hash(state);
         self.type_params.hash(state);
+        // intentionally exclude context
+    }
+}
+
+impl std::cmp::PartialEq for TypeRef {
+    fn eq(&self, other: &Self) -> bool {
+        // we implement eq ourselves to exclude context
+
+        // destructure to catch structural changes
+        let TypeRef {
+            referent: other_referent,
+            type_params: other_type_params,
+            context: _,
+        } = other;
+
+        let TypeRef {
+            referent,
+            type_params,
+            context: _,
+        } = self;
+
+        referent == other_referent && type_params == other_type_params
     }
 }
 
@@ -572,7 +594,13 @@ impl std::cmp::PartialEq for Context {
             fs,
         } = self;
 
-        tbibp == other_tbibp && path == other_path && bn == other_bn && Arc::ptr_eq(fs, other_fs)
+        tbibp == other_tbibp
+            && path == other_path
+            && bn == other_bn
+            && std::ptr::eq(
+                Arc::as_ptr(fs) as *const dyn Fs as *const u8,
+                Arc::as_ptr(other_fs) as *const dyn Fs as *const u8,
+            )
     }
 }
 

@@ -835,7 +835,7 @@ impl TsTypes {
         module_name: &str,
     ) -> Result<PathBuf, InternalError> {
         self.process_module_with_items(module_base, module_name, false, |t, p| {
-            t.load_module(p).map(|m| m.body.clone())
+            t.load_module(p).map(|m| m.body)
         })
     }
 
@@ -1772,17 +1772,19 @@ impl TsTypes {
         };
         self.namespace_stack.push(full_ns);
 
-        body.as_ref().map(|b| match b {
-            TsNamespaceBody::TsModuleBlock(block) => {
-                self.process_module_items(ts_path, &block.body)
-            }
-            TsNamespaceBody::TsNamespaceDecl(ns_decl) => self.process_namespace_body(
-                ts_path,
-                ns_decl.declare,
-                &TsModuleName::Ident(ns_decl.id.clone()),
-                Some(&*ns_decl.body),
-            ),
-        });
+        if let Some(b) = body.as_ref() {
+            match b {
+                TsNamespaceBody::TsModuleBlock(block) => {
+                    self.process_module_items(ts_path, &block.body)
+                }
+                TsNamespaceBody::TsNamespaceDecl(ns_decl) => self.process_namespace_body(
+                    ts_path,
+                    ns_decl.declare,
+                    &TsModuleName::Ident(ns_decl.id.clone()),
+                    Some(&*ns_decl.body),
+                ),
+            };
+        }
 
         self.namespace_stack.pop();
     }

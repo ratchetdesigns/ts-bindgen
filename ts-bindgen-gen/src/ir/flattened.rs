@@ -161,10 +161,7 @@ impl<V> Namespaced<V> {
         let ns = match &name.name {
             TypeIdentIR::Name(_) => Default::default(),
             TypeIdentIR::DefaultExport() => Default::default(),
-            TypeIdentIR::QualifiedName(name_parts) => name_parts[0..name_parts.len() - 1]
-                .iter()
-                .cloned()
-                .collect(),
+            TypeIdentIR::QualifiedName(name_parts) => name_parts[0..name_parts.len() - 1].to_vec(),
             TypeIdentIR::TypeEnvironmentParent() => Default::default(),
         };
 
@@ -748,8 +745,8 @@ macro_rules! impl_effectful_conversion_from_nameable_type_to_type_ref {
                 let (val, effects) = ec.into_value_and_effects();
                 let effect = Effect::CreateType {
                     name: "".to_string(), // our name is filled in as we bubble up
-                    file: file,
-                    ns: ns,
+                    file,
+                    ns,
                     typ: NameableTypeInfo::$nameable(val),
                     generated_name_id: id,
                 };
@@ -1438,7 +1435,7 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
                         };
                         let name: TypeIdent = Namespaced {
                             value: name_ir.clone(),
-                            file: file,
+                            file,
                             ns: Default::default(),
                         }
                         .into();

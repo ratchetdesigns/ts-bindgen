@@ -838,7 +838,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
 
                                 let internal_setter = PropertyAccessor {
                                     property_name: member_name.clone(),
-                                    typ: resolved_type.clone(),
+                                    typ: resolved_type,
                                     class_name: TypeIdent::ExactName(internal_class_name.to_string()),
                                     access_type: AccessType::Setter,
                                 };
@@ -862,7 +862,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }.getter_fn();
 
                                 let setter = PropertyAccessor {
-                                    property_name: member_name.clone(),
+                                    property_name: member_name,
                                     typ: typ.clone(),
                                     class_name: type_name.clone(),
                                     access_type: AccessType::Setter,
