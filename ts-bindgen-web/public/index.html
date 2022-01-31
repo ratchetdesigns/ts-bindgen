@@ -4,20 +4,7 @@
     <meta charset="utf-8" />
     <title>Ratchet Designs - ts-bindgen - Generate rust bindings for typescript definitions</title>
 
-    <script type="module">
-      window.MonacoEnvironment = {
-        getWorkerUrl: function(workerId, label) {
-          return `data:text/javascript;charset=utf-8,${encodeURIComponent(`
-            self.MonacoEnvironment = {
-              baseUrl: 'https://unpkg.com/monaco-editor@%5E0.20.0/min/'
-            };
-            importScripts('https://unpkg.com/monaco-editor@%5E0.20.0/min/vs/base/worker/workerMain.js');
-          `)}`;
-        }
-      };
-      import start_app from "../pkg/ts_bindgen_web.js";
-      start_app();
-    </script>
+    <script type="module" src="bundle.js"></script>
 
     <style>
       html {
