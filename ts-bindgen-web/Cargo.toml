@@ -34,14 +34,8 @@ rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe"
 
 [dependencies.rustfmt]
 package = "rustfmt-nightly"
-git = "https://github.com/rust-lang/rustfmt"
-rev = "3d9b57a22e85a02edef13b8aff15ab800410ebad"
-
-# getrandom is a transitive dependency but we need to enable the js feature
-# for it to get it running on wasm
-[dependencies.getrandom]
-version = "^0.2.0"
-features = ["js"]
+git = "https://github.com/ratchetdesigns/rustfmt"
+branch = "nightly-2021-12-20"
 
 # parking_lot is a transitive dependency that handles wasm32-unknown-unknown
 # properly based on cfg(target_family = "wasm") but target_family = "wasm"
@@ -50,13 +44,6 @@ features = ["js"]
 [dependencies.parking_lot]
 version = "0.11.2"
 features = ["wasm-bindgen"]
-
-# there is a pointer size comparison in this version of rustc_target that
-# doesn't build on wasm but does work with a slight tweak.
-[patch.crates-io.rustc-ap-rustc_target]
-version = "717.0.0"
-git = "https://github.com/ratchetdesigns/rustc-ap-rustc_target"
-rev = "7a7f1f9469ac213e05cf0330a5e7d9eaf631007c"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.2"

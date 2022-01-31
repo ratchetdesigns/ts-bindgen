@@ -20,6 +20,18 @@
     </script>
 
     <style>
+      html {
+        display: flex;
+        height:100%;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
       img {
         border: none;
       }
@@ -29,6 +41,9 @@
         width: 100%;
         height: 80px;
         border-bottom: 1px #eee solid;
+      }
+      .top-bar * {
+        margin-right: 5px;
       }
       .top-bar-logo {
         height: 60px;
@@ -63,8 +78,11 @@
         margin-left: auto;
         padding: 10px 15px;
       }
+      .footer {
+        height: 20px;
+      }
     </style>
   </head>
 
-  <body style="display: flex; flex-direction: column; height: 100vh; margin: 0; overflow: hidden;"></body>
+  <body></body>
 </html>
