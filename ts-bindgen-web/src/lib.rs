@@ -34,9 +34,7 @@ fn get_options(lang: &str) -> CodeEditorOptions {
         .with_builtin_theme(BuiltinTheme::VsDark);
     if lang == "typescript" {
         opts.with_value(
-            r#"
-        type MyType = number | string | null;
-        "#
+            r#"type MyType = number | string | null;"#
             .to_owned(),
         )
     } else {
