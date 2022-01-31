@@ -37,7 +37,8 @@ The overall flow is:
 # Needed refactorings
 
  - Codegen is too complex and would be *much* better served by another ir transformation pass to convert to a data representation of the rust code we want to generate and **then** generating a TokenStream more straightforwardly from that representation. This would enable, for example, references to a single generated name instead of hoping to re-generate the same name in multiple places.
- - Builtins should not be named but should be more of a config.
+ - Automatically generate bindings for all [typescript test cases](https://github.com/microsoft/TypeScript/tree/main/tests/baselines/reference) and ensure the generated bindings compile.
+ - Builtins should not be enums but should configured struct instances.
  - The ir transformation pipeline could be better served by something like [frunk::Generic](https://docs.rs/frunk/latest/frunk/generic/index.html).
 
 # License
