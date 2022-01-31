@@ -1,0 +1,16 @@
+name = "ts-bindgen"
+type = "webpack"
+route = 'ts-bindgen.ratchetdesigns.com/*'
+zone_id = '5ccfad4432b6df9201ff067ca1e19584'
+usage_model = ''
+compatibility_flags = []
+workers_dev = true
+compatibility_date = "2022-01-31"
+
+[site]
+bucket = "public"
+entry-point = "workers-site"
+exclude = [".*"]
+
+[build.upload]
+format = "service-worker"
