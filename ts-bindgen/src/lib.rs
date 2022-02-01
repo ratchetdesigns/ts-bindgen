@@ -13,13 +13,15 @@
 //! by default. You can see
 //! [ts-bindgen-web](https://github.com/ratchetdesigns/ts-bindgen/tree/master/ts-bindgen-web)
 //! for an example of running rustfmt as a library on the output (in wasm).
+//!
+#![doc=include_str!("../README.md")]
 
 pub use ts_bindgen_gen::{Error, Fs, MemFs, StdFs};
 
 use std::path::Path;
 use ts_bindgen_gen::generate_rust_for_typescript;
 
-/// Given a [filesystem](`FS`) and a reference to a typescript definition module (e.g. "moment" to
+/// Given a [filesystem](`Fs`) and a reference to a typescript definition module (e.g. "moment" to
 /// refer to a moment module in node_modules, "./my-module" to refer to my-module.d.ts or
 /// my-module/index.d.ts or my-module's package.json typings reference, etc.), return a String
 /// of rust code for wasm-bindgen bindings to the module.

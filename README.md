@@ -2,6 +2,10 @@
 
 ts-bindgen: automatically generate rust [wasm-bindgen](https://rustwasm.github.io/docs/wasm-bindgen/) bindings for typescript definitions to easily interact with javascript libraries from rust compiled to wasm.
 
+# Try it out in your browser
+
+Head to [ts-bindgen.ratchetdesigns.com](https://ts-bindgen.ratchetdesigns.com) to try ts-bindgen in your browser now by copy/pasting typescript definitions to see the rust bindings it generates.
+
 # Status
 
 ts-bindgen is currently alpha software and it should be expected that any or all of the following might change significantly from version to version:
