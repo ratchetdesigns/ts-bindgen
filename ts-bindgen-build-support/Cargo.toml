@@ -1,0 +1,18 @@
+[package]
+name = "ts-bindgen-build-support"
+version = "0.1.0"
+description = "Generate a wasm-bindgen interface from typescript definitions. Build-time utilities."
+authors = ["Adam Berger <adam@ratchetdesigns.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+repository = "https://github.com/ratchetdesigns/ts-bindgen"
+readme = "README.md"
+keywords = ["wasm", "bindings", "typescript", "wasm-bindgen", "javascript"]
+categories = ["compilers", "command-line-utilities", "development-tools::ffi", "wasm", "web-programming"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+web-sys = "0.3.53"
+cargo-whatfeatures = "0.9.7"
