@@ -1,33 +1,40 @@
 extern crate proc_macro;
 
 use cargo_whatfeatures::Registry;
-use proc_macro::{Ident, Span, TokenStream, Punct, Spacing, TokenTree};
-use std::iter::Iterator;
+use proc_macro::TokenStream;
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
+use quote::quote;
 
 #[proc_macro]
-pub fn web_sys_types(_item: TokenStream) -> TokenStream {
+pub fn with_web_sys_types(form: TokenStream) -> TokenStream {
     let types = _web_sys_types();
 
-    types
-        .iter()
-        .map(|t| Ident::new(t, Span::mixed_site()))
-        .flat_map(|id| {
-            Box::new(
-                [id.into(), Punct::new(',', Spacing::Alone).into()].into_iter()
-            ) as Box<dyn Iterator<Item = TokenTree>>
-        })
-        .collect()
+    let types = types.iter().map(|t| Ident::new(t, Span::call_site()));
+
+    let form: TokenStream2 = form.into();
+
+    quote! {
+        macro_rules! __with_web_sys_types {
+            ($($item:ident),*) => {
+                #form
+            }
+        }
+
+        __with_web_sys_types!(#(#types),*);
+    }
+    .into()
 }
 
 fn _web_sys_types() -> Vec<String> {
-    let workspace =
-        Registry::from_local()
-            .unwrap()
-            .maybe_latest("web-sys")
-            .unwrap()
-            .get_features()
-            .unwrap();
-    workspace.map.values()
+    let workspace = Registry::from_local()
+        .unwrap()
+        .maybe_latest("web-sys")
+        .unwrap()
+        .get_features()
+        .unwrap();
+    workspace
+        .map
+        .values()
         .flat_map(|features| features.features.keys())
         .cloned()
         .collect()

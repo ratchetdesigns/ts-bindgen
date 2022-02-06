@@ -16,3 +16,5 @@ proc-macro = true
 [dependencies]
 web-sys = "0.3.53"
 cargo-whatfeatures = "0.9.7"
+quote = "1.0"
+proc-macro2 = "1.0.36"
