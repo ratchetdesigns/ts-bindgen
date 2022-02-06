@@ -7,6 +7,7 @@ use paper::paper::dist::paper::paper::{
 };
 use wasm_bindgen::prelude::*;
 use web_sys::{window, HtmlCanvasElement};
+use std::rc::Rc;
 
 /// Translated from http://paperjs.org/examples/chain/
 #[wasm_bindgen]
@@ -15,9 +16,8 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     let point_distance = 35.0;
 
     let scope = PaperScope::new();
-    let view_js: &JsValue = view.as_ref();
-    scope.setup(PaperScopeSetupParamsElementParam::JsValueCase(
-        view_js.clone(),
+    scope.setup(PaperScopeSetupParamsElementParam::WebSysHtmlCanvasElementCase(
+        view.clone(),
     ))?;
     scope.install(window().unwrap().into())?;
 
@@ -39,9 +39,9 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
         .collect::<Result<Vec<_>, _>>()?;
     path.add(points.into_boxed_slice())?;
 
-    let mouse_handler = Closure::wrap(Box::new(move |event: JsValue| -> Result<(), JsValue> {
-        // TODO: nicer JsValue -> class conversion
-        let event = MouseEvent(event.into());
+    let mouse_handler = Rc::new(move |args: Box<[JsValue]>| -> Result<JsValue, JsValue> {
+        let event = args.into_iter().next().ok_or::<JsValue>("no event passed".into())?;
+        let event = MouseEvent(event.clone().into());
         path.first_segment()?.set_point(event.point()?)?;
 
         let segments = path.segments()?;
@@ -56,12 +56,12 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
 
         path.smooth(SmoothOptions::new("continuous").into())?;
 
-        Ok(())
-    }) as Box<dyn Fn(JsValue) -> Result<(), JsValue>>);
+        Ok(JsValue::null())
+    }) as Rc<dyn Fn(Box<[JsValue]>) -> Result<JsValue, JsValue>>;
     scope
         .view()?
-        .set_on_mouse_move(ViewOnMouseMove::JsValueCase(
-            mouse_handler.into_js_value().into(),
+        .set_on_mouse_move(ViewOnMouseMove::FnJsValueJsValueCase(
+            mouse_handler
         ))?;
 
     Ok(())
