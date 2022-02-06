@@ -1467,6 +1467,60 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
                 })
                 .unzip();
             effs.into_iter()
-                .chain(std::iter::once(v.apply_names(&names_by_id)))
+                .chain(std::iter::once(v))
+                .map(move |t| t.apply_names(&names_by_id))
         })
+}
+
+#[cfg(test)]
+mod test {
+    use super::{flatten_types, FlatType, TypeIdent};
+    use crate::fs::MemFs;
+    use crate::parse::TsTypes;
+    use crate::ArcFs;
+    use std::collections::HashMap;
+    use std::error::Error;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn get_types_for_code(ts_code: &str) -> Result<HashMap<TypeIdent, FlatType>, Box<dyn Error>> {
+        let test_path: &Path = Path::new("/test.d.ts");
+        let mut fs: MemFs = Default::default();
+        fs.set_cwd(Path::new("/"));
+        fs.add_file_at(test_path, ts_code.to_string());
+
+        let types_by_name = TsTypes::parse(Arc::new(fs) as ArcFs, &test_path.to_string_lossy())?
+            .iter()
+            .find_map(|(path, types_by_name)| {
+                if path == test_path {
+                    Some(
+                        flatten_types(types_by_name.values().cloned())
+                            .map(|t| (t.name.clone(), t))
+                            .collect::<HashMap<_, _>>(),
+                    )
+                } else {
+                    None
+                }
+            });
+
+        assert!(types_by_name.is_some());
+
+        Ok(types_by_name.unwrap())
+    }
+
+    #[test]
+    fn test_nested_generated_names() {
+        // a tuple as a param needs to be flattened inside of a union that gets flattened
+        let code = r#"
+            export type MyType = number | ((a: [string]) => string);
+        "#;
+
+        let types = get_types_for_code(code).unwrap();
+        let debug = format!("{:?}", types);
+
+        // TODO: this is a wildly hacky way to check this but we want to
+        // make sure that nested GeneratedNames are properly transformed
+        // into real names. this avoids having to write some generic mapper.
+        assert!(!debug.contains("GeneratedName"));
+    }
 }
