@@ -140,6 +140,7 @@ impl Component for App {
                         {" automatically generates ergonomic wasm-bindgen rust bindings for typescript definitions. "}
                         {" Crafted thoughtfully by "}
                         <a href="https://ratchetdesigns.com">{"Ratchet Designs"}</a>
+                        {"."}
                     </div>
                 </div>
                 <div class="main-area">
