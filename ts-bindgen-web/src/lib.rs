@@ -114,24 +114,33 @@ impl Component for App {
         html! {
             <>
                 <div class="top-bar">
-                    <a class="top-bar-logo" href="https://ratchetdesigns.com">
-                        <img alt="Ratchet Designs" src="logo.png" />
-                    </a>
-                    <a href="https://crates.io/crates/ts-bindgen">
-                        <img src="https://img.shields.io/crates/v/ts-bindgen.svg" alt="ts-bindgen crate" style="max-width: 100%;" />
-                    </a>
-                    <a href="https://docs.rs/ts-bindgen">
-                        <img src="https://docs.rs/ts-bindgen/badge.svg" alt="Rust Docuemntation" style="max-width: 100%;" />
-                    </a>
-                    <a href="https://github.com/ratchetdesigns/ts-bindgen/actions/workflows/ci.yml">
-                        <img src="https://github.com/ratchetdesigns/ts-bindgen/actions/workflows/ci.yml/badge.svg" alt="CI" style="max-width: 100%;" />
-                    </a>
-                    <a href="https://github.com/ratchetdesigns/ts-bindgen">
-                        <img alt="Crates.io" src="https://img.shields.io/crates/l/ts-bindgen" style="max-width: 100%;" />
-                    </a>
-                    <a href="https://github.com/ratchetdesigns/ts-bindgen">
-                        <img src="https://img.shields.io/github/stars/ratchetdesigns/ts-bindgen?style=social" alt="ts-bindgen github" style="max-width: 100%;" />
-                    </a>
+                    <div class="header">
+                        <a class="header-logo" href="https://ratchetdesigns.com">
+                            <img alt="Ratchet Designs" src="logo.png" />
+                        </a>
+                        <a href="https://crates.io/crates/ts-bindgen">
+                            <img src="https://img.shields.io/crates/v/ts-bindgen.svg" alt="ts-bindgen crate" style="max-width: 100%;" />
+                        </a>
+                        <a href="https://docs.rs/ts-bindgen">
+                            <img src="https://docs.rs/ts-bindgen/badge.svg" alt="Rust Docuemntation" style="max-width: 100%;" />
+                        </a>
+                        <a href="https://github.com/ratchetdesigns/ts-bindgen/actions/workflows/ci.yml">
+                            <img src="https://github.com/ratchetdesigns/ts-bindgen/actions/workflows/ci.yml/badge.svg" alt="CI" style="max-width: 100%;" />
+                        </a>
+                        <a href="https://github.com/ratchetdesigns/ts-bindgen">
+                            <img alt="Crates.io" src="https://img.shields.io/crates/l/ts-bindgen" style="max-width: 100%;" />
+                        </a>
+                        <a href="https://github.com/ratchetdesigns/ts-bindgen">
+                            <img src="https://img.shields.io/github/stars/ratchetdesigns/ts-bindgen?style=social" alt="ts-bindgen github" style="max-width: 100%;" />
+                        </a>
+                    </div>
+                    <div class="subheader">
+                        <span class="subheader-dropcap">{"//"}</span>
+                        <a href="https://github.com/ratchetdesigns/ts-bindgen">{"ts-bindgen"}</a>
+                        {" automatically generates ergonomic wasm-bindgen rust bindings for typescript definitions. "}
+                        {" Crafted thoughtfully by "}
+                        <a href="https://ratchetdesigns.com">{"Ratchet Designs"}</a>
+                    </div>
                 </div>
                 <div class="main-area">
                     <div class="pane">
