@@ -14,6 +14,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::iter;
 
+// https://rustwasm.github.io/wasm-bindgen/api/wasm_bindgen/closure/struct.Closure.html
+const MAX_CLOSURE_ARGUMENTS: usize = 7;
+
 struct TransformedParam<'a, T: Fn(&TypeRef) -> TokenStream2>(&'a Param, T);
 
 impl<'a, T: Fn(&TypeRef) -> TokenStream2> ToTokens for TransformedParam<'a, T> {
@@ -75,12 +78,27 @@ impl HasFnPrototype for TypeRef {
                 .iter()
                 .enumerate()
                 .map(|(i, t)| {
-                    Box::new(Param {
-                        name: format!("arg{}", i),
-                        type_info: t.clone(),
-                        is_variadic: false, // TODO
-                        context: t.context.clone(),
-                    }) as Box<dyn ParamExt>
+                    if TypeIdent::Builtin(Builtin::Variadic) == t.referent {
+                        Box::new(Param {
+                            name: format!("arg{}", i),
+                            type_info: t.type_params.first().map(Clone::clone).unwrap_or_else(
+                                || TypeRef {
+                                    referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                                    type_params: Default::default(),
+                                    context: t.context.clone(),
+                                },
+                            ),
+                            is_variadic: true,
+                            context: t.context.clone(),
+                        }) as Box<dyn ParamExt>
+                    } else {
+                        Box::new(Param {
+                            name: format!("arg{}", i),
+                            type_info: t.clone(),
+                            is_variadic: false,
+                            context: t.context.clone(),
+                        }) as Box<dyn ParamExt>
+                    }
                 })
                 .take(self.type_params.len() - 1),
         )
@@ -325,15 +343,44 @@ impl<'b> HasFnPrototype for TypeRefLike<'b> {
 
 pub mod fn_types {
     use super::{
-        Builtin, Context, Contextual, HasFnPrototype, OwnedTypeRef, ResolveTargetType,
-        SerializationType, SerializationTypeGetter, TargetEnrichedTypeInfo, TokenStream2,
-        TypeIdent, TypeRef, TypeRefLike,
+        Builtin, Context, Contextual, HasFnPrototype, OwnedTypeRef, ParamExt, ResolveTargetType,
+        SerializationType, SerializationTypeGetter, SplattedVariadicParam, TargetEnrichedTypeInfo,
+        TokenStream2, TypeIdent, TypeRef, TypeRefLike, MAX_CLOSURE_ARGUMENTS,
     };
     use quote::quote;
     use std::borrow::Cow;
 
     fn is_void(typ: &TypeRef) -> bool {
         matches!(&typ.referent, TypeIdent::Builtin(Builtin::PrimitiveVoid))
+    }
+
+    pub fn exposed_to_js_fn_type<F: HasFnPrototype + ?Sized>(
+        f: &F,
+        is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        let params = f.params().enumerate().flat_map(|(idx, p)| {
+            if p.is_variadic() {
+                Box::new((idx..MAX_CLOSURE_ARGUMENTS).map(move |idx| {
+                    let v = SplattedVariadicParam {
+                        param: p.as_ref(),
+                        idx,
+                    };
+                    v.as_exposed_to_js_unnamed_param_list(in_context)
+                })) as Box<dyn Iterator<Item = TokenStream2>>
+            } else {
+                Box::new(std::iter::once(
+                    p.as_exposed_to_js_unnamed_param_list(in_context),
+                )) as Box<dyn Iterator<Item = TokenStream2>>
+            }
+        });
+
+        let ret = exposed_to_js_return_type(&f.return_type(), is_fallible, in_context);
+        let ret = render_return(&ret);
+
+        quote! {
+            dyn Fn(#(#params),*) #ret
+        }
     }
 
     fn exposed_to_js_type(typ: &TypeRefLike, in_context: Option<&Context>) -> TokenStream2 {
@@ -352,12 +399,10 @@ pub mod fn_types {
                     Some(TargetEnrichedTypeInfo::Ref(typ))
                         if matches!(&typ.referent, TypeIdent::Builtin(Builtin::Fn)) =>
                     {
-                        let params = typ
-                            .params()
-                            .map(|p| p.as_exposed_to_js_unnamed_param_list(in_context));
-                        let ret = exposed_to_js_return_type(&typ.return_type(), true, in_context);
+                        let fn_type = exposed_to_js_fn_type(&typ, true, in_context);
+
                         quote! {
-                            &Closure<dyn Fn(#(#params),*) -> #ret>
+                            &Closure<#fn_type>
                         }
                     }
                     _ => {
@@ -464,9 +509,9 @@ pub trait FnPrototypeExt {
         body: Body,
         in_context: Option<&Context>,
     ) -> TokenStream2;
-    fn exposed_to_js_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
+    fn exposed_to_js_closure_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
 
-    fn exposed_to_js_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
+    fn exposed_to_js_closure_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
 
     fn exposed_to_js_wrapped_closure<Body: ToTokens>(
         &self,
@@ -538,40 +583,76 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         body: Body,
         in_context: Option<&Context>,
     ) -> TokenStream2 {
-        let params = self
+        let (variadic_params, variadic_names): (Vec<_>, Vec<_>) = self
             .params()
-            .map(|p| p.as_exposed_to_js_named_param_list(in_context));
+            .enumerate()
+            .last()
+            .and_then(|(idx, p)| {
+                if p.is_variadic() {
+                    Some(
+                        (idx..MAX_CLOSURE_ARGUMENTS)
+                            .map(move |idx| {
+                                let v = SplattedVariadicParam {
+                                    param: p.as_ref(),
+                                    idx,
+                                };
+                                (
+                                    v.as_exposed_to_js_named_param_list(in_context),
+                                    v.rust_name(),
+                                )
+                            })
+                            .unzip(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let params = self.params().flat_map(|p| {
+            if p.is_variadic() {
+                // since Closures don't support variadic params, just
+                // fill up the remaining arguments with our param
+                variadic_params.clone()
+            } else {
+                vec![p.as_exposed_to_js_named_param_list(in_context)]
+            }
+        });
         let ret = fn_types::exposed_to_js_return_type(
             &self.return_type(),
             self.is_fallible(),
             in_context,
         );
         let ret = fn_types::render_return(&ret);
+        let variadic_combiner = self
+            .params()
+            .last()
+            .and_then(|p| {
+                if !p.is_variadic() {
+                    return None;
+                }
+
+                let name = p.rust_name();
+                let typ = p.as_exposed_to_js_unnamed_param_list(in_context);
+                Some(quote! {
+                    let #name: #typ = Box::new([#(#variadic_names),*]);
+                })
+            })
+            .unwrap_or_default();
 
         quote! {
             move |#(#params),*| #ret {
+                #variadic_combiner
                 #body
             }
         }
     }
 
-    fn exposed_to_js_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
-        let params = self
-            .params()
-            .map(|p| p.as_exposed_to_js_unnamed_param_list(in_context));
-        let ret = fn_types::exposed_to_js_return_type(
-            &self.return_type(),
-            self.is_fallible(),
-            in_context,
-        );
-        let ret = fn_types::render_return(&ret);
-        quote! {
-            dyn Fn(#(#params),*) #ret
-        }
+    fn exposed_to_js_closure_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
+        fn_types::exposed_to_js_fn_type(self, self.is_fallible(), in_context)
     }
 
-    fn exposed_to_js_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
-        let fn_type = self.exposed_to_js_fn_type(in_context);
+    fn exposed_to_js_closure_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let fn_type = self.exposed_to_js_closure_fn_type(in_context);
         quote! {
             Box<#fn_type>
         }
@@ -583,7 +664,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         in_context: Option<&Context>,
     ) -> TokenStream2 {
         let closure = self.exposed_to_js_closure(body, in_context);
-        let boxed_fn_type = self.exposed_to_js_boxed_fn_type(in_context);
+        let boxed_fn_type = self.exposed_to_js_closure_boxed_fn_type(in_context);
         quote! {
             Closure::wrap(Box::new(
                 #closure
@@ -841,6 +922,77 @@ pub trait WrappedParam {
     fn is_variadic(&self) -> bool;
 }
 
+struct SplattedVariadicParam<'a, P: ParamExt + ?Sized> {
+    param: &'a P,
+    idx: usize,
+}
+
+impl<'a, P: ParamExt + ?Sized> ParamExt for SplattedVariadicParam<'a, P> {
+    fn rust_name(&self) -> Identifier {
+        self.param
+            .rust_name()
+            .prefix_name(&format!("_Variadic{}_", self.idx))
+    }
+
+    fn as_exposed_to_js_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let full_type = self.as_exposed_to_js_unnamed_param_list(in_context);
+        let n = self.rust_name();
+        quote! { #n: #full_type }
+    }
+
+    fn as_exposed_to_js_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let wrapped = self.type_ref();
+        let typ = fn_types::exposed_to_js_param_type(&wrapped, in_context);
+        quote! { #typ }
+    }
+
+    fn as_exposed_to_rust_named_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let full_type = self.as_exposed_to_rust_unnamed_param_list(in_context);
+        let n = self.rust_name();
+        quote! { #n: #full_type }
+    }
+
+    fn as_exposed_to_rust_unnamed_param_list(&self, in_context: Option<&Context>) -> TokenStream2 {
+        let wrapped = self.type_ref();
+        let typ = fn_types::exposed_to_rust_param_type(&wrapped, in_context);
+        quote! { #typ }
+    }
+
+    fn rust_to_js_conversion(
+        &self,
+        is_fallible: bool,
+        in_context: Option<&Context>,
+    ) -> TokenStream2 {
+        self.param.rust_to_js_conversion(is_fallible, in_context)
+    }
+
+    fn rust_to_jsvalue_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.param.rust_to_jsvalue_conversion(in_context)
+    }
+
+    fn local_fn_name(&self) -> Identifier {
+        self.param
+            .local_fn_name()
+            .prefix_name(&format!("_Variadic{}_", self.idx))
+    }
+
+    fn js_to_rust_conversion(&self, in_context: Option<&Context>) -> TokenStream2 {
+        self.param.js_to_rust_conversion(in_context)
+    }
+
+    fn js_wrapper_fn(&self, in_context: Option<&Context>) -> Option<TokenStream2> {
+        self.param.js_wrapper_fn(in_context)
+    }
+
+    fn is_variadic(&self) -> bool {
+        false
+    }
+
+    fn type_ref(&self) -> TypeRefLike<'_> {
+        self.param.type_ref()
+    }
+}
+
 impl WrappedParam for Param {
     fn wrapped_type(&self) -> TypeRefLike<'_> {
         (&self.type_info).into()
@@ -978,7 +1130,22 @@ impl<T: WrappedParam> ParamExt for T {
         let name = self.rust_name();
         let fn_name = self.local_fn_name();
         let wrapped = self.wrapped_type();
-        render_rust_to_jsvalue_conversion(&name, &fn_name, &wrapped, quote! {})
+        let name_arr = name.suffix_name("_Array");
+
+        if self.is_variadic() {
+            let conv = render_rust_to_jsvalue_conversion(&name, &fn_name, &wrapped, quote! {});
+            quote! {
+                {
+                    let #name_arr = js_sys::Array::new();
+                    for #name in #name.into_iter() {
+                        #name_arr.push(&#conv);
+                    }
+                    #name_arr
+                }
+            }
+        } else {
+            render_rust_to_jsvalue_conversion(&name, &fn_name, &wrapped, quote! {})
+        }
     }
 
     fn js_wrapper_fn(&self, in_context: Option<&Context>) -> Option<TokenStream2> {
@@ -1182,9 +1349,10 @@ fn render_wasm_bindgen_return_to_js(
 pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream2) -> TokenStream2 {
     let serialization_type = return_type.serialization_type();
     match serialization_type {
-        SerializationType::Raw | SerializationType::JsValue => quote! {
+        SerializationType::Raw => quote! {
             #return_value.into_serde().unwrap()
         },
+        SerializationType::JsValue => return_value.clone(),
         SerializationType::SerdeJson => {
             quote! {
                 ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()

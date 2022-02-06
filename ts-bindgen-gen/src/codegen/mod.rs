@@ -540,17 +540,29 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let member_cases = not_undefined_members
                     .iter()
                     .map(|t| {
-                        let attrs = if t.serialization_type() == SerializationType::JsValue {
-                            quote! {
-                                #[serde(
-                                    serialize_with = "ts_bindgen_rt::serialize_jsvalue",
-                                    deserialize_with = "ts_bindgen_rt::deserialize_as_jsvalue")
-                                ]
-                            }
-                        } else {
-                            Default::default()
-                        };
                         let case = type_to_union_case_name(t);
+                        let attrs = match t.serialization_type() {
+                            SerializationType::JsValue => {
+                                quote! {
+                                    #[serde(
+                                        serialize_with = "ts_bindgen_rt::serialize_jsvalue",
+                                        deserialize_with = "ts_bindgen_rt::deserialize_as_jsvalue")
+                                    ]
+                                }
+                            },
+                            SerializationType::Fn => {
+                                let case = case.to_snake_case();
+                                let serialize_name = serialize_field_name(&case).in_namespace(&name).to_string();
+                                let deserialize_name = deserialize_field_name(&case).in_namespace(&name).to_string();
+                                quote! {
+                                    #[serde(
+                                        serialize_with = #serialize_name,
+                                        deserialize_with = #deserialize_name)
+                                    ]
+                                }
+                            },
+                            _ => Default::default(),
+                        };
 
                         if t.is_uninhabited() {
                             (
@@ -561,6 +573,9 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 },
                             )
                         } else {
+                            let t = OwnedTypeInfo {
+                                type_info: t,
+                            };
                             (
                                 case.clone(),
                                 quote! {
@@ -592,12 +607,38 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         }
                     ).1;
 
+                let impl_fns: Vec<_> = not_undefined_members
+                    .iter()
+                    .filter_map(|t| {
+                        let case = type_to_union_case_name(t).to_snake_case();
+                        let serialize_fn = render_serialize_fn(&case, &t);
+                        let deserialize_fn = render_deserialize_fn(&case, &t);
+                        serialize_fn.zip(deserialize_fn).map(|(s, d)| {
+                            quote! {
+                                #s
+                                #d
+                            }
+                        })
+                    })
+                    .collect();
+                let impls = if impl_fns.is_empty() {
+                    Default::default()
+                } else {
+                    quote! {
+                        impl #name {
+                            #(#impl_fns)*
+                        }
+                    }
+                };
+
                 quote! {
                     #[derive(Clone, serde::Serialize, serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #name {
                         #(#member_cases),*
                     }
+
+                    #impls
                 }
             }
             TargetEnrichedTypeInfo::Tuple(Tuple { types, .. }) => {
@@ -1318,6 +1359,14 @@ struct FieldDefinition<'a> {
     type_params: &'a HashMap<String, &'a TypeParamConfig>,
 }
 
+fn serialize_field_name(field_name: &Identifier) -> Identifier {
+    field_name.prefix_name("__TSB__serialize_")
+}
+
+fn deserialize_field_name(field_name: &Identifier) -> Identifier {
+    field_name.prefix_name("__TSB__deserialize_")
+}
+
 impl<'a> ToTokens for FieldDefinition<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let js_field_name = self.js_field_name;
@@ -1339,8 +1388,8 @@ impl<'a> ToTokens for FieldDefinition<'a> {
         let rendered_type = OwnedTypeRef(Cow::Borrowed(typ));
 
         if typ.serialization_type() == SerializationType::Fn {
-            let serialize_fn = field_name.prefix_name("__tsb__serialize_");
-            let deserialize_fn = field_name.prefix_name("__tsb__deserialize_");
+            let serialize_fn = serialize_field_name(&field_name);
+            let deserialize_fn = deserialize_field_name(&field_name);
             let serialize_fn = format!("{}::{}", self.self_name, serialize_fn);
             let deserialize_fn = format!("{}::{}", self.self_name, deserialize_fn);
             serde_attrs.push(quote! {
@@ -1360,6 +1409,53 @@ impl<'a> ToTokens for FieldDefinition<'a> {
     }
 }
 
+struct OwnedTypeInfo<'a> {
+    type_info: &'a TargetEnrichedTypeInfo,
+}
+
+impl<'a> ToTokens for OwnedTypeInfo<'a> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        match self.type_info {
+            TargetEnrichedTypeInfo::Func(f) => {
+                let tr = OwnedTypeRef(Cow::Owned(f.clone().into()));
+                tr.to_tokens(toks);
+            }
+            TargetEnrichedTypeInfo::Ref(r) => {
+                let tr = OwnedTypeRef(Cow::Borrowed(r));
+                tr.to_tokens(toks);
+            }
+            _ => {
+                self.type_info.to_tokens(toks);
+            }
+        };
+    }
+}
+
+impl From<Func> for TypeRef {
+    fn from(src: Func) -> TypeRef {
+        TypeRef {
+            referent: TypeIdent::Builtin(Builtin::Fn),
+            type_params: src
+                .params
+                .into_iter()
+                .map(|p| {
+                    if p.is_variadic {
+                        TypeRef {
+                            referent: TypeIdent::Builtin(Builtin::Variadic),
+                            type_params: vec![p.type_info],
+                            context: src.context.clone(),
+                        }
+                    } else {
+                        p.type_info
+                    }
+                })
+                .chain(std::iter::once(*src.return_type))
+                .collect(),
+            context: src.context.clone(),
+        }
+    }
+}
+
 impl ToTokens for EnumValue {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         let our_toks = match self {
@@ -1375,96 +1471,116 @@ fn render_deserialize_fn(
     field_name: &Identifier,
     type_info: &TargetEnrichedTypeInfo,
 ) -> Option<TokenStream2> {
-    if let TargetEnrichedTypeInfo::Ref(
-        tr
-        @ TypeRef {
-            referent: TypeIdent::Builtin(Builtin::Fn),
-            ..
-        },
-    ) = type_info
-    {
-        let deserialize_fn_name = field_name.prefix_name("__tsb__deserialize_");
-        let return_type = tr.return_type();
-        let return_value = quote! { ret };
-        let ret = render_raw_return_to_js(&return_type, &return_value);
-        let args = quote! { args };
-        let params = tr
-            .params()
-            .map(|p| p.as_exposed_to_rust_named_param_list(None));
-        let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
-        // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
-        let conversions = tr.args().map(|p| {
-            let name = p.rust_name();
-            let conv = p.rust_to_jsvalue_conversion(None);
+    let (f, rendered_type) = match type_info {
+        TargetEnrichedTypeInfo::Ref(
+            tr @ TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Fn),
+                ..
+            },
+        ) => {
+            let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
+            (tr as &dyn HasFnPrototype, quote! { #rendered_type })
+        }
+        TargetEnrichedTypeInfo::Func(f) => {
+            let rendered_type = OwnedTypeInfo { type_info };
+            (f as &dyn HasFnPrototype, quote! { #rendered_type })
+        }
+        _ => {
+            return None;
+        }
+    };
+    let deserialize_fn_name = deserialize_field_name(field_name);
+    let return_type = f.return_type();
+    let return_value = quote! { ret };
+    let ret = render_raw_return_to_js(&return_type, &return_value);
+    let args = quote! { _Args };
+    let params = f
+        .params()
+        .map(|p| p.as_exposed_to_rust_named_param_list(None));
+    // TODO: need to render wrappers for fn params, used in rust_to_jsvalue_conversion
+    let conversions = f.args().map(|p| {
+        let name = p.rust_name();
+        let conv = p.rust_to_jsvalue_conversion(None);
+        quote! {
+            let #name = #conv;
+        }
+    });
+    let pushes = f.params().map(|p| {
+        let name = p.rust_name();
+        if p.is_variadic() {
             quote! {
-                let #name = #conv;
+                for #name in #name.values().into_iter(){
+                    #args.push(&#name?);
+                }
             }
-        });
-        let pushes = tr.params().map(|p| {
-            let name = p.rust_name();
+        } else {
             quote! {
                 #args.push(&#name);
             }
-        });
-        // TODO: do we need to handle member functions here (first arg to apply may be
-        // non-null)
-        Some(quote! {
-            #[allow(non_snake_case)]
-            fn #deserialize_fn_name<'de, D>(deserializer: D) -> std::result::Result<#rendered_type, D::Error>
-            where
-                D: serde::de::Deserializer<'de>,
-            {
-                let jsv: JsValue = ts_bindgen_rt::deserialize_as_jsvalue(deserializer)?;
-                let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&jsv);
-                Ok(#field_name.map(|f| {
-                    let f = f.clone();
-                    std::rc::Rc::new(move |#(#params),*| {
-                        #(#conversions);*
-                        let args = js_sys::Array::new();
-                        #(#pushes);*
-                        let #return_value = f.apply(&JsValue::null(), &args)?;
-                        Ok(#ret)
-                    }) as #rendered_type
-                })
-                .ok_or_else(|| ts_bindgen_rt::jsvalue_serde::Error::InvalidType("expected function".to_string()))
-                .map_err(serde::de::Error::custom)?)
-            }
-        })
-    } else {
-        None
-    }
+        }
+    });
+    // TODO: do we need to handle member functions here (first arg to apply may be
+    // non-null)
+    Some(quote! {
+        #[allow(non_snake_case)]
+        fn #deserialize_fn_name<'de, D>(deserializer: D) -> std::result::Result<#rendered_type, D::Error>
+        where
+            D: serde::de::Deserializer<'de>,
+        {
+            let jsv: JsValue = ts_bindgen_rt::deserialize_as_jsvalue(deserializer)?;
+            let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&jsv);
+            Ok(#field_name.map(|f| {
+                let f = f.clone();
+                std::rc::Rc::new(move |#(#params),*| {
+                    #(#conversions);*
+                    let #args = js_sys::Array::new();
+                    #(#pushes);*
+                    let #return_value = f.apply(&JsValue::null(), &#args)?;
+                    Ok(#ret)
+                }) as #rendered_type
+            })
+            .ok_or_else(|| ts_bindgen_rt::jsvalue_serde::Error::InvalidType("expected function".to_string()))
+            .map_err(serde::de::Error::custom)?)
+        }
+    })
 }
 
 fn render_serialize_fn(
     field_name: &Identifier,
     type_info: &TargetEnrichedTypeInfo,
 ) -> Option<TokenStream2> {
-    if let TargetEnrichedTypeInfo::Ref(
-        tr
-        @ TypeRef {
-            referent: TypeIdent::Builtin(Builtin::Fn),
-            ..
-        },
-    ) = type_info
-    {
-        let serialize_fn_name = field_name.prefix_name("__tsb__serialize_");
-        let invocation = tr.invoke_with_name(field_name);
-        let closure = tr.exposed_to_js_wrapped_closure(invocation, None);
-        let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
-        Some(quote! {
-            #[allow(non_snake_case)]
-            fn #serialize_fn_name<S>(#field_name: &#rendered_type, serializer: S) -> std::result::Result<S::Ok, S::Error>
-            where
-                S: serde::ser::Serializer,
-            {
-                let #field_name = #field_name.clone();
-                let #field_name = #closure;
-                let jsv = ts_bindgen_rt::serialize_as_jsvalue(serializer, &#field_name.into_js_value());
-                //#field_name.forget(); // TODO: how do we properly handle memory management?
-                jsv
-            }
-        })
-    } else {
-        None
-    }
+    let (f, rendered_type) = match type_info {
+        TargetEnrichedTypeInfo::Ref(
+            tr @ TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Fn),
+                ..
+            },
+        ) => {
+            let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
+            (tr as &dyn HasFnPrototype, quote! { #rendered_type })
+        }
+        TargetEnrichedTypeInfo::Func(f) => {
+            let rendered_type = OwnedTypeInfo { type_info };
+            (f as &dyn HasFnPrototype, quote! { #rendered_type })
+        }
+        _ => {
+            return None;
+        }
+    };
+    let serialize_fn_name = serialize_field_name(field_name);
+    let invocation = f.invoke_with_name(field_name);
+    let closure = f.exposed_to_js_wrapped_closure(invocation, None);
+    Some(quote! {
+        #[allow(non_snake_case)]
+        fn #serialize_fn_name<S>(#field_name: &#rendered_type, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::ser::Serializer,
+        {
+            let #field_name = #field_name.clone();
+            let #field_name = #closure;
+            let jsv = ts_bindgen_rt::serialize_as_jsvalue(serializer, &#field_name.into_js_value());
+            //#field_name.forget(); // TODO: how do we properly handle memory management?
+            jsv
+        }
+    })
 }
