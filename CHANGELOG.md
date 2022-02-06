@@ -2,6 +2,10 @@
 
 ## [Unreleased] - ReleaseDate
 
+### BREAKING CHANGE
+
+- web-sys types are now generated as the proper web-sys type instead of as JsValue. #1
+
 ### Added
 
 - Recognize and use corresponding web-sys builtins for types. #1
