@@ -40,6 +40,28 @@ impl Identifier {
         }
     }
 
+    pub fn with_path<S: AsRef<str>>(path: S) -> Identifier {
+        Identifier {
+            type_parts: path
+                .as_ref()
+                .split("::")
+                .map(|n| format_ident!("{}", n))
+                .collect(),
+            type_params: Default::default(),
+        }
+    }
+
+    pub fn to_snake_case(&self) -> Identifier {
+        Identifier {
+            type_parts: self
+                .type_parts
+                .iter()
+                .map(|id| map_to_ident(id.to_string(), |id| id.to_snake_case()))
+                .collect(),
+            type_params: self.type_params.clone(),
+        }
+    }
+
     pub fn in_namespace(&self, ns: &Identifier) -> Identifier {
         Identifier {
             type_parts: ns
@@ -135,7 +157,7 @@ impl From<Ident> for Identifier {
     }
 }
 
-pub fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Identifier {
+pub fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident {
     // TODO: make these paths, not idents
 
     // make sure we have valid characters
@@ -174,15 +196,15 @@ pub fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident
         full_ident = format!("_{}", full_ident);
     }
 
-    format_ident!("{}", &full_ident).into()
+    format_ident!("{}", &full_ident)
 }
 
 pub fn to_ident<T: AsRef<str>>(s: T) -> Identifier {
-    map_to_ident(s, ToString::to_string)
+    map_to_ident(s, ToString::to_string).into()
 }
 
 pub fn to_camel_case_ident<T: AsRef<str>>(s: T) -> Identifier {
-    map_to_ident(s, |s| s.to_camel_case())
+    map_to_ident(s, |s| s.to_camel_case()).into()
 }
 
 pub fn to_ns_name<T: AsRef<str>>(ns: T) -> Identifier {
@@ -192,10 +214,11 @@ pub fn to_ns_name<T: AsRef<str>>(ns: T) -> Identifier {
             .trim_end_matches(".ts"),
         |s| s.to_snake_case(),
     )
+    .into()
 }
 
 pub fn to_snake_case_ident<T: AsRef<str>>(s: T) -> Identifier {
-    map_to_ident(s, |s| s.to_snake_case())
+    map_to_ident(s, |s| s.to_snake_case()).into()
 }
 
 pub fn to_unique_ident<T: Fn(&str) -> bool>(mut desired: String, taken: &T) -> Identifier {
