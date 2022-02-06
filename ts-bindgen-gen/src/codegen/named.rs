@@ -58,6 +58,7 @@ impl Named for Builtin {
             ),
             Builtin::Optional => ("Option", to_ident("Option")),
             Builtin::Variadic => ("", to_ident("")),
+            Builtin::Named(n) => (&n, Identifier::with_path(n)),
         }
     }
 

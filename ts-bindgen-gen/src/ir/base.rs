@@ -1,7 +1,10 @@
+use heck::CamelCase;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::iter;
 use std::path::PathBuf;
 use strum_macros::Display as StrumDisplay;
+use ts_bindgen_build_support::with_web_sys_types;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeIdent {
@@ -345,6 +348,33 @@ make_primitives!(
     BuiltinDate,
 );
 
+with_web_sys_types!(
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct WebSysBuiltin(pub String);
+
+    impl TryFrom<&str> for WebSysBuiltin {
+        type Error = &'static str;
+
+        fn try_from(src: &str) -> Result<WebSysBuiltin, Self::Error> {
+            // handle casing a la
+            // https://github.com/rustwasm/wasm-bindgen/blob/main/crates/webidl/src/util.rs#L61
+            let src = src
+                .replace("HTML", "HTML_")
+                .replace("1D", "_1d")
+                .replace("2D", "_2d")
+                .replace("3D", "_3d")
+                .to_camel_case();
+            let src: &str = &src;
+
+            [$(stringify!($item)),*]
+                .into_iter()
+                .find(|item| (&src) == item)
+                .ok_or("not a web-sys type")
+                .map(|name| WebSysBuiltin(name.to_string()))
+        }
+    }
+);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinPromise {
     pub value_type: Box<TypeInfo>,
@@ -385,6 +415,7 @@ pub enum TypeInfo {
     PrimitiveNull(PrimitiveNull),
     BuiltinPromise(BuiltinPromise),
     BuiltinDate(BuiltinDate),
+    WebSysBuiltin(WebSysBuiltin),
     Array { item_type: Box<TypeInfo> },
     Tuple(Tuple),
     Optional { item_type: Box<TypeInfo> },
@@ -408,7 +439,17 @@ fn resolve_builtin(
     types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
     type_params: &HashMap<String, TypeParamConfig>,
 ) -> Option<TypeInfo> {
-    if referent.name == TypeIdent::Name("Array".to_string()) {
+    let name: &str = match &referent.name {
+        TypeIdent::Name(ref s) => s,
+        TypeIdent::QualifiedName(ref names) => match names.last() {
+            Some(ref n) => n,
+            None => return None,
+        },
+        TypeIdent::DefaultExport() => return None,
+        TypeIdent::TypeEnvironmentParent() => return None,
+    };
+
+    if name == "Array" {
         assert_eq!(
             alias_type_params.len(),
             1,
@@ -425,7 +466,7 @@ fn resolve_builtin(
         });
     }
 
-    if referent.name == TypeIdent::Name("Record".to_string()) {
+    if name == "Record" {
         assert_eq!(
             alias_type_params.len(),
             2,
@@ -443,11 +484,11 @@ fn resolve_builtin(
         });
     }
 
-    if referent.name == TypeIdent::Name("Date".to_string()) {
+    if name == "Date" {
         return Some(TypeInfo::BuiltinDate(BuiltinDate()));
     }
 
-    if referent.name == TypeIdent::Name("Function".to_string()) {
+    if name == "Function" {
         return Some(TypeInfo::Func(Func {
             type_params: Default::default(),
             return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
@@ -460,13 +501,13 @@ fn resolve_builtin(
         }));
     }
 
-    if referent.name == TypeIdent::Name("Object".to_string()) {
+    if name == "Object" {
         return Some(TypeInfo::Mapped {
             value_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
         });
     }
 
-    if referent.name == TypeIdent::Name("Promise".to_string()) {
+    if name == "Promise" {
         return Some(TypeInfo::BuiltinPromise(BuiltinPromise {
             value_type: Box::new(
                 alias_type_params
@@ -476,6 +517,10 @@ fn resolve_builtin(
                     .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             ),
         }));
+    }
+
+    if let Ok(web_sys_builtin) = WebSysBuiltin::try_from(name) {
+        return Some(TypeInfo::WebSysBuiltin(web_sys_builtin));
     }
 
     None
@@ -656,6 +701,7 @@ impl TypeInfo {
             Self::LitBoolean(_) => self.clone(),
             Self::BuiltinDate(BuiltinDate()) => self.clone(),
             Self::BuiltinPromise(_) => self.clone(),
+            Self::WebSysBuiltin(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
             Self::TypeQuery(TypeQuery::LookupRef(_)) => self.clone(),
         }

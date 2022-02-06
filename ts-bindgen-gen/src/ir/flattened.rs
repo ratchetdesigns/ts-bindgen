@@ -7,7 +7,7 @@ use crate::ir::base::{
     PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
     TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
     TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR, TypeRef as TypeRefIR,
-    Union as UnionIR,
+    Union as UnionIR, WebSysBuiltin as WebSysBuiltinIR,
 };
 pub use crate::ir::base::{EnumValue, NamespaceImport};
 use enum_to_enum::WithEffects;
@@ -286,6 +286,7 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<FlattenedTypeInfo> {
                 TypeInfoIR::LitNumber(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::LitString(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::LitBoolean(v) => tuple_match_convert!(ns, Ref(v)),
+                TypeInfoIR::WebSysBuiltin(b) => tuple_match_convert!(ns, Ref(b)),
                 TypeInfoIR::Ref(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::Array { item_type } => struct_match_convert!(ns, Array { item_type }),
                 TypeInfoIR::Tuple(v) => tuple_match_convert!(ns, Tuple(v)),
@@ -615,6 +616,7 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<TypeRef> {
             TypeInfoIR::PrimitiveNull(p) => ns.in_ns(p).into(),
             TypeInfoIR::BuiltinPromise(b) => ns.in_ns(b).into(),
             TypeInfoIR::BuiltinDate(b) => ns.in_ns(b).into(),
+            TypeInfoIR::WebSysBuiltin(b) => ns.in_ns(b).into(),
             TypeInfoIR::Array { item_type } => {
                 let item_type: EffectContainer<TypeRef> = ns.in_ns(*item_type).into();
                 combine_effects!(
@@ -823,6 +825,7 @@ pub enum Builtin {
     Map,
     Optional,
     Variadic,
+    Named(String),
 }
 
 type_ref_from_prims!(
@@ -842,6 +845,18 @@ type_ref_from_prims!(
     LitString => LitString,
     BuiltinPromise => Promise,
 );
+
+impl From<Namespaced<WebSysBuiltinIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<WebSysBuiltinIR>) -> EffectContainer<TypeRef> {
+        EffectContainer::new(
+            TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Named(format!("web_sys::{}", src.value.0))),
+                type_params: Default::default(),
+            },
+            Default::default(),
+        )
+    }
+}
 
 impl From<Namespaced<Box<TypeInfoIR>>> for EffectContainer<Box<FlattenedTypeInfo>> {
     fn from(src: Namespaced<Box<TypeInfoIR>>) -> EffectContainer<Box<FlattenedTypeInfo>> {
