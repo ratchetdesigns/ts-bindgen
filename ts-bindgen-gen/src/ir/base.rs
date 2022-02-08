@@ -341,11 +341,9 @@ make_primitives!(
     PrimitiveBoolean,
     PrimitiveBigInt,
     PrimitiveString,
-    PrimitiveSymbol,
     PrimitiveVoid,
     PrimitiveUndefined,
     PrimitiveNull,
-    BuiltinDate,
 );
 
 with_web_sys_types!(
@@ -374,6 +372,54 @@ with_web_sys_types!(
         }
     }
 );
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsSysBuiltin(pub String);
+
+impl TryFrom<&str> for JsSysBuiltin {
+    type Error = &'static str;
+
+    fn try_from(src: &str) -> Result<JsSysBuiltin, Self::Error> {
+        [
+            "ArrayBuffer",
+            "BigInt",
+            "BigInt64Array",
+            "BigUint64Array",
+            "Boolean",
+            "DataView",
+            "Date",
+            "Error",
+            "EvalError",
+            "Float32Array",
+            "Float64Array",
+            "Int8Array",
+            "Int16Array",
+            "Int32Array",
+            "Map",
+            "Number",
+            "Proxy",
+            "RangeError",
+            "ReferenceError",
+            "RegExp",
+            "Set",
+            "SharedArrayBuffer",
+            "Symbol",
+            "SyntaxError",
+            "TypeError",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Uint16Array",
+            "Uint32Array",
+            "UriError",
+            "WeakMap",
+            "WeakSet",
+        ]
+        .into_iter()
+        .find(|item| (&src) == item)
+        .ok_or("not a js-sys type")
+        .map(|name| JsSysBuiltin(name.to_string()))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinPromise {
@@ -409,13 +455,12 @@ pub enum TypeInfo {
     PrimitiveBoolean(PrimitiveBoolean),
     PrimitiveBigInt(PrimitiveBigInt),
     PrimitiveString(PrimitiveString),
-    PrimitiveSymbol(PrimitiveSymbol),
     PrimitiveVoid(PrimitiveVoid),
     PrimitiveUndefined(PrimitiveUndefined),
     PrimitiveNull(PrimitiveNull),
     BuiltinPromise(BuiltinPromise),
-    BuiltinDate(BuiltinDate),
     WebSysBuiltin(WebSysBuiltin),
+    JsSysBuiltin(JsSysBuiltin),
     Array { item_type: Box<TypeInfo> },
     Tuple(Tuple),
     Optional { item_type: Box<TypeInfo> },
@@ -484,10 +529,6 @@ fn resolve_builtin(
         });
     }
 
-    if name == "Date" {
-        return Some(TypeInfo::BuiltinDate(BuiltinDate()));
-    }
-
     if name == "Function" {
         return Some(TypeInfo::Func(Func {
             type_params: Default::default(),
@@ -521,6 +562,10 @@ fn resolve_builtin(
 
     if let Ok(web_sys_builtin) = WebSysBuiltin::try_from(name) {
         return Some(TypeInfo::WebSysBuiltin(web_sys_builtin));
+    }
+
+    if let Ok(js_sys_builtin) = JsSysBuiltin::try_from(name) {
+        return Some(TypeInfo::JsSysBuiltin(js_sys_builtin));
     }
 
     None
@@ -692,16 +737,15 @@ impl TypeInfo {
             Self::PrimitiveBoolean(PrimitiveBoolean()) => self.clone(),
             Self::PrimitiveBigInt(PrimitiveBigInt()) => self.clone(),
             Self::PrimitiveString(PrimitiveString()) => self.clone(),
-            Self::PrimitiveSymbol(PrimitiveSymbol()) => self.clone(),
             Self::PrimitiveVoid(PrimitiveVoid()) => self.clone(),
             Self::PrimitiveUndefined(PrimitiveUndefined()) => self.clone(),
             Self::PrimitiveNull(PrimitiveNull()) => self.clone(),
             Self::LitNumber(_) => self.clone(),
             Self::LitString(_) => self.clone(),
             Self::LitBoolean(_) => self.clone(),
-            Self::BuiltinDate(BuiltinDate()) => self.clone(),
             Self::BuiltinPromise(_) => self.clone(),
             Self::WebSysBuiltin(_) => self.clone(),
+            Self::JsSysBuiltin(_) => self.clone(),
             Self::NamespaceImport { .. } => self.clone(),
             Self::TypeQuery(TypeQuery::LookupRef(_)) => self.clone(),
         }

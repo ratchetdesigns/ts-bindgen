@@ -35,7 +35,6 @@ impl Named for Builtin {
             Builtin::PrimitiveBoolean => ("bool", to_ident("bool")),
             Builtin::PrimitiveBigInt => ("u64", to_ident("u64")),
             Builtin::PrimitiveString => ("String", to_ident("String")),
-            Builtin::PrimitiveSymbol => ("js_sys::Symbol", make_identifier!(js_sys::Symbol)),
             // TODO: is this correct?
             Builtin::PrimitiveVoid => ("()", to_ident("()")),
             Builtin::PrimitiveUndefined => (
@@ -45,7 +44,6 @@ impl Named for Builtin {
             Builtin::PrimitiveNull => {
                 ("ts_bindgen_rt::Null", make_identifier!(ts_bindgen_rt::Null))
             }
-            Builtin::Date => ("js_sys::Date", make_identifier!(js_sys::Date)),
             Builtin::LitNumber => Builtin::PrimitiveNumber.to_name(),
             Builtin::LitBoolean => Builtin::PrimitiveBoolean.to_name(),
             Builtin::LitString => Builtin::PrimitiveString.to_name(),

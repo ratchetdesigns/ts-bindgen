@@ -1,10 +1,10 @@
 use crate::ir::base::{
-    Alias as AliasIR, BaseClass as BaseClassIR, BuiltinDate, BuiltinPromise, Class as ClassIR,
-    Ctor as CtorIR, Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR,
-    Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR, LitBoolean,
-    LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
-    PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
-    PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
+    Alias as AliasIR, BaseClass as BaseClassIR, BuiltinPromise, Class as ClassIR, Ctor as CtorIR,
+    Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR, Indexer as IndexerIR,
+    Interface as InterfaceIR, Intersection as IntersectionIR, JsSysBuiltin as JsSysBuiltinIR,
+    LitBoolean, LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny,
+    PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
+    PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
     TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
     TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR, TypeRef as TypeRefIR,
     Union as UnionIR, WebSysBuiltin as WebSysBuiltinIR,
@@ -277,16 +277,15 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<FlattenedTypeInfo> {
                 TypeInfoIR::PrimitiveBoolean(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::PrimitiveBigInt(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::PrimitiveString(v) => tuple_match_convert!(ns, Ref(v)),
-                TypeInfoIR::PrimitiveSymbol(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::PrimitiveVoid(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::PrimitiveUndefined(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::PrimitiveNull(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::BuiltinPromise(v) => tuple_match_convert!(ns, Ref(v)),
-                TypeInfoIR::BuiltinDate(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::LitNumber(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::LitString(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::LitBoolean(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::WebSysBuiltin(b) => tuple_match_convert!(ns, Ref(b)),
+                TypeInfoIR::JsSysBuiltin(b) => tuple_match_convert!(ns, Ref(b)),
                 TypeInfoIR::Ref(v) => tuple_match_convert!(ns, Ref(v)),
                 TypeInfoIR::Array { item_type } => struct_match_convert!(ns, Array { item_type }),
                 TypeInfoIR::Tuple(v) => tuple_match_convert!(ns, Tuple(v)),
@@ -610,13 +609,12 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<TypeRef> {
             TypeInfoIR::PrimitiveBoolean(p) => ns.in_ns(p).into(),
             TypeInfoIR::PrimitiveBigInt(p) => ns.in_ns(p).into(),
             TypeInfoIR::PrimitiveString(p) => ns.in_ns(p).into(),
-            TypeInfoIR::PrimitiveSymbol(p) => ns.in_ns(p).into(),
             TypeInfoIR::PrimitiveVoid(p) => ns.in_ns(p).into(),
             TypeInfoIR::PrimitiveUndefined(p) => ns.in_ns(p).into(),
             TypeInfoIR::PrimitiveNull(p) => ns.in_ns(p).into(),
             TypeInfoIR::BuiltinPromise(b) => ns.in_ns(b).into(),
-            TypeInfoIR::BuiltinDate(b) => ns.in_ns(b).into(),
             TypeInfoIR::WebSysBuiltin(b) => ns.in_ns(b).into(),
+            TypeInfoIR::JsSysBuiltin(b) => ns.in_ns(b).into(),
             TypeInfoIR::Array { item_type } => {
                 let item_type: EffectContainer<TypeRef> = ns.in_ns(*item_type).into();
                 combine_effects!(
@@ -811,11 +809,9 @@ pub enum Builtin {
     PrimitiveBoolean,
     PrimitiveBigInt,
     PrimitiveString,
-    PrimitiveSymbol,
     PrimitiveVoid,
     PrimitiveUndefined,
     PrimitiveNull,
-    Date,
     LitNumber,
     LitBoolean,
     LitString,
@@ -835,11 +831,9 @@ type_ref_from_prims!(
     PrimitiveBoolean => PrimitiveBoolean,
     PrimitiveBigInt => PrimitiveBigInt,
     PrimitiveString => PrimitiveString,
-    PrimitiveSymbol => PrimitiveSymbol,
     PrimitiveVoid => PrimitiveVoid,
     PrimitiveUndefined => PrimitiveUndefined,
     PrimitiveNull => PrimitiveNull,
-    BuiltinDate => Date,
     LitNumber => LitNumber,
     LitBoolean => LitBoolean,
     LitString => LitString,
@@ -851,6 +845,18 @@ impl From<Namespaced<WebSysBuiltinIR>> for EffectContainer<TypeRef> {
         EffectContainer::new(
             TypeRef {
                 referent: TypeIdent::Builtin(Builtin::Named(format!("web_sys::{}", src.value.0))),
+                type_params: Default::default(),
+            },
+            Default::default(),
+        )
+    }
+}
+
+impl From<Namespaced<JsSysBuiltinIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<JsSysBuiltinIR>) -> EffectContainer<TypeRef> {
+        EffectContainer::new(
+            TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Named(format!("js_sys::{}", src.value.0))),
                 type_params: Default::default(),
             },
             Default::default(),

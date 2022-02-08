@@ -2,9 +2,9 @@ use crate::error::{Error, InternalError};
 use crate::fs::Fs;
 use crate::ir::base::{
     Alias, BaseClass, Class, Ctor, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
-    Intersection, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param, PrimitiveAny,
-    PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
-    PrimitiveString, PrimitiveSymbol, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
+    Intersection, JsSysBuiltin, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param,
+    PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber,
+    PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
     TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
@@ -1136,7 +1136,9 @@ impl TsTypes {
             TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean(PrimitiveBoolean()),
             TsKeywordTypeKind::TsBigIntKeyword => TypeInfo::PrimitiveBigInt(PrimitiveBigInt()),
             TsKeywordTypeKind::TsStringKeyword => TypeInfo::PrimitiveString(PrimitiveString()),
-            TsKeywordTypeKind::TsSymbolKeyword => TypeInfo::PrimitiveSymbol(PrimitiveSymbol()),
+            TsKeywordTypeKind::TsSymbolKeyword => {
+                TypeInfo::JsSysBuiltin(JsSysBuiltin("Symbol".to_string()))
+            }
             TsKeywordTypeKind::TsVoidKeyword => TypeInfo::PrimitiveVoid(PrimitiveVoid()),
             TsKeywordTypeKind::TsUndefinedKeyword => {
                 TypeInfo::PrimitiveUndefined(PrimitiveUndefined())
@@ -2598,5 +2600,56 @@ mod test {
         test_exported_type!(ts_code, name, TypeInfo::Class(c), {
             assert!(c.super_class.is_some());
         })
+    }
+
+    #[test]
+    fn test_js_sys() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface I {
+                    array_buffer: ArrayBuffer;
+                    big_int: BigInt;
+                    big_int64_array: BigInt64Array;
+                    big_uint64_array: BigUint64Array;
+                    boolean: Boolean;
+                    data_view: DataView;
+                    date: Date;
+                    error: Error;
+                    eval_error: EvalError;
+                    float32_array: Float32Array;
+                    float64_array: Float64Array;
+                    int8_array: Int8Array;
+                    int16_array: Int16Array;
+                    int32_array: Int32Array;
+                    map: Map;
+                    number: Number;
+                    proxy: Proxy;
+                    range_error: RangeError;
+                    reference_error: ReferenceError;
+                    reg_exp: RegExp;
+                    set: Set;
+                    shared_array_buffer: SharedArrayBuffer;
+                    symbol: Symbol;
+                    syntax_error: SyntaxError;
+                    type_error: TypeError;
+                    uint8_array: Uint8Array;
+                    uint8_clamped_array: Uint8ClampedArray;
+                    uint16_array: Uint16Array;
+                    uint32_array: Uint32Array;
+                    uri_array: UriError;
+                    weak_map: WeakMap;
+                    weak_set: WeakSet;
+                }
+            "#,
+            "I",
+            TypeInfo::Interface(iface),
+            {
+                assert_eq!(iface.fields.len(), 32);
+                assert!(iface
+                    .fields
+                    .iter()
+                    .all(|(_, v)| { matches!(v, TypeInfo::JsSysBuiltin(_)) }));
+            }
+        )
     }
 }
