@@ -1,5 +1,11 @@
 # Change Log
 
+## [Unreleased] - ReleaseDate
+
+### BREAKING CHANGE
+
+- js-sys types are now generated as the proper js-sys tyep instead of as JsValue. #3
+
 ## [0.2.0] - 2022-02-06
 
 ### BREAKING CHANGE
