@@ -242,6 +242,7 @@ impl IsUninhabited for TypeRef {
 fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
     let t_str = quote! { #typ }
         .to_string()
+        .replace("->", "To")
         .replace("<", "Of")
         .replace(">", "")
         .replace("&", "")
