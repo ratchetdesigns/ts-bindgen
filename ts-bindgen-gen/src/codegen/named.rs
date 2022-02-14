@@ -1,3 +1,4 @@
+use crate::codegen::funcs::Constructor;
 use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::fs::Fs;
@@ -254,6 +255,12 @@ pub trait FnOverloadName {
 }
 
 impl FnOverloadName for Func {
+    fn overload_name(&self, fn_group_name: &Identifier) -> Identifier {
+        fn_group_name.suffix_name(&format!("_{}", type_name(self).to_string()))
+    }
+}
+
+impl FnOverloadName for Constructor<'_> {
     fn overload_name(&self, fn_group_name: &Identifier) -> Identifier {
         fn_group_name.suffix_name(&format!("_{}", type_name(self).to_string()))
     }

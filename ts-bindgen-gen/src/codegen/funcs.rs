@@ -844,7 +844,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let f = self.exposed_to_rust_fn_decl(fn_name, is_fallible, in_context);
 
         quote! {
-            #[allow(dead_code)]
+            #[allow(dead_code, non_snake_case)]
             pub #f {
                 #(#arg_converters)*
 

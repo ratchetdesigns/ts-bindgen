@@ -16,7 +16,7 @@ use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
     render_type_params_with_lifetimes, ResolveGeneric, TypeEnvImplying,
 };
-use crate::codegen::named::{type_name, CasedTypeIdent, Named, SimpleNamed};
+use crate::codegen::named::{type_name, CasedTypeIdent, FnOverloadName, Named, SimpleNamed};
 use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -24,13 +24,12 @@ use crate::codegen::traits::{render_trait_defn, to_type_ref, IsTraitable, TraitN
 use crate::codegen::type_ref_like::OwnedTypeRef;
 use crate::fs::Fs;
 use crate::identifier::{
-    make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident,
-    Identifier,
+    to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident, Identifier,
 };
 use crate::ir::{
     Alias, Builtin, Class, Context, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
-    Intersection, Member, NamespaceImport, TargetEnrichedType, TargetEnrichedTypeInfo, Tuple,
-    TypeIdent, TypeParamConfig, TypeRef, Union,
+    Intersection, Member, NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo,
+    Tuple, TypeIdent, TypeParamConfig, TypeRef, Union,
 };
 pub use crate::mod_def::ModDef;
 use proc_macro2::TokenStream as TokenStream2;
@@ -790,7 +789,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
 
                 let target = quote! { self.0 };
                 let (member_defs, public_methods): (Vec<TokenStream2>, Vec<TokenStream2>) = members.iter()
-                    .map(|(member_js_name, member)| {
+                    .flat_map(|(member_js_name, member)| {
                         let member_js_ident = format_ident!("{}", member_js_name);
                         match member {
                             Member::Constructor(ctor) => {
@@ -803,9 +802,17 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                     .params()
                                     .map(|p| p.as_exposed_to_js_named_param_list(None));
 
+                                let fn_group_name = to_snake_case_ident("new");
+                                // TODO
+                                let fn_name = if false {
+                                    ctor.overload_name(&fn_group_name)
+                                } else {
+                                    fn_group_name
+                                };
+
                                 let member_def = quote! {
                                     #[wasm_bindgen(constructor, js_class = #js_name)]
-                                    pub fn new(#(#param_toks),*) -> #internal_class_name;
+                                    pub fn #fn_name(#(#param_toks),*) -> #internal_class_name;
                                 };
                                 let fq_internal_ctor = to_snake_case_ident("new").in_namespace(&internal_class_name);
 
@@ -822,56 +829,66 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                         #name(#(#args),*)
                                     }
                                 };
-                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&make_identifier!(new), None, &fq_internal_ctor, false, Some(&res_converter), &type_env, None);
+                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&fn_name, None, &fq_internal_ctor, false, Some(&res_converter), &type_env, None);
 
-                                (member_def, pub_fn)
+                                vec![(member_def, pub_fn)]
                             }
                             Member::Method(func) => {
-                                let func = {
-                                    // func.class_name refers to our wrapper, which is what we want
-                                    // other than when we're defining our actual methods
-                                    let mut func = func.widened_fn.clone();
-                                    func.class_name = func.class_name.map(|_| TypeIdent::ExactName(internal_class_name.to_string()));
-                                    func
-                                };
-                                let func = func.resolve_generic_in_env(&type_env);
-                                let in_context = None;
-                                let internal = InternalFunc {
-                                    func: &func,
-                                    js_name: member_js_name,
-                                    in_context: &in_context,
-                                };
-                                let fn_name = internal.to_internal_rust_name();
+                                let is_overloaded = func.overloads.len() > 1;
+                                func.overloads
+                                    .iter()
+                                    .map(|func| {
+                                        let func = {
+                                            let mut func = func.clone();
+                                            func.class_name = func.class_name.map(|_| TypeIdent::ExactName(internal_class_name.to_string()));
+                                            func
+                                        };
+                                        let func = func.resolve_generic_in_env(&type_env);
+                                        let in_context = None;
+                                        let internal = InternalFunc {
+                                            func: &func,
+                                            js_name: member_js_name,
+                                            in_context: &in_context,
+                                        };
+                                        let fn_name = internal.to_internal_rust_name();
 
-                                let f = func.exposed_to_js_fn_decl(fn_name, in_context);
+                                        let f = func.exposed_to_js_fn_decl(fn_name, in_context);
 
-                                let mut attrs = vec![
-                                    quote! {js_name = #member_js_ident},
-                                    quote! {method},
-                                    quote! {js_class = #js_name},
-                                    quote! {catch},
-                                ];
-                                if func.is_variadic() {
-                                    attrs.push(quote! { variadic });
-                                }
+                                        let mut attrs = vec![
+                                            quote! {js_name = #member_js_ident},
+                                            quote! {method},
+                                            quote! {js_class = #js_name},
+                                            quote! {catch},
+                                        ];
+                                        if func.is_variadic() {
+                                            attrs.push(quote! { variadic });
+                                        }
 
-                                let member_def = quote! {
-                                    #[allow(non_snake_case)]
-                                    #[wasm_bindgen(#(#attrs),*)]
-                                    #f;
-                                };
+                                        let member_def = quote! {
+                                            #[allow(non_snake_case)]
+                                            #[wasm_bindgen(#(#attrs),*)]
+                                            #f;
+                                        };
 
-                                let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let in_context = None;
-                                let internal = InternalFunc {
-                                    func: func.as_ref(),
-                                    js_name: member_js_name,
-                                    in_context: &in_context,
-                                };
-                                let internal_fn_name = internal.to_internal_rust_name();
-                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env, in_context);
+                                        let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
+                                        let in_context = None;
+                                        let internal = InternalFunc {
+                                            func: func.as_ref(),
+                                            js_name: member_js_name,
+                                            in_context: &in_context,
+                                        };
+                                        let internal_fn_name = internal.to_internal_rust_name();
+                                        let fn_group_name = to_snake_case_ident(&member_js_name);
+                                        let fn_name = if is_overloaded {
+                                            func.overload_name(&fn_group_name)
+                                        } else {
+                                            fn_group_name
+                                        };
+                                        let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&fn_name, Some(&target), &internal_fn_name, true, rc, &type_env, in_context);
 
-                                (member_def, pub_fn)
+                                        (member_def, pub_fn)
+                                    })
+                                    .collect()
                             }
                             Member::Property(typ) => {
                                 let resolved_type = typ.resolve_generic_in_env(&type_env).into_owned();
@@ -936,7 +953,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                     #setter_fn
                                 };
 
-                                (member_def, pub_fn)
+                                vec![(member_def, pub_fn)]
                             }
                         }
                     })
@@ -1320,32 +1337,38 @@ impl ToTokens for TargetEnrichedTypeInfo {
     }
 }
 
+fn func_to_tokens(params: &[Param], return_type: &TypeRef) -> TokenStream2 {
+    let param_toks: Vec<TokenStream2> = params
+        .iter()
+        .map(|p| {
+            let typ = &p.type_info;
+
+            if p.is_variadic {
+                quote! {
+                    &[#typ]
+                }
+            } else {
+                quote! {
+                    #typ
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        fn(#(#param_toks),*) -> #return_type
+    }
+}
+
 impl ToTokens for Func {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let return_type = &self.return_type;
-        let param_toks: Vec<TokenStream2> = self
-            .params
-            .iter()
-            .map(|p| {
-                let typ = &p.type_info;
+        toks.append_all(func_to_tokens(&self.params, self.return_type.as_ref()));
+    }
+}
 
-                if p.is_variadic {
-                    quote! {
-                        &[#typ]
-                    }
-                } else {
-                    quote! {
-                        #typ
-                    }
-                }
-            })
-            .collect();
-
-        let our_toks = quote! {
-            fn(#(#param_toks),*) -> #return_type
-        };
-
-        toks.append_all(our_toks);
+impl ToTokens for Constructor<'_> {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        toks.append_all(func_to_tokens(&self.ctor.params, self.class.as_ref()));
     }
 }
 

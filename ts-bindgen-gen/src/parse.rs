@@ -1623,60 +1623,77 @@ impl TsTypes {
             None => None,
         };
 
+        let members = body
+            .iter()
+            .filter_map_reporting_result(|member| {
+                Ok(match member {
+                    ClassMember::StaticBlock(_) => None,
+                    ClassMember::Constructor(ctor) => Some((
+                        make_key(ctor)?,
+                        Member::Constructor(ctor.to_ctor(ts_path, self)?),
+                    )),
+                    ClassMember::Method(method) if method.kind == MethodKind::Method => Some((
+                        make_key(method)?,
+                        Member::Method(FuncGroup {
+                            overloads: vec![method.to_member_func(ts_path, self, name)?],
+                        }),
+                    )),
+                    ClassMember::Method(method) if method.kind == MethodKind::Getter => Some((
+                        make_key(method)?,
+                        Member::Property(*method.to_member_func(ts_path, self, name)?.return_type),
+                    )),
+                    ClassMember::Method(method) if method.kind == MethodKind::Setter => Some((
+                        make_key(method)?,
+                        Member::Property(
+                            method
+                                .to_member_func(ts_path, self, name)?
+                                .params
+                                .pop()
+                                .map(|p| p.type_info)
+                                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                        ),
+                    )),
+                    ClassMember::Method(_) => None,
+                    ClassMember::PrivateMethod(_) => None,
+                    ClassMember::ClassProp(prop)
+                        if prop
+                            .accessibility
+                            .map(|a| a != Accessibility::Private)
+                            .unwrap_or(true) =>
+                    {
+                        Some((
+                            make_key(prop)?,
+                            Member::Property(prop.to_type_info(ts_path, self)?),
+                        ))
+                    }
+                    ClassMember::ClassProp(_) => None,
+                    ClassMember::PrivateProp(_) => None,
+                    ClassMember::TsIndexSignature(_) => None,
+                    ClassMember::Empty(_) => None,
+                })
+            })
+            .collect::<Result<Vec<(String, Member)>, InternalError>>()?;
+
+        let members = members.into_iter().fold(
+            HashMap::new() as HashMap<String, Member>,
+            |mut final_members, (name, member)| {
+                final_members
+                    .entry(name)
+                    .and_modify(|cur_member| match (cur_member, &member) {
+                        (Member::Method(cur_fg), Member::Method(fg)) => {
+                            cur_fg.overloads.extend(fg.overloads.iter().cloned());
+                        }
+                        // TODO: ctor
+                        _ => {}
+                    })
+                    .or_insert_with(|| member.clone());
+                final_members
+            },
+        );
+
         Ok(TypeInfo::Class(Class {
             super_class,
-            members: body
-                .iter()
-                .filter_map_reporting_result(|member| {
-                    Ok(match member {
-                        ClassMember::StaticBlock(_) => None,
-                        ClassMember::Constructor(ctor) => Some((
-                            make_key(ctor)?,
-                            Member::Constructor(ctor.to_ctor(ts_path, self)?),
-                        )),
-                        ClassMember::Method(method) if method.kind == MethodKind::Method => Some((
-                            make_key(method)?,
-                            Member::Method(FuncGroup {
-                                overloads: vec![method.to_member_func(ts_path, self, name)?],
-                            }),
-                        )),
-                        ClassMember::Method(method) if method.kind == MethodKind::Getter => Some((
-                            make_key(method)?,
-                            Member::Property(
-                                *method.to_member_func(ts_path, self, name)?.return_type,
-                            ),
-                        )),
-                        ClassMember::Method(method) if method.kind == MethodKind::Setter => Some((
-                            make_key(method)?,
-                            Member::Property(
-                                method
-                                    .to_member_func(ts_path, self, name)?
-                                    .params
-                                    .pop()
-                                    .map(|p| p.type_info)
-                                    .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
-                            ),
-                        )),
-                        ClassMember::Method(_) => None,
-                        ClassMember::PrivateMethod(_) => None,
-                        ClassMember::ClassProp(prop)
-                            if prop
-                                .accessibility
-                                .map(|a| a != Accessibility::Private)
-                                .unwrap_or(true) =>
-                        {
-                            Some((
-                                make_key(prop)?,
-                                Member::Property(prop.to_type_info(ts_path, self)?),
-                            ))
-                        }
-                        ClassMember::ClassProp(_) => None,
-                        ClassMember::PrivateProp(_) => None,
-                        ClassMember::TsIndexSignature(_) => None,
-                        ClassMember::Empty(_) => None,
-                    })
-                })
-                .collect::<Result<HashMap<String, Member>, InternalError>>()?,
+            members,
             implements: implements
                 .iter()
                 .map(|i| Source::from(self, ts_path, i).try_into())
@@ -2181,15 +2198,15 @@ mod test {
         };
         ($code:ident, $name:ident, $expected_info:pat, $assertions:block) => {
             {
-                let types = get_types_for_code($code)?;
+                let mut types = get_types_for_code($code)?;
 
-                let ty = types.get(&$name);
+                let ty = types.remove(&$name);
                 assert!(ty.is_some());
 
                 let ty = ty.unwrap();
                 assert!(ty.is_exported);
 
-                if let $expected_info = &ty.info $assertions else {
+                if let $expected_info = ty.info $assertions else {
                     assert!(false);
                 }
 
