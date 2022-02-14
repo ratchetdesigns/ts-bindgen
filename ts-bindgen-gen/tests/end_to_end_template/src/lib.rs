@@ -5,7 +5,7 @@ use crate::js_lib::ts::run_test;
 use crate::js_lib::ts::round_trip_clone::AnyType;
 use crate::js_lib::ts::class_method_invoker::ClassMethodInvokerTest;
 use crate::js_lib::ts::generics::SimpleGeneric;
-use crate::js_lib::ts::function_overload::{overloaded_FnF64ToF64, overloaded_FnStringToString};
+use crate::js_lib::ts::function_overload::{overloaded_FnF64ToF64, overloaded_FnStringToString, Over};
 
 pub fn cloner(t: AnyType) -> Result<AnyType, JsValue> {
     Ok(t.clone())
@@ -21,6 +21,11 @@ fn overload_test() -> Result<(), wasm_bindgen::JsValue> {
     let delta = 0.0001f64;
     assert!(f - expected_f < delta && expected_f - f < delta);
     assert_eq!(overloaded_FnStringToString("hello world".to_string())?, "hello world");
+
+    let over = Over::new();
+    let f = over.overload_FnF64ToF64(expected_f)?;
+    assert!(f - expected_f < delta && expected_f - f < delta);
+    assert_eq!(over.overload_FnStringToString("yo yo yo".to_string())?, "yo yo yo");
     Ok(())
 }
 

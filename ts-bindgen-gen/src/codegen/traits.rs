@@ -1,7 +1,7 @@
 use crate::codegen::funcs::{AccessType, FnPrototypeExt, PropertyAccessor};
 use crate::codegen::generics::{render_type_params, render_type_params_with_constraints};
 use crate::codegen::generics::{ResolveGeneric, TypeEnvImplying};
-use crate::codegen::named::Named;
+use crate::codegen::named::{FnOverloadName, Named};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::identifier::{to_snake_case_ident, Identifier};
 use crate::ir::{
@@ -95,15 +95,21 @@ where
         let name = to_snake_case_ident(&n);
         match m {
             Member::Constructor(_) => Default::default(),
-            Member::Method(f) => f
-                .overloads
-                .iter()
-                // TODO: name needs to be modified based on method
-                .map(|o| TraitMember::Method {
-                    name: name.clone(),
-                    method: o.clone(),
-                })
-                .collect(),
+            Member::Method(f) => {
+                let is_overloaded = f.overloads.len() > 1;
+                f.overloads
+                    .iter()
+                    // TODO: name needs to be modified based on method
+                    .map(|o| TraitMember::Method {
+                        name: if is_overloaded {
+                            o.overload_name(&name)
+                        } else {
+                            name.clone()
+                        },
+                        method: o.clone(),
+                    })
+                    .collect()
+            }
             Member::Property(t) => {
                 let getter = PropertyAccessor {
                     property_name: name.clone(),
@@ -206,7 +212,7 @@ where
     };
 
     quote! {
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, non_snake_case)]
         #vis trait #trait_name #tps #super_decl {
             #(#method_decls)*
         }
