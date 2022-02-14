@@ -1,4 +1,5 @@
 use crate::codegen::contextual::Contextual;
+use crate::codegen::named::FnOverloadName;
 use crate::codegen::named::{CasedTypeIdent, Named};
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -772,7 +773,7 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
         let f = self.exposed_to_rust_fn_decl(fn_name, true, in_context);
 
         quote! {
-            #[allow(dead_code)]
+            #[allow(dead_code, non_snake_case)]
             pub #f {
                 #wrapper_fns
 
@@ -1289,8 +1290,8 @@ pub struct InternalFunc<'a> {
 }
 
 impl<'a> InternalFunc<'a> {
-    pub fn to_internal_rust_name(js_name: &str) -> Identifier {
-        Self::to_internal_rust_ident(&to_snake_case_ident(js_name))
+    pub fn to_internal_rust_name(&self) -> Identifier {
+        Self::to_internal_rust_ident(&self.func.overload_name(&to_snake_case_ident(self.js_name)))
     }
 
     pub fn to_internal_rust_ident(id: &Identifier) -> Identifier {
@@ -1300,7 +1301,7 @@ impl<'a> InternalFunc<'a> {
 
 impl<'a> ToTokens for InternalFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let fn_name = Self::to_internal_rust_name(self.js_name);
+        let fn_name = self.to_internal_rust_name();
 
         let f = self.func.exposed_to_js_fn_decl(fn_name, *self.in_context);
 
@@ -1407,19 +1408,30 @@ fn render_rust_to_jsvalue_conversion(
 pub struct WrapperFunc<'a> {
     pub func: &'a Func,
     pub js_name: &'a str,
+    pub is_overloaded: bool,
 }
 
 impl<'a> WrapperFunc<'a> {
-    fn to_rust_name(js_name: &str) -> Identifier {
-        to_snake_case_ident(js_name)
+    fn to_rust_name(&self) -> Identifier {
+        let base_name = to_snake_case_ident(self.js_name);
+        if self.is_overloaded {
+            self.func.overload_name(&base_name)
+        } else {
+            base_name
+        }
     }
 }
 
 impl<'a> ToTokens for WrapperFunc<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
-        let fn_name = Self::to_rust_name(self.js_name);
+        let fn_name = self.to_rust_name();
 
-        let internal_fn_name = InternalFunc::to_internal_rust_name(self.js_name);
+        let internal = InternalFunc {
+            func: self.func,
+            js_name: self.js_name,
+            in_context: &None, // TODO: abstraction leak - we should have in_context
+        };
+        let internal_fn_name = internal.to_internal_rust_name();
         let our_toks = self
             .func
             .exposed_to_rust_wrapper_fn(&fn_name, &internal_fn_name, None);

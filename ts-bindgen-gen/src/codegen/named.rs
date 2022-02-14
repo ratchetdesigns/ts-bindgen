@@ -4,8 +4,9 @@ use crate::fs::Fs;
 use crate::identifier::{
     make_identifier, to_camel_case_ident, to_ident, to_snake_case_ident, Identifier,
 };
-use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use crate::ir::{Builtin, Func, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
 use crate::mod_def::ToModPathIter;
+use quote::{quote, ToTokens};
 
 pub trait Named {
     /// Returns a tuple of the the js name as a string and the corresponding rust identifier
@@ -225,12 +226,35 @@ impl SimpleNamed for TypeRef {
 
 fn casing_for_type<T: AsRef<str>>(typ: &TargetEnrichedTypeInfo) -> &dyn Fn(T) -> Identifier {
     match typ {
-        TargetEnrichedTypeInfo::Func(_) => &to_snake_case_ident as &dyn Fn(T) -> Identifier,
+        TargetEnrichedTypeInfo::FuncGroup(_) => &to_snake_case_ident as &dyn Fn(T) -> Identifier,
         TargetEnrichedTypeInfo::Ref(tr)
             if matches!(&tr.referent, TypeIdent::Builtin(Builtin::Fn)) =>
         {
             &to_snake_case_ident as &dyn Fn(T) -> Identifier
         }
         _ => &to_camel_case_ident as &dyn Fn(T) -> Identifier,
+    }
+}
+
+pub fn type_name<T: ToTokens>(typ: &T) -> Identifier {
+    let t_str = quote! { #typ }
+        .to_string()
+        .replace("->", "To")
+        .replace(",", "And")
+        .replace("<", "Of")
+        .replace(">", "")
+        .replace("&", "")
+        .replace("[", "")
+        .replace("]", "");
+    to_camel_case_ident(t_str)
+}
+
+pub trait FnOverloadName {
+    fn overload_name(&self, fn_group_name: &Identifier) -> Identifier;
+}
+
+impl FnOverloadName for Func {
+    fn overload_name(&self, fn_group_name: &Identifier) -> Identifier {
+        fn_group_name.suffix_name(&format!("_{}", type_name(self).to_string()))
     }
 }

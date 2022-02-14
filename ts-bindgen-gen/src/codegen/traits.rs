@@ -95,7 +95,15 @@ where
         let name = to_snake_case_ident(&n);
         match m {
             Member::Constructor(_) => Default::default(),
-            Member::Method(f) => vec![TraitMember::Method { name, method: f }],
+            Member::Method(f) => f
+                .overloads
+                .iter()
+                // TODO: name needs to be modified based on method
+                .map(|o| TraitMember::Method {
+                    name: name.clone(),
+                    method: o.clone(),
+                })
+                .collect(),
             Member::Property(t) => {
                 let getter = PropertyAccessor {
                     property_name: name.clone(),

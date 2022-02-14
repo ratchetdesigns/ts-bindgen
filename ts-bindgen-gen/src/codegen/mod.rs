@@ -16,7 +16,7 @@ use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
     render_type_params_with_lifetimes, ResolveGeneric, TypeEnvImplying,
 };
-use crate::codegen::named::{CasedTypeIdent, Named, SimpleNamed};
+use crate::codegen::named::{type_name, CasedTypeIdent, Named, SimpleNamed};
 use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -240,15 +240,7 @@ impl IsUninhabited for TypeRef {
 }
 
 fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
-    let t_str = quote! { #typ }
-        .to_string()
-        .replace("->", "To")
-        .replace("<", "Of")
-        .replace(">", "")
-        .replace("&", "")
-        .replace("[", "")
-        .replace("]", "");
-    to_camel_case_ident(format!("{}Case", t_str))
+    type_name(typ).suffix_name("Case")
 }
 
 fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
@@ -318,7 +310,7 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
             },
             TargetEnrichedTypeInfo::Tuple(t) => t.types.len(),
             TargetEnrichedTypeInfo::Mapped { .. } => usize::MAX,
-            TargetEnrichedTypeInfo::Func(_) => min,
+            TargetEnrichedTypeInfo::FuncGroup(_) => min,
             TargetEnrichedTypeInfo::Constructor(_) => min,
             TargetEnrichedTypeInfo::Class(c) => {
                 c.members.len()
@@ -648,31 +640,43 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     pub struct #name(#(pub #types),*);
                 }
             }
-            TargetEnrichedTypeInfo::Func(func) => {
-                let path = func.context.js_module_path();
-                let attrs = {
-                    let mut attrs = vec![quote! { js_name = #js_name, catch }];
-                    if func.is_variadic() {
-                        attrs.push(quote! { variadic });
+            TargetEnrichedTypeInfo::FuncGroup(func_group) => {
+                let path = func_group.context.js_module_path();
+                let common_attrs = vec![quote! { js_name = #js_name, catch }];
+                let is_overloaded = func_group.overloads.len() > 1;
+                let funcs = func_group.overloads.iter().map(|func| {
+                    let attrs = {
+                        let mut attrs = common_attrs.clone();
+                        if func.is_variadic() {
+                            attrs.push(quote! { variadic });
+                        }
+                        attrs
+                    };
+                    let internal_func = InternalFunc {
+                        js_name,
+                        func,
+                        in_context: &None,
+                    };
+                    let wrapper_func = WrapperFunc {
+                        js_name,
+                        func,
+                        is_overloaded,
+                    };
+
+                    quote! {
+                        #[wasm_bindgen(module=#path)]
+                        extern "C" {
+                            #[allow(non_snake_case)]
+                            #[wasm_bindgen(#(#attrs),*)]
+                            #internal_func
+                        }
+
+                        #wrapper_func
                     }
-                    attrs
-                };
-                let internal_func = InternalFunc {
-                    js_name,
-                    func,
-                    in_context: &None,
-                };
-                let wrapper_func = WrapperFunc { js_name, func };
+                });
 
                 quote! {
-                    #[wasm_bindgen(module=#path)]
-                    extern "C" {
-                        #[allow(non_snake_case)]
-                        #[wasm_bindgen(#(#attrs),*)]
-                        #internal_func
-                    }
-
-                    #wrapper_func
+                    #(#funcs)*
                 }
             }
             TargetEnrichedTypeInfo::Class(class) => {
@@ -788,7 +792,6 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let (member_defs, public_methods): (Vec<TokenStream2>, Vec<TokenStream2>) = members.iter()
                     .map(|(member_js_name, member)| {
                         let member_js_ident = format_ident!("{}", member_js_name);
-                        let internal_fn_name = InternalFunc::to_internal_rust_name(member_js_name);
                         match member {
                             Member::Constructor(ctor) => {
                                 let ctor = ctor.resolve_generic_in_env(&type_env);
@@ -827,14 +830,20 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 let func = {
                                     // func.class_name refers to our wrapper, which is what we want
                                     // other than when we're defining our actual methods
-                                    let mut func = func.clone();
+                                    let mut func = func.widened_fn.clone();
                                     func.class_name = func.class_name.map(|_| TypeIdent::ExactName(internal_class_name.to_string()));
                                     func
                                 };
                                 let func = func.resolve_generic_in_env(&type_env);
-                                let fn_name = InternalFunc::to_internal_rust_name(member_js_name);
+                                let in_context = None;
+                                let internal = InternalFunc {
+                                    func: &func,
+                                    js_name: member_js_name,
+                                    in_context: &in_context,
+                                };
+                                let fn_name = internal.to_internal_rust_name();
 
-                                let f = func.exposed_to_js_fn_decl(fn_name, None);
+                                let f = func.exposed_to_js_fn_decl(fn_name, in_context);
 
                                 let mut attrs = vec![
                                     quote! {js_name = #member_js_ident},
@@ -853,7 +862,14 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 };
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env, None);
+                                let in_context = None;
+                                let internal = InternalFunc {
+                                    func: func.as_ref(),
+                                    js_name: member_js_name,
+                                    in_context: &in_context,
+                                };
+                                let internal_fn_name = internal.to_internal_rust_name();
+                                let pub_fn = func.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_fn_name, true, rc, &type_env, in_context);
 
                                 (member_def, pub_fn)
                             }
@@ -1272,31 +1288,11 @@ impl ToTokens for TargetEnrichedTypeInfo {
                     std::collections::HashMap<String, #value_type>
                 }
             }
-            TargetEnrichedTypeInfo::Func(Func {
-                params,
-                type_params: _,
-                return_type,
-                ..
-            }) => {
-                let param_toks: Vec<TokenStream2> = params
-                    .iter()
-                    .map(|p| {
-                        let typ = &p.type_info;
-
-                        if p.is_variadic {
-                            quote! {
-                                &[#typ]
-                            }
-                        } else {
-                            quote! {
-                                #typ
-                            }
-                        }
-                    })
-                    .collect();
+            TargetEnrichedTypeInfo::FuncGroup(fg) => {
+                let f = &fg.widened_fn;
 
                 quote! {
-                    fn(#(#param_toks),*) -> #return_type
+                    #f
                 }
             }
             /*
@@ -1318,6 +1314,35 @@ impl ToTokens for TargetEnrichedTypeInfo {
             _ => {
                 quote! {}
             }
+        };
+
+        toks.append_all(our_toks);
+    }
+}
+
+impl ToTokens for Func {
+    fn to_tokens(&self, toks: &mut TokenStream2) {
+        let return_type = &self.return_type;
+        let param_toks: Vec<TokenStream2> = self
+            .params
+            .iter()
+            .map(|p| {
+                let typ = &p.type_info;
+
+                if p.is_variadic {
+                    quote! {
+                        &[#typ]
+                    }
+                } else {
+                    quote! {
+                        #typ
+                    }
+                }
+            })
+            .collect();
+
+        let our_toks = quote! {
+            fn(#(#param_toks),*) -> #return_type
         };
 
         toks.append_all(our_toks);
@@ -1417,8 +1442,8 @@ struct OwnedTypeInfo<'a> {
 impl<'a> ToTokens for OwnedTypeInfo<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
         match self.type_info {
-            TargetEnrichedTypeInfo::Func(f) => {
-                let tr = OwnedTypeRef(Cow::Owned(f.clone().into()));
+            TargetEnrichedTypeInfo::FuncGroup(f) => {
+                let tr = OwnedTypeRef(Cow::Owned(f.widened_fn.clone().into()));
                 tr.to_tokens(toks);
             }
             TargetEnrichedTypeInfo::Ref(r) => {
@@ -1482,9 +1507,12 @@ fn render_deserialize_fn(
             let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
             (tr as &dyn HasFnPrototype, quote! { #rendered_type })
         }
-        TargetEnrichedTypeInfo::Func(f) => {
+        TargetEnrichedTypeInfo::FuncGroup(fg) => {
             let rendered_type = OwnedTypeInfo { type_info };
-            (f as &dyn HasFnPrototype, quote! { #rendered_type })
+            (
+                &fg.widened_fn as &dyn HasFnPrototype,
+                quote! { #rendered_type },
+            )
         }
         _ => {
             return None;
@@ -1560,9 +1588,12 @@ fn render_serialize_fn(
             let rendered_type = OwnedTypeRef(Cow::Borrowed(tr));
             (tr as &dyn HasFnPrototype, quote! { #rendered_type })
         }
-        TargetEnrichedTypeInfo::Func(f) => {
+        TargetEnrichedTypeInfo::FuncGroup(f) => {
             let rendered_type = OwnedTypeInfo { type_info };
-            (f as &dyn HasFnPrototype, quote! { #rendered_type })
+            (
+                &f.widened_fn as &dyn HasFnPrototype,
+                quote! { #rendered_type },
+            )
         }
         _ => {
             return None;

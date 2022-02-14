@@ -1,11 +1,11 @@
 use crate::error::{Error, InternalError};
 use crate::fs::Fs;
 use crate::ir::base::{
-    Alias, BaseClass, Class, Ctor, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
-    Intersection, JsSysBuiltin, LitBoolean, LitNumber, LitString, Member, NamespaceImport, Param,
-    PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber,
-    PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple, Type, TypeIdent,
-    TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
+    Alias, BaseClass, Class, Ctor, Enum, EnumMember, EnumValue, Func, FuncGroup, Indexer,
+    Interface, Intersection, JsSysBuiltin, LitBoolean, LitNumber, LitString, Member,
+    NamespaceImport, Param, PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull,
+    PrimitiveNumber, PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple,
+    Type, TypeIdent, TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
 use std::collections::{hash_map::Entry, HashMap};
@@ -579,7 +579,9 @@ trait FuncExt {
         ts_path: &Path,
         ts_types: &mut TsTypes,
     ) -> Result<TypeInfo, InternalError> {
-        Ok(TypeInfo::Func(self.to_func(ts_path, ts_types)?))
+        Ok(TypeInfo::FuncGroup(FuncGroup {
+            overloads: vec![self.to_func(ts_path, ts_types)?],
+        }))
     }
 }
 
@@ -915,12 +917,34 @@ impl TsTypes {
     ) {
         match typ {
             Err(e) => self.record_error(e),
-            Ok(typ) => {
+            Ok(new_type) => {
                 self.types_by_name_by_file
                     .entry(file.to_path_buf())
-                    .and_modify(|names_to_types: &mut HashMap<TypeIdent, Type>| {
-                        names_to_types.insert(name, typ);
-                    });
+                    .and_modify(
+                        |names_to_types: &mut HashMap<TypeIdent, Type>| match names_to_types
+                            .entry(name)
+                        {
+                            Entry::Occupied(mut current_entry) => {
+                                let cur = current_entry.get_mut();
+                                match (&mut cur.info, &new_type.info) {
+                                    (
+                                        TypeInfo::FuncGroup(ref mut fg),
+                                        TypeInfo::FuncGroup(FuncGroup {
+                                            overloads: new_overloads,
+                                        }),
+                                    ) => {
+                                        fg.overloads.extend(new_overloads.iter().cloned());
+                                    }
+                                    _ => {
+                                        *cur = new_type;
+                                    }
+                                }
+                            }
+                            Entry::Vacant(current_entry) => {
+                                current_entry.insert(new_type);
+                            }
+                        },
+                    );
             }
         }
     }
@@ -1304,11 +1328,13 @@ impl TsTypes {
             ..
         }: &TsFnType,
     ) -> Result<TypeInfo, InternalError> {
-        Ok(TypeInfo::Func(Func {
-            type_params: self.process_fn_type_params(ts_path, type_params),
-            params: self.process_params(ts_path, params)?,
-            return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)?),
-            class_name: None,
+        Ok(TypeInfo::FuncGroup(FuncGroup {
+            overloads: vec![Func {
+                type_params: self.process_fn_type_params(ts_path, type_params),
+                params: self.process_params(ts_path, params)?,
+                return_type: Box::new(self.process_type(ts_path, &type_ann.type_ann)?),
+                class_name: None,
+            }],
         }))
     }
 
@@ -1335,21 +1361,23 @@ impl TsTypes {
             ..
         }: &TsTypePredicate,
     ) -> Result<TypeInfo, InternalError> {
-        Ok(TypeInfo::Func(Func {
-            type_params: Default::default(),
-            params: vec![Param {
-                name: match param_name {
-                    TsThisTypeOrIdent::Ident(ident) => ident.sym.to_string(),
-                    TsThisTypeOrIdent::TsThisType(_) => "this".to_string(),
-                },
-                is_variadic: false,
-                type_info: type_ann
-                    .as_ref()
-                    .map(|t| self.process_type(ts_path, &t.type_ann))
-                    .unwrap_or(Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
+        Ok(TypeInfo::FuncGroup(FuncGroup {
+            overloads: vec![Func {
+                type_params: Default::default(),
+                params: vec![Param {
+                    name: match param_name {
+                        TsThisTypeOrIdent::Ident(ident) => ident.sym.to_string(),
+                        TsThisTypeOrIdent::TsThisType(_) => "this".to_string(),
+                    },
+                    is_variadic: false,
+                    type_info: type_ann
+                        .as_ref()
+                        .map(|t| self.process_type(ts_path, &t.type_ann))
+                        .unwrap_or(Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
+                }],
+                return_type: Box::new(TypeInfo::PrimitiveBoolean(PrimitiveBoolean())),
+                class_name: None,
             }],
-            return_type: Box::new(TypeInfo::PrimitiveBoolean(PrimitiveBoolean())),
-            class_name: None,
         }))
     }
 
@@ -1608,7 +1636,9 @@ impl TsTypes {
                         )),
                         ClassMember::Method(method) if method.kind == MethodKind::Method => Some((
                             make_key(method)?,
-                            Member::Method(method.to_member_func(ts_path, self, name)?),
+                            Member::Method(FuncGroup {
+                                overloads: vec![method.to_member_func(ts_path, self, name)?],
+                            }),
                         )),
                         ClassMember::Method(method) if method.kind == MethodKind::Getter => Some((
                             make_key(method)?,
@@ -2231,7 +2261,9 @@ mod test {
         expected_param: &Param,
     ) -> Result<(), Error> {
         let fn_name = TypeIdent::Name(fn_name.to_string());
-        test_exported_type!(ts_code, fn_name, TypeInfo::Func(f), {
+        test_exported_type!(ts_code, fn_name, TypeInfo::FuncGroup(fg), {
+            assert_eq!(fg.overloads.len(), 1);
+            let f = fg.overloads.first().unwrap();
             assert_eq!(f.params.len(), 1);
             assert_eq!(f.params.first().unwrap(), expected_param);
         })
@@ -2649,6 +2681,22 @@ mod test {
                     .fields
                     .iter()
                     .all(|(_, v)| { matches!(v, TypeInfo::JsSysBuiltin(_)) }));
+            }
+        )
+    }
+
+    #[test]
+    fn test_function_overload() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export declare function a(): void;
+                export declare function a(n: number): void;
+                export declare function a(s: string): void;
+            "#,
+            "a",
+            TypeInfo::FuncGroup(fg),
+            {
+                assert_eq!(fg.overloads.len(), 3);
             }
         )
     }

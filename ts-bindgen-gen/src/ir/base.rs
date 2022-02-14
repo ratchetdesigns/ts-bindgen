@@ -97,6 +97,27 @@ impl Param {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuncGroup {
+    pub overloads: Vec<Func>,
+}
+
+impl FuncGroup {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeParamConfig>,
+    ) -> Self {
+        FuncGroup {
+            overloads: self
+                .overloads
+                .iter()
+                .map(|o| o.resolve_names(types_by_name_by_file, type_params))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
     pub type_params: Vec<(String, TypeParamConfig)>,
     pub params: Vec<Param>,
@@ -110,26 +131,18 @@ impl Func {
         types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
         type_params: &HashMap<String, TypeParamConfig>,
     ) -> Self {
+        let fn_type_params =
+            resolve_type_params(types_by_name_by_file, type_params, &self.type_params);
+        let tps = extend_type_params(type_params, &fn_type_params);
+
         Func {
-            type_params: self
-                .type_params
-                .iter()
-                .map(|(n, t)| {
-                    (
-                        n.clone(),
-                        t.resolve_names(types_by_name_by_file, type_params),
-                    )
-                })
-                .collect(),
+            type_params: fn_type_params,
             params: self
                 .params
                 .iter()
-                .map(|p| p.resolve_names(types_by_name_by_file, type_params))
+                .map(|p| p.resolve_names(types_by_name_by_file, &tps))
                 .collect(),
-            return_type: Box::new(
-                self.return_type
-                    .resolve_names(types_by_name_by_file, type_params),
-            ),
+            return_type: Box::new(self.return_type.resolve_names(types_by_name_by_file, &tps)),
             class_name: self.class_name.clone(),
         }
     }
@@ -159,7 +172,7 @@ impl Ctor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
     Constructor(Ctor),
-    Method(Func),
+    Method(FuncGroup),
     Property(TypeInfo),
 }
 
@@ -470,7 +483,7 @@ pub enum TypeInfo {
     LitNumber(LitNumber),
     LitString(LitString),
     LitBoolean(LitBoolean),
-    Func(Func),
+    FuncGroup(FuncGroup),
     Constructor(Ctor),
     Class(Class),
     Var { type_info: Box<TypeInfo> },
@@ -530,14 +543,16 @@ fn resolve_builtin(
     }
 
     if name == "Function" {
-        return Some(TypeInfo::Func(Func {
-            type_params: Default::default(),
-            return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
-            class_name: None,
-            params: vec![Param {
-                name: "args".to_string(),
-                type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
-                is_variadic: true,
+        return Some(TypeInfo::FuncGroup(FuncGroup {
+            overloads: vec![Func {
+                type_params: Default::default(),
+                return_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+                class_name: None,
+                params: vec![Param {
+                    name: "args".to_string(),
+                    type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
+                    is_variadic: true,
+                }],
             }],
         }));
     }
@@ -661,30 +676,8 @@ impl TypeInfo {
             Self::Mapped { value_type } => Self::Mapped {
                 value_type: Box::new(value_type.resolve_names(types_by_name_by_file, type_params)),
             },
-            Self::Func(Func {
-                params,
-                type_params: fn_type_params,
-                return_type,
-                class_name,
-            }) => {
-                let fn_type_params =
-                    resolve_type_params(types_by_name_by_file, type_params, fn_type_params);
-                let tps = extend_type_params(type_params, &fn_type_params);
-                Self::Func(Func {
-                    params: params
-                        .iter()
-                        .map(|p| Param {
-                            name: p.name.to_string(),
-                            is_variadic: p.is_variadic,
-                            type_info: p.type_info.resolve_names(types_by_name_by_file, &tps),
-                        })
-                        .collect(),
-                    return_type: Box::new(
-                        return_type.resolve_names(types_by_name_by_file, type_params),
-                    ),
-                    class_name: class_name.clone(),
-                    type_params: fn_type_params,
-                })
+            Self::FuncGroup(fg) => {
+                Self::FuncGroup(fg.resolve_names(types_by_name_by_file, type_params))
             }
             Self::Constructor(Ctor { params }) => Self::Constructor(Ctor {
                 params: params
