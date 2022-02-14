@@ -1,17 +1,18 @@
 use crate::ir::base::{
     Alias as AliasIR, BaseClass as BaseClassIR, BuiltinPromise, Class as ClassIR, Ctor as CtorIR,
-    Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR, Indexer as IndexerIR,
-    Interface as InterfaceIR, Intersection as IntersectionIR, JsSysBuiltin as JsSysBuiltinIR,
-    LitBoolean, LitNumber, LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny,
-    PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject,
-    PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR,
-    TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR, TypeName as TypeNameIR,
-    TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR, TypeRef as TypeRefIR,
-    Union as UnionIR, WebSysBuiltin as WebSysBuiltinIR,
+    Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR, FuncGroup as FuncGroupIR,
+    Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR,
+    JsSysBuiltin as JsSysBuiltinIR, LitBoolean, LitNumber, LitString, Member as MemberIR,
+    Param as ParamIR, PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull,
+    PrimitiveNumber, PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid,
+    Tuple as TupleIR, Type as TypeIR, TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR,
+    TypeName as TypeNameIR, TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR,
+    TypeRef as TypeRefIR, Union as UnionIR, WebSysBuiltin as WebSysBuiltinIR,
 };
 pub use crate::ir::base::{EnumValue, NamespaceImport};
 use enum_to_enum::WithEffects;
 use std::collections::HashMap;
+use std::iter;
 use std::iter::{Extend, FromIterator};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -239,7 +240,7 @@ pub enum FlattenedTypeInfo {
     Union(Union),
     Intersection(Intersection),
     Mapped { value_type: Box<FlattenedTypeInfo> },
-    Func(Func),
+    FuncGroup(FuncGroup),
     Constructor(Ctor),
     Class(Class),
     Var { type_info: Box<FlattenedTypeInfo> },
@@ -297,7 +298,7 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<FlattenedTypeInfo> {
                 TypeInfoIR::Mapped { value_type } => {
                     struct_match_convert!(ns, Mapped { value_type })
                 }
-                TypeInfoIR::Func(v) => tuple_match_convert!(ns, Func(v)),
+                TypeInfoIR::FuncGroup(v) => tuple_match_convert!(ns, FuncGroup(v)),
                 TypeInfoIR::Constructor(v) => tuple_match_convert!(ns, Constructor(v)),
                 TypeInfoIR::Class(v) => tuple_match_convert!(ns, Class(v)),
                 TypeInfoIR::Var { type_info } => struct_match_convert!(ns, Var { type_info }),
@@ -331,7 +332,9 @@ impl ApplyNames for FlattenedTypeInfo {
             FlattenedTypeInfo::Mapped { value_type } => FlattenedTypeInfo::Mapped {
                 value_type: Box::new(value_type.apply_names(names_by_id)),
             },
-            FlattenedTypeInfo::Func(f) => FlattenedTypeInfo::Func(f.apply_names(names_by_id)),
+            FlattenedTypeInfo::FuncGroup(f) => {
+                FlattenedTypeInfo::FuncGroup(f.apply_names(names_by_id))
+            }
             FlattenedTypeInfo::Constructor(c) => {
                 FlattenedTypeInfo::Constructor(c.apply_names(names_by_id))
             }
@@ -657,7 +660,7 @@ impl From<Namespaced<TypeInfoIR>> for EffectContainer<TypeRef> {
             TypeInfoIR::LitNumber(l) => ns.in_ns(l).into(),
             TypeInfoIR::LitString(l) => ns.in_ns(l).into(),
             TypeInfoIR::LitBoolean(l) => ns.in_ns(l).into(),
-            TypeInfoIR::Func(f) => ns.in_ns(f).into(),
+            TypeInfoIR::FuncGroup(f) => ns.in_ns(f).into(),
             TypeInfoIR::Constructor(_) => panic!("Constructor only expected as top-level type"),
             TypeInfoIR::Class(_) => panic!("Class only expected as top-level type"),
             TypeInfoIR::Var { type_info: _ } => panic!("Var only expected as a top-level type"),
@@ -697,6 +700,42 @@ impl From<Namespaced<BaseClassIR>> for EffectContainer<TypeRef> {
             BaseClassIR::Resolved(ti) => ns.in_ns(ti).into(),
             BaseClassIR::Unresolved(_) => panic!("expected only resolved base classes"),
         })
+    }
+}
+
+impl From<Namespaced<FuncGroupIR>> for EffectContainer<TypeRef> {
+    fn from(src: Namespaced<FuncGroupIR>) -> EffectContainer<TypeRef> {
+        let f: EffectContainer<FuncGroup> = src.into();
+
+        assert_eq!(
+            f.value.overloads.len(),
+            1,
+            "expected exactly 1 overload for functions in type ref position"
+        );
+
+        let f = EffectContainer {
+            value: f.value.widened_fn,
+            effects: f.effects,
+        };
+
+        combine_effects!(
+            f => (effect_mappers::identity());
+            TypeRef {
+                referent: TypeIdent::Builtin(Builtin::Fn),
+                type_params: f.params.into_iter().map(|p| {
+                    if p.is_variadic {
+                        TypeRef {
+                            referent: TypeIdent::Builtin(Builtin::Variadic),
+                            type_params: vec![p.type_info],
+                        }
+                    } else {
+                        p.type_info
+                    }
+                }).chain(
+                    std::iter::once(*f.return_type)
+                ).collect(),
+            }
+        )
     }
 }
 
@@ -1020,6 +1059,104 @@ impl From<Namespaced<TypeParamConfigIR>> for EffectContainer<TypeParamConfig> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuncGroup {
+    pub overloads: Vec<Func>,
+    pub widened_fn: Func,
+}
+
+impl ApplyNames for FuncGroup {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
+        FuncGroup {
+            overloads: self
+                .overloads
+                .into_iter()
+                .map(|o| o.apply_names(names_by_id))
+                .collect(),
+            widened_fn: self.widened_fn.apply_names(names_by_id),
+        }
+    }
+}
+
+fn combine_to_union(a: &TypeInfoIR, b: &TypeInfoIR) -> TypeInfoIR {
+    match (a, b) {
+        (TypeInfoIR::Union(u1), TypeInfoIR::Union(u2)) => TypeInfoIR::Union(UnionIR {
+            types: u1.types.iter().chain(u2.types.iter()).cloned().collect(),
+        }),
+        (TypeInfoIR::Union(u1), t2) => TypeInfoIR::Union(UnionIR {
+            types: u1.types.iter().chain(iter::once(t2)).cloned().collect(),
+        }),
+        (t1, TypeInfoIR::Union(u2)) => TypeInfoIR::Union(UnionIR {
+            types: u2.types.iter().chain(iter::once(t1)).cloned().collect(),
+        }),
+        (t1, t2) => TypeInfoIR::Union(UnionIR {
+            types: vec![t1.clone(), t2.clone()],
+        }),
+    }
+}
+
+fn to_widened_fn(fns: &[FuncIR]) -> FuncIR {
+    FuncIR {
+        type_params: fns
+            .first()
+            // TODO: shouldn't assume all fns have the same type params
+            // though typescript doesn't do well with overloaded generic fns
+            .map(|f| f.type_params.clone())
+            .unwrap_or_default(),
+        params: fns
+            .iter()
+            .fold(vec![], |prev_params, FuncIR { params, .. }| {
+                // TODO: need to extend is_variadic params so that variadic
+                // params come after all other params and are only unioned
+                // with other variadic params
+                prev_params
+                    .iter()
+                    .zip(params.iter())
+                    .map(|(prev, param)| ParamIR {
+                        name: prev.name.clone(),
+                        type_info: combine_to_union(&prev.type_info, &param.type_info),
+                        is_variadic: prev.is_variadic && param.is_variadic,
+                    })
+                    .chain(params.iter().skip(prev_params.len()).cloned())
+                    .chain(prev_params.iter().skip(params.len()).cloned())
+                    .collect()
+            }),
+        class_name: fns
+            .first()
+            .map(|f| f.class_name.clone())
+            .unwrap_or_default(),
+        return_type: fns
+            .iter()
+            .skip(1)
+            .fold(fns.first().unwrap().return_type.clone(), |t1, t2| {
+                Box::new(combine_to_union(t1.as_ref(), t2.return_type.as_ref()))
+            }),
+    }
+}
+
+impl From<Namespaced<FuncGroupIR>> for EffectContainer<FuncGroup> {
+    fn from(src: Namespaced<FuncGroupIR>) -> EffectContainer<FuncGroup> {
+        src.map(|v, ns| {
+            let widened_fn = ns.in_ns(to_widened_fn(&v.overloads)).into();
+            let overloads = v
+                .overloads
+                .into_iter()
+                .map(|p| ns.in_ns(p))
+                .map(EffectContainer::from)
+                .collect();
+
+            combine_effects!(
+                overloads => (effect_mappers::identity()),
+                widened_fn => (effect_mappers::identity());
+                FuncGroup {
+                    overloads,
+                    widened_fn,
+                }
+            )
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
     pub type_params: Vec<(String, TypeParamConfig)>,
     pub params: Vec<Param>,
@@ -1237,7 +1374,7 @@ impl From<Namespaced<ClassIR>> for EffectContainer<Class> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
     Constructor(Ctor),
-    Method(Func),
+    Method(FuncGroup),
     Property(TypeRef),
 }
 

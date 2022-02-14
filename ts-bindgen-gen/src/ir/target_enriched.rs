@@ -3,7 +3,7 @@ use crate::identifier::Identifier;
 use crate::ir::flattened::{
     Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor, Enum as FlattenedEnum,
     EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
-    Indexer as FlattenedIndexer, Interface as FlattenedInterface,
+    FuncGroup as FlattenedFuncGroup, Indexer as FlattenedIndexer, Interface as FlattenedInterface,
     Intersection as FlattenedIntersection, Member as FlattenedMember,
     NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
     TypeParamConfig as FlattenedTypeParamConfig, TypeQuery as FlattenedTypeQuery,
@@ -156,7 +156,7 @@ pub enum TargetEnrichedTypeInfo {
     Mapped {
         value_type: Box<TargetEnrichedTypeInfo>,
     },
-    Func(Func),
+    FuncGroup(FuncGroup),
     Constructor(Ctor),
     Class(Class),
     Var {
@@ -222,8 +222,8 @@ impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
             case_conv!(match value_type => FlattenedTypeInfo::Mapped, x) => {
                 case_conv!(value_type => TargetEnrichedTypeInfo::Mapped, x, ctx)
             }
-            case_conv!(match FlattenedTypeInfo::Func, x) => {
-                case_conv!(TargetEnrichedTypeInfo::Func, x, ctx)
+            case_conv!(match FlattenedTypeInfo::FuncGroup, x) => {
+                case_conv!(TargetEnrichedTypeInfo::FuncGroup, x, ctx)
             }
             case_conv!(match FlattenedTypeInfo::Constructor, x) => {
                 case_conv!(TargetEnrichedTypeInfo::Constructor, x, ctx)
@@ -247,7 +247,7 @@ impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
     Constructor(Ctor),
-    Method(Func),
+    Method(FuncGroup),
     Property(TypeRef),
 }
 
@@ -324,6 +324,19 @@ from_struct!(
     FlattenedTypeParamConfig => TypeParamConfig;
     constraint => Option,
     default_type_arg => Option,
+);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuncGroup {
+    pub overloads: Vec<Func>,
+    pub widened_fn: Func,
+    pub context: Context,
+}
+
+from_struct!(
+    FlattenedFuncGroup => FuncGroup;
+    overloads => [],
+    widened_fn => .,
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]

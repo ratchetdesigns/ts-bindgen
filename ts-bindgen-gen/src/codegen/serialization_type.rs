@@ -26,7 +26,7 @@ impl SerializationTypeGetter for TypeRef {
 impl SerializationTypeGetter for TargetEnrichedTypeInfo {
     fn serialization_type(&self) -> SerializationType {
         match self {
-            TargetEnrichedTypeInfo::Func(_) => SerializationType::Fn,
+            TargetEnrichedTypeInfo::FuncGroup(_) => SerializationType::Fn,
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
                 TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,

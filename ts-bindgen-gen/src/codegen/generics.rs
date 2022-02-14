@@ -189,7 +189,7 @@ pub trait RequiredTypeParams {
 impl RequiredTypeParams for TargetEnrichedTypeInfo {
     fn required_type_params(&self) -> Option<&'_ [(String, TypeParamConfig)]> {
         match self {
-            TargetEnrichedTypeInfo::Func(f) => Some(f.type_params.as_slice()),
+            TargetEnrichedTypeInfo::FuncGroup(f) => Some(f.widened_fn.type_params.as_slice()),
             // TODO: do refs need provided and required type params?
             //TargetEnrichedTypeInfo::Ref(f) =>  Some(f.type_params.as_slice()),
             TargetEnrichedTypeInfo::Interface(i) => Some(i.type_params.as_slice()),
