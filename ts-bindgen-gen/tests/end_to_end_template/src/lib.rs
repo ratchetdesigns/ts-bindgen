@@ -22,10 +22,17 @@ fn overload_test() -> Result<(), wasm_bindgen::JsValue> {
     assert!(f - expected_f < delta && expected_f - f < delta);
     assert_eq!(overloaded_FnStringToString("hello world".to_string())?, "hello world");
 
-    let over = Over::new();
+    let over = Over::new_FnToOver();
     let f = over.overload_FnF64ToF64(expected_f)?;
     assert!(f - expected_f < delta && expected_f - f < delta);
     assert_eq!(over.overload_FnStringToString("yo yo yo".to_string())?, "yo yo yo");
+
+    let over = Over::new_FnF64ToOver(5f64);
+    assert_eq!(over.s()?, "5");
+
+    let over = Over::new_FnStringToOver("hello".to_string());
+    assert_eq!(over.s()?, "hello");
+
     Ok(())
 }
 

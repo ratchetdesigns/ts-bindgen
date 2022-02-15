@@ -1,8 +1,8 @@
 use crate::error::{Error, InternalError};
 use crate::fs::Fs;
 use crate::ir::base::{
-    Alias, BaseClass, Class, Ctor, Enum, EnumMember, EnumValue, Func, FuncGroup, Indexer,
-    Interface, Intersection, JsSysBuiltin, LitBoolean, LitNumber, LitString, Member,
+    Alias, BaseClass, Class, Ctor, CtorGroup, Enum, EnumMember, EnumValue, Func, FuncGroup,
+    Indexer, Interface, Intersection, JsSysBuiltin, LitBoolean, LitNumber, LitString, Member,
     NamespaceImport, Param, PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull,
     PrimitiveNumber, PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid, Tuple,
     Type, TypeIdent, TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
@@ -1630,7 +1630,9 @@ impl TsTypes {
                     ClassMember::StaticBlock(_) => None,
                     ClassMember::Constructor(ctor) => Some((
                         make_key(ctor)?,
-                        Member::Constructor(ctor.to_ctor(ts_path, self)?),
+                        Member::Constructor(CtorGroup {
+                            overloads: vec![ctor.to_ctor(ts_path, self)?],
+                        }),
                     )),
                     ClassMember::Method(method) if method.kind == MethodKind::Method => Some((
                         make_key(method)?,
@@ -1683,7 +1685,9 @@ impl TsTypes {
                         (Member::Method(cur_fg), Member::Method(fg)) => {
                             cur_fg.overloads.extend(fg.overloads.iter().cloned());
                         }
-                        // TODO: ctor
+                        (Member::Constructor(cur_cg), Member::Constructor(cg)) => {
+                            cur_cg.overloads.extend(cg.overloads.iter().cloned());
+                        }
                         _ => {}
                     })
                     .or_insert_with(|| member.clone());
