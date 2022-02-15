@@ -793,45 +793,50 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         let member_js_ident = format_ident!("{}", member_js_name);
                         match member {
                             Member::Constructor(ctor) => {
-                                let ctor = ctor.resolve_generic_in_env(&type_env);
-                                let ctor = Constructor::new(
-                                    ctor,
-                                    TypeIdent::LocalName(js_name.to_string()),
-                                );
-                                let param_toks = ctor
-                                    .params()
-                                    .map(|p| p.as_exposed_to_js_named_param_list(None));
+                                let is_overloaded = ctor.overloads.len() > 1;
+                                ctor.overloads
+                                    .iter()
+                                    .map(|ctor| {
+                                        let ctor = ctor.resolve_generic_in_env(&type_env);
+                                        let ctor = Constructor::new(
+                                            ctor,
+                                            TypeIdent::LocalName(js_name.to_string()),
+                                        );
+                                        let param_toks = ctor
+                                            .params()
+                                            .map(|p| p.as_exposed_to_js_named_param_list(None));
 
-                                let fn_group_name = to_snake_case_ident("new");
-                                // TODO
-                                let fn_name = if false {
-                                    ctor.overload_name(&fn_group_name)
-                                } else {
-                                    fn_group_name
-                                };
+                                        let fn_group_name = to_snake_case_ident("new");
+                                        let fn_name = if is_overloaded {
+                                            ctor.overload_name(&fn_group_name)
+                                        } else {
+                                            fn_group_name
+                                        };
 
-                                let member_def = quote! {
-                                    #[wasm_bindgen(constructor, js_class = #js_name)]
-                                    pub fn #fn_name(#(#param_toks),*) -> #internal_class_name;
-                                };
-                                let fq_internal_ctor = to_snake_case_ident("new").in_namespace(&internal_class_name);
+                                        let member_def = quote! {
+                                            #[wasm_bindgen(constructor, js_class = #js_name)]
+                                            pub fn #fn_name(#(#param_toks),*) -> #internal_class_name;
+                                        };
+                                        let fq_internal_ctor = fn_name.in_namespace(&internal_class_name);
 
-                                let res_converter = |res: TokenStream2| -> TokenStream2 {
-                                    let args = if type_params.is_empty() {
-                                        vec![quote! { #res }]
-                                    } else {
-                                        vec![
-                                            quote! { #res },
-                                            quote! { std::marker::PhantomData #full_type_params },
-                                        ]
-                                    };
-                                    quote! {
-                                        #name(#(#args),*)
-                                    }
-                                };
-                                let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&fn_name, None, &fq_internal_ctor, false, Some(&res_converter), &type_env, None);
+                                        let res_converter = |res: TokenStream2| -> TokenStream2 {
+                                            let args = if type_params.is_empty() {
+                                                vec![quote! { #res }]
+                                            } else {
+                                                vec![
+                                                    quote! { #res },
+                                                    quote! { std::marker::PhantomData #full_type_params },
+                                                ]
+                                            };
+                                            quote! {
+                                                #name(#(#args),*)
+                                            }
+                                        };
+                                        let pub_fn = ctor.exposed_to_rust_generic_wrapper_fn(&fn_name, None, &fq_internal_ctor, false, Some(&res_converter), &type_env, None);
 
-                                vec![(member_def, pub_fn)]
+                                        (member_def, pub_fn)
+                                    })
+                                    .collect()
                             }
                             Member::Method(func) => {
                                 let is_overloaded = func.overloads.len() > 1;

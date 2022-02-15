@@ -1,9 +1,10 @@
 use crate::fs::Fs;
 use crate::identifier::Identifier;
 use crate::ir::flattened::{
-    Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor, Enum as FlattenedEnum,
-    EnumMember as FlattenedEnumMember, FlatType, FlattenedTypeInfo, Func as FlattenedFunc,
-    FuncGroup as FlattenedFuncGroup, Indexer as FlattenedIndexer, Interface as FlattenedInterface,
+    Alias as FlattenedAlias, Class as FlattenedClass, Ctor as FlattenedCtor,
+    CtorGroup as FlattenedCtorGroup, Enum as FlattenedEnum, EnumMember as FlattenedEnumMember,
+    FlatType, FlattenedTypeInfo, Func as FlattenedFunc, FuncGroup as FlattenedFuncGroup,
+    Indexer as FlattenedIndexer, Interface as FlattenedInterface,
     Intersection as FlattenedIntersection, Member as FlattenedMember,
     NamespaceImport as FlattenedNamespaceImport, Param as FlattenedParam, Tuple as FlattenedTuple,
     TypeParamConfig as FlattenedTypeParamConfig, TypeQuery as FlattenedTypeQuery,
@@ -246,7 +247,7 @@ impl From<WithContext<FlattenedTypeInfo>> for TargetEnrichedTypeInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
-    Constructor(Ctor),
+    Constructor(CtorGroup),
     Method(FuncGroup),
     Property(TypeRef),
 }
@@ -278,6 +279,17 @@ pub struct Class {
     pub implements: Vec<TypeRef>,
     pub context: Context,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtorGroup {
+    pub overloads: Vec<Ctor>,
+    pub context: Context,
+}
+
+from_struct!(
+    FlattenedCtorGroup => CtorGroup;
+    overloads => [],
+);
 
 from_struct!(
     FlattenedClass => Class;

@@ -1,13 +1,14 @@
 use crate::ir::base::{
     Alias as AliasIR, BaseClass as BaseClassIR, BuiltinPromise, Class as ClassIR, Ctor as CtorIR,
-    Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR, FuncGroup as FuncGroupIR,
-    Indexer as IndexerIR, Interface as InterfaceIR, Intersection as IntersectionIR,
-    JsSysBuiltin as JsSysBuiltinIR, LitBoolean, LitNumber, LitString, Member as MemberIR,
-    Param as ParamIR, PrimitiveAny, PrimitiveBigInt, PrimitiveBoolean, PrimitiveNull,
-    PrimitiveNumber, PrimitiveObject, PrimitiveString, PrimitiveUndefined, PrimitiveVoid,
-    Tuple as TupleIR, Type as TypeIR, TypeIdent as TypeIdentIR, TypeInfo as TypeInfoIR,
-    TypeName as TypeNameIR, TypeParamConfig as TypeParamConfigIR, TypeQuery as TypeQueryIR,
-    TypeRef as TypeRefIR, Union as UnionIR, WebSysBuiltin as WebSysBuiltinIR,
+    CtorGroup as CtorGroupIR, Enum as EnumIR, EnumMember as EnumMemberIR, Func as FuncIR,
+    FuncGroup as FuncGroupIR, Indexer as IndexerIR, Interface as InterfaceIR,
+    Intersection as IntersectionIR, JsSysBuiltin as JsSysBuiltinIR, LitBoolean, LitNumber,
+    LitString, Member as MemberIR, Param as ParamIR, PrimitiveAny, PrimitiveBigInt,
+    PrimitiveBoolean, PrimitiveNull, PrimitiveNumber, PrimitiveObject, PrimitiveString,
+    PrimitiveUndefined, PrimitiveVoid, Tuple as TupleIR, Type as TypeIR, TypeIdent as TypeIdentIR,
+    TypeInfo as TypeInfoIR, TypeName as TypeNameIR, TypeParamConfig as TypeParamConfigIR,
+    TypeQuery as TypeQueryIR, TypeRef as TypeRefIR, Union as UnionIR,
+    WebSysBuiltin as WebSysBuiltinIR,
 };
 pub use crate::ir::base::{EnumValue, NamespaceImport};
 use enum_to_enum::WithEffects;
@@ -1252,6 +1253,42 @@ impl From<Namespaced<ParamIR>> for EffectContainer<Param> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtorGroup {
+    pub overloads: Vec<Ctor>,
+}
+
+impl ApplyNames for CtorGroup {
+    fn apply_names(self, names_by_id: &HashMap<usize, TypeIdent>) -> Self {
+        CtorGroup {
+            overloads: self
+                .overloads
+                .into_iter()
+                .map(|o| o.apply_names(names_by_id))
+                .collect(),
+        }
+    }
+}
+
+impl From<Namespaced<CtorGroupIR>> for EffectContainer<CtorGroup> {
+    fn from(src: Namespaced<CtorGroupIR>) -> EffectContainer<CtorGroup> {
+        src.map(|v, ns| {
+            let overloads = v
+                .overloads
+                .into_iter()
+                .map(|o| ns.in_ns(o))
+                .map(EffectContainer::from)
+                .collect();
+            combine_effects!(
+                overloads => (effect_mappers::identity());
+                CtorGroup {
+                    overloads,
+                }
+            )
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
 }
@@ -1373,7 +1410,7 @@ impl From<Namespaced<ClassIR>> for EffectContainer<Class> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
-    Constructor(Ctor),
+    Constructor(CtorGroup),
     Method(FuncGroup),
     Property(TypeRef),
 }

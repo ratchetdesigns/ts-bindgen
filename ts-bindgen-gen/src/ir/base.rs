@@ -149,6 +149,27 @@ impl Func {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtorGroup {
+    pub overloads: Vec<Ctor>,
+}
+
+impl CtorGroup {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeParamConfig>,
+    ) -> Self {
+        CtorGroup {
+            overloads: self
+                .overloads
+                .iter()
+                .map(|o| o.resolve_names(types_by_name_by_file, type_params))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctor {
     pub params: Vec<Param>,
 }
@@ -171,7 +192,7 @@ impl Ctor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Member {
-    Constructor(Ctor),
+    Constructor(CtorGroup),
     Method(FuncGroup),
     Property(TypeInfo),
 }
@@ -272,7 +293,7 @@ pub struct Interface {
     pub extends: Vec<BaseClass>,
     pub fields: HashMap<String, TypeInfo>,
     pub type_params: Vec<(String, TypeParamConfig)>,
-    pub constructor: Option<Ctor>,
+    pub constructor: Option<Ctor>, // TODO: make this a ctor group
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
