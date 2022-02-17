@@ -9,6 +9,26 @@ pub enum TypeRefLike<'a> {
     OwnedTypeRef(Cow<'a, OwnedTypeRef<'a>>),
 }
 
+impl<'a> TypeRefLike<'a> {
+    pub fn similarly_wrap<'b>(&self, tr: &'b TypeRef) -> TypeRefLike<'b> {
+        match self {
+            Self::TypeRef(_) => TypeRefLike::TypeRef(Cow::Borrowed(tr)),
+            Self::OwnedTypeRef(_) => {
+                TypeRefLike::OwnedTypeRef(Cow::Owned(OwnedTypeRef(Cow::Borrowed(tr))))
+            }
+        }
+    }
+}
+
+impl<'a> AsRef<TypeRef> for TypeRefLike<'a> {
+    fn as_ref(&self) -> &TypeRef {
+        match self {
+            Self::TypeRef(tr) => tr.as_ref(),
+            Self::OwnedTypeRef(tr) => tr.as_ref().as_ref(),
+        }
+    }
+}
+
 impl<'a> From<&'a TypeRef> for TypeRefLike<'a> {
     fn from(src: &'a TypeRef) -> TypeRefLike<'a> {
         TypeRefLike::TypeRef(Cow::Borrowed(src))
@@ -45,6 +65,12 @@ impl<'a> ToTokens for TypeRefLike<'a> {
 /// Represents an owned TypeRef. Needed to render the type as owned (sized).
 #[derive(Debug, Clone)]
 pub struct OwnedTypeRef<'a>(pub Cow<'a, TypeRef>);
+
+impl<'a> AsRef<TypeRef> for OwnedTypeRef<'a> {
+    fn as_ref(&self) -> &TypeRef {
+        self.0.as_ref()
+    }
+}
 
 impl<'a> ToTokens for OwnedTypeRef<'a> {
     fn to_tokens(&self, toks: &mut TokenStream2) {
