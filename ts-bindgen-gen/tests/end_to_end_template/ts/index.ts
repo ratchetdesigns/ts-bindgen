@@ -8,6 +8,7 @@ export * as TypeOps from './type-operators';
 export * as destructureParamTest from './destructure-param-test';
 export * as interfaceTest from './interface-test';
 export * as overloadTest from './function-overload';
+export * as arrayTest from './array-passing';
 
 export function runTest<G>(
   cloneFn: RoundTripCloneFn,
