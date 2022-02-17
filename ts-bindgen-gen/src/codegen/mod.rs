@@ -987,6 +987,32 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
 
                     #(#super_as_ref_impls)*
 
+                    impl #full_type_params std::convert::From<#name #full_type_params> for JsValue {
+                        fn from(src: #name #full_type_params) -> JsValue {
+                            JsValue::from(src.0)
+                        }
+                    }
+
+                    impl #full_type_params std::convert::AsRef<JsValue> for #name #full_type_params {
+                        fn as_ref(&self) -> &JsValue {
+                            self.0.as_ref()
+                        }
+                    }
+
+                    impl #full_type_params wasm_bindgen::JsCast for #name #full_type_params {
+                        fn instanceof(val: &JsValue) -> bool {
+                            #internal_class_name::instanceof(val)
+                        }
+                        fn unchecked_from_js(val: JsValue) -> Self {
+                            #name(#internal_class_name::unchecked_from_js(val), #extra_args)
+                        }
+                        fn unchecked_from_js_ref(val: &JsValue) -> &Self {
+                            unsafe {
+                                &*(#internal_class_name::unchecked_from_js_ref(val) as *const #internal_class_name as *const Self)
+                            }
+                        }
+                    }
+
                     impl #full_type_params_deserializable #name #full_type_params {
                         #(#public_methods)*
                     }
