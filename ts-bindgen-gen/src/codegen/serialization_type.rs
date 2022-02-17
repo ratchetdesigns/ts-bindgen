@@ -6,6 +6,7 @@ use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
 pub enum SerializationType {
     Raw,
     SerdeJson,
+    Array,
     Fn,
     JsValue,
 }
@@ -30,13 +31,14 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
                 TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,
-                TypeIdent::Builtin(Builtin::Array) => SerializationType::SerdeJson,
+                TypeIdent::Builtin(Builtin::Array) => SerializationType::Array,
                 TypeIdent::Builtin(
                     Builtin::PrimitiveAny | Builtin::PrimitiveObject | Builtin::Named(_),
                 ) => SerializationType::JsValue,
                 TypeIdent::Builtin(_) => SerializationType::Raw,
                 _ => SerializationType::SerdeJson,
             },
+            TargetEnrichedTypeInfo::Array { .. } => SerializationType::Array,
             _ => SerializationType::SerdeJson,
         }
     }

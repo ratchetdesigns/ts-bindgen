@@ -393,7 +393,7 @@ pub mod fn_types {
         let typ = with_context(typ, in_context);
         match serialization_type {
             SerializationType::Raw | SerializationType::JsValue => quote! { #typ },
-            SerializationType::SerdeJson => quote! { JsValue },
+            SerializationType::SerdeJson | SerializationType::Array => quote! { JsValue },
             SerializationType::Fn => {
                 let target = typ.resolve_target_type();
                 match target {
@@ -456,7 +456,10 @@ pub mod fn_types {
         let typ = with_context(typ, in_context);
         let typ = typ.as_ref();
         match serialization_type {
-            SerializationType::Raw | SerializationType::SerdeJson | SerializationType::JsValue => {
+            SerializationType::Raw
+            | SerializationType::SerdeJson
+            | SerializationType::JsValue
+            | SerializationType::Array => {
                 quote! { #typ }
             }
             SerializationType::Fn => match typ {
@@ -1066,7 +1069,7 @@ impl<T: WrappedParam> ParamExt for T {
 
         match serialization_type {
             SerializationType::Raw | SerializationType::JsValue => quote! { #name },
-            SerializationType::SerdeJson => {
+            SerializationType::SerdeJson | SerializationType::Array => {
                 quote! {
                     ts_bindgen_rt::from_jsvalue(&#name).map_err(ts_bindgen_rt::Error::from)?
                 }
@@ -1321,7 +1324,7 @@ fn render_wasm_bindgen_return_to_js(
     let serialization_type = return_type.serialization_type();
     match serialization_type {
         SerializationType::Raw | SerializationType::JsValue => return_value.clone(),
-        SerializationType::SerdeJson => {
+        SerializationType::SerdeJson | SerializationType::Array => {
             if is_fallible {
                 quote! {
                     ts_bindgen_rt::from_jsvalue(&#return_value?).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)
@@ -1354,7 +1357,7 @@ pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream
             #return_value.into_serde().unwrap()
         },
         SerializationType::JsValue => return_value.clone(),
-        SerializationType::SerdeJson => {
+        SerializationType::SerdeJson | SerializationType::Array => {
             quote! {
                 ts_bindgen_rt::from_jsvalue(&#return_value).unwrap()
             }
@@ -1384,6 +1387,50 @@ fn render_rust_to_js_conversion(
             quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper },
         ),
         SerializationType::Fn => (false, quote! { &#fn_name }),
+        SerializationType::Array => {
+            let tr = typ.as_ref();
+            let inner_type = if let TypeIdent::Builtin(Builtin::Array) = &tr.referent {
+                tr.type_params
+                    .first()
+                    .map(Cow::Borrowed)
+                    .unwrap_or_else(|| {
+                        Cow::Owned(TypeRef {
+                            referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                            type_params: Default::default(),
+                            context: tr.context.clone(),
+                        })
+                    })
+            } else {
+                // TODO: this is an error
+                Cow::Owned(TypeRef {
+                    referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                    type_params: Default::default(),
+                    context: tr.context.clone(),
+                })
+            };
+            let inner_name = name.suffix_name("_item");
+            let inner_conversion = render_rust_to_jsvalue_conversion(
+                &inner_name,
+                fn_name, // TODO: what do we do here?
+                &typ.similarly_wrap(inner_type.as_ref()),
+                quote! { ? },
+            );
+            (
+                true,
+                quote! {
+                    #name.into_iter().fold(
+                        Ok(js_sys::Array::new()) as std::result::Result<js_sys::Array, JsValue>,
+                        |arr, #inner_name| {
+                            arr.and_then(|a| {
+                                a.push(&#inner_conversion);
+                                Ok(a)
+                            })
+                        },
+                    )#error_mapper
+                    .into()
+                },
+            )
+        }
     }
 }
 
@@ -1393,15 +1440,15 @@ fn render_rust_to_jsvalue_conversion(
     typ: &TypeRefLike,
     error_mapper: TokenStream2,
 ) -> TokenStream2 {
+    let (_, conv) = render_rust_to_js_conversion(name, fn_name, typ, error_mapper);
     let serialization_type = typ.serialization_type();
-    match serialization_type {
-        SerializationType::Raw | SerializationType::JsValue => quote! { JsValue::from(#name) },
-        SerializationType::SerdeJson => {
-            quote! { ts_bindgen_rt::to_jsvalue(&#name)#error_mapper }
-        }
-        SerializationType::Fn => {
-            quote! { &#fn_name }
-        }
+    if matches!(
+        serialization_type,
+        SerializationType::Raw | SerializationType::JsValue
+    ) {
+        quote! { JsValue::from(#name) }
+    } else {
+        conv
     }
 }
 
