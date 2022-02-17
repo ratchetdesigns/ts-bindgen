@@ -4,7 +4,17 @@
 
 ### BREAKING CHANGE
 
-- js-sys types are now generated as the proper js-sys tyep instead of as JsValue. #3
+- js-sys types are now generated as the proper js-sys type instead of as JsValue. #3
+- overloaded functions and methods now have a _FnXToY suffix #4
+
+### Added
+
+- support overloaded functions and methods. #4
+- generate js-sys types for corresponding typescript types. #3
+
+### Fixed
+
+- fix array serialization
 
 ## [0.2.0] - 2022-02-06
 
@@ -14,12 +24,12 @@
 
 ### Added
 
-- Recognize and use corresponding web-sys builtins for types. #1
+- recognize and use corresponding web-sys builtins for types. #1
 
 ### Fixed
 
-- Make type flattening recursive. #2
+- make type flattening recursive. #2
 
 ## [0.1.0] - 2022-01-30
 
-- Initial release
+- initial release
