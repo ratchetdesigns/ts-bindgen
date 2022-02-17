@@ -21,18 +21,19 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     ))?;
     scope.install(window().unwrap().into())?;
 
-    let path = Path::new(PathDescription::new("#E4141B", 20, "round").into());
+    let path = Path::new_FnJsValueToPath(PathDescription::new("#E4141B", 20, "round").into());
 
     let start = scope
         .view()?
         .center()?
-        .divide(Point::new(PointParam::new(10.0, 1.0).into()))?;
+        .divide_FnPointToPoint(Point::new_FnF64AndF64ToPoint(10.0, 1.0))?;
 
     let points: Vec<_> = (0..point_count)
         .into_iter()
         .map(|i| {
-            start.add(Point::new(
-                PointParam::new((i as f64) * point_distance, 0.0).into(),
+            start.add_FnPointToPoint(Point::new_FnF64AndF64ToPoint(
+                (i as f64) * point_distance,
+                0.0,
             ))
         })
         .map(|p| p.map(|p| PathAddParamsSegmentParam::PointCase(p)))
@@ -49,9 +50,9 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
             let next_segment = segment.next()?;
             let cur_point = segment.point()?;
             let next_point = next_segment.point()?;
-            let vector = cur_point.subtract(next_point)?;
+            let vector = cur_point.subtract_FnPointToPoint(next_point)?;
             vector.set_length(point_distance)?;
-            next_segment.set_point(cur_point.subtract(vector)?)?;
+            next_segment.set_point(cur_point.subtract_FnPointToPoint(vector)?)?;
         }
 
         path.smooth(SmoothOptions::new("continuous").into())?;
@@ -60,31 +61,11 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     }) as Rc<dyn Fn(Box<[JsValue]>) -> Result<JsValue, JsValue>>;
     scope
         .view()?
-        .set_on_mouse_move(ViewOnMouseMove::FnJsValueJsValueCase(
+        .set_on_mouse_move(ViewOnMouseMove::FnJsValueToJsValueCase(
             mouse_handler
         ))?;
 
     Ok(())
-}
-
-struct PointParam {
-    pub x: f64,
-    pub y: f64,
-}
-
-impl PointParam {
-    fn new(x: f64, y: f64) -> PointParam {
-        PointParam { x, y }
-    }
-}
-
-impl From<PointParam> for JsValue {
-    fn from(src: PointParam) -> JsValue {
-        let o = Object::new();
-        Reflect::set(&o, &"x".into(), &src.x.into()).unwrap();
-        Reflect::set(&o, &"y".into(), &src.y.into()).unwrap();
-        o.into()
-    }
 }
 
 struct SmoothOptions {
