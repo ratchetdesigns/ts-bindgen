@@ -2721,4 +2721,26 @@ mod test {
             }
         )
     }
+
+    #[test]
+    fn test_record_in_alias() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = Record<string, { n: number }>;
+            "#,
+            "A",
+            TypeInfo::Alias(alias),
+            {
+                if let TypeInfo::Mapped { value_type } = alias.target.as_ref() {
+                    if let TypeInfo::Interface(i) = value_type.as_ref() {
+                        assert_eq!(i.fields.len(), 1);
+                    } else {
+                        assert!(false);
+                    }
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
 }

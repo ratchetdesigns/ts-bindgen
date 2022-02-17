@@ -355,6 +355,25 @@ pub struct Alias {
     pub type_params: Vec<(String, TypeParamConfig)>,
 }
 
+impl Alias {
+    fn resolve_names(
+        &self,
+        types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+        type_params: &HashMap<String, TypeParamConfig>,
+    ) -> Self {
+        let tps = {
+            let mut tps = type_params.clone();
+            tps.extend(self.type_params.iter().cloned());
+            tps
+        };
+
+        Alias {
+            target: Box::new(self.target.resolve_names(types_by_name_by_file, &tps)),
+            type_params: self.type_params.clone(),
+        }
+    }
+}
+
 macro_rules! make_primitives {
     () => {};
     ($prim:ident) => {
@@ -669,7 +688,7 @@ impl TypeInfo {
                     println!("unresolved alias {:?}", &tr.referent);
                     Self::PrimitiveAny(PrimitiveAny())
                 }),
-            Self::Alias(a) => Self::Alias(a.clone()),
+            Self::Alias(a) => Self::Alias(a.resolve_names(types_by_name_by_file, type_params)),
             Self::Array { item_type } => Self::Array {
                 item_type: Box::new(item_type.resolve_names(types_by_name_by_file, type_params)),
             },
