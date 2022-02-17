@@ -26,13 +26,12 @@ The overall flow is:
 # Todo
 
  - Lots of [todos](https://github.com/ratchetdesigns/ts-bindgen/search?q=todo) in the code to address.
- - Function overloads are not yet handled.
- - Many builtins are codegen'ed to JsValue instead of their proper js-sys or web-sys types.
  - We should generate better [async bindings](https://rustwasm.github.io/docs/wasm-bindgen/reference/js-promises-and-rust-futures.html).
  - We don't yet handle tsconfig [typeRoots](https://www.typescriptlang.org/tsconfig#typeRoots).
  - The implicit assumption that every x.d.ts has a corresponding x.js is incorrect - we need to separately resolve .js and .d.ts files and preserve the .js path in generated bindings.
  - Issues with typescript modules and name resolution (e.g. referencing A.B in a typescript module should look for A.B in all ancestors but, as implemented, looks for B in all ancestors).
  - Rarely used typescript namespaces are not properly handled yet (they should result in js_namespace attrs in wasm-bindgen) and require special handling in bundling to work (see the [paperjs example](../ts-bindgen/examples/paperjs).
+ - Improve performance
 
 # Needed refactorings
 
