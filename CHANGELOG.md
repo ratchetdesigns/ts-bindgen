@@ -11,6 +11,7 @@
 
 - support overloaded functions and methods. #4
 - generate js-sys types for corresponding typescript types. #3
+- support [typescript utility types](https://www.typescriptlang.org/docs/handbook/utility-types.html) #6
 
 ### Fixed
 
