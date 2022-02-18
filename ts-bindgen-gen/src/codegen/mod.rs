@@ -1155,25 +1155,6 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     panic!("Intersections must not be empty");
                 }
             }
-            /*TypeInfo::Mapped {
-                value_type: Box<TypeInfo>,
-            },
-            TypeInfo::LitNumber {
-                n: f64,
-            },
-            TypeInfo::LitString {
-                s: String,
-            },
-            TypeInfo::LitBoolean {
-                b: bool,
-            },
-            TypeInfo::Constructor {
-                params: Vec<Param>,
-                return_type: Box<TypeInfo>,
-            },
-            TypeInfo::Var {
-                type_info: Box<TypeInfo>,
-            },*/
             TargetEnrichedTypeInfo::NamespaceImport(NamespaceImport::All { src, .. }) => {
                 let ns = src.as_path().to_ns_path(*fs, type_name);
                 if ns.len() == 1 {
@@ -1343,21 +1324,6 @@ impl ToTokens for TargetEnrichedTypeInfo {
                     #f
                 }
             }
-            /*
-            TargetEnrichedTypeInfo::Constructor {
-                params: Vec<Param>,
-                return_type: Box<TypeInfo>,
-            },
-            TargetEnrichedTypeInfo::Class(Class {
-                members: HashMap<String, Member>,
-            }),
-            TargetEnrichedTypeInfo::Var {
-                type_info: Box<TypeInfo>,
-            },
-            TargetEnrichedTypeInfo::GenericType {
-                name: String,
-                constraint: Box<TypeInfo>,
-            },*/
             TargetEnrichedTypeInfo::NamespaceImport(_) => panic!("namespace import in type info"),
             _ => {
                 quote! {}
