@@ -818,11 +818,18 @@ fn resolve_utility(
         return alias_type_params.get(0).map(Clone::clone);
     }
 
-    if name == "Exclude" || name == "Extract" {
+    if name == "Exclude"
+        || name == "Extract"
+        || name == "ThisType"
+        || name == "Uppercase"
+        || name == "Lowercase"
+        || name == "Capitalize"
+        || name == "Uncapitalize"
+    {
         assert_eq!(
             alias_type_params.len(),
             2,
-            "expected 2 type params for Exclude or Extract"
+            "expected 2 type params for Exclude, Extract, ThisType, Uppercase, Lowercase, Capitalize, Uncapitalize"
         );
 
         // TODO: handle these properly
@@ -832,11 +839,19 @@ fn resolve_utility(
     let resolve_type = |ti: Option<&TypeInfo>| {
         ti.map(|p| p.resolve_names(types_by_name_by_file, type_params))
             .and_then(|p| {
-                if let TypeInfo::Ref(tr) = p {
-                    // we have already been canonicalized by the time we get here
-                    lookup_type(types_by_name_by_file, &tr.referent).map(|t| t.info.clone())
-                } else {
-                    Some(p)
+                match p {
+                    TypeInfo::Ref(tr) => {
+                        // we have already been canonicalized by the time we get here
+                        // TODO: we might need to recurse here in case we are
+                        // pointing to a TypeQuery...
+                        lookup_type(types_by_name_by_file, &tr.referent).map(|t| t.info.clone())
+                    }
+                    TypeInfo::TypeQuery(TypeQuery::LookupRef(tr)) => {
+                        canonicalize_type(types_by_name_by_file, &tr.referent)
+                            .and_then(|type_name| lookup_type(types_by_name_by_file, &type_name))
+                            .map(|t| t.info.clone())
+                    }
+                    _ => Some(p),
                 }
             })
     };
@@ -939,6 +954,143 @@ fn resolve_utility(
                     None
                 }
             })
+        });
+    }
+
+    if name == "Parameters" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for Parameters"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Func(f) => TypeInfo::Tuple(Tuple {
+                types: f.params.into_iter().map(|param| param.type_info).collect(),
+            }),
+            TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => {
+                TypeInfo::Tuple(Tuple {
+                    types: tr.type_params[0..tr.type_params.len() - 1]
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                })
+            }
+            _ => {
+                // TODO: error
+                p
+            }
+        });
+    }
+
+    if name == "ConstructorParameters" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for ConstructorParameters"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Interface(Interface { constructor, .. }) => TypeInfo::Tuple(Tuple {
+                types: constructor
+                    .into_iter()
+                    .flat_map(|c| c.params.into_iter().map(|p| p.type_info))
+                    .collect(),
+            }),
+            TypeInfo::Class(Class { members, .. }) => TypeInfo::Tuple(Tuple {
+                types: members
+                    .into_iter()
+                    .filter_map(|(_, m)| match m {
+                        Member::Constructor(ctor) => Some(ctor.params),
+                        _ => None,
+                    })
+                    .next() // it seems like typescript doesn't pull the widened function here anyway
+                    .into_iter()
+                    .flat_map(|params| params.into_iter().map(|p| p.type_info))
+                    .collect(),
+            }),
+            _ => {
+                // TODO: error
+                p
+            }
+        });
+    }
+
+    if name == "ReturnType" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for ReturnType"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Func(f) => *f.return_type,
+            TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => tr
+                .type_params
+                .into_iter()
+                .last()
+                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+            _ => {
+                // TODO: error
+                p
+            }
+        });
+    }
+
+    if name == "InstanceType" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for InstanceType"
+        );
+
+        // TODO: this seems to be reasonable in all non-error cases?
+        return resolve_type(alias_type_params.get(0));
+    }
+
+    if name == "ThisParameterType" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for ThisParameterType"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Func(f) => f
+                .params
+                .into_iter()
+                .filter_map(|param| {
+                    if param.name == "this" {
+                        Some(param.type_info)
+                    } else {
+                        None
+                    }
+                })
+                .next()
+                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+            _ => TypeInfo::PrimitiveAny(PrimitiveAny()),
+        });
+    }
+
+    if name == "OmitThisParameter" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for OmitThisParameter"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Func(f) => TypeInfo::Func(Func {
+                class_name: f.class_name,
+                type_params: f.type_params, // technically, these should become any
+                return_type: f.return_type,
+                params: f
+                    .params
+                    .into_iter()
+                    .filter(|param| param.name == "this")
+                    .collect(),
+            }),
+            _ => p,
         });
     }
 
