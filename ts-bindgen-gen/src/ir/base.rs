@@ -1,5 +1,5 @@
 use heck::CamelCase;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::iter;
 use std::path::PathBuf;
@@ -256,7 +256,7 @@ impl TypeRef {
 
         canonicalize_type(types_by_name_by_file, referent)
             .map(|canonical_referent| {
-                // look up the type just to make sure it exists, we get a builtin if it doesn't exist below
+                // replace ourselves with the canonical referent
                 TypeRef {
                     referent: canonical_referent,
                     type_params: alias_type_params.clone(),
@@ -564,24 +564,6 @@ fn resolve_builtin(
         });
     }
 
-    if name == "Record" {
-        assert_eq!(
-            alias_type_params.len(),
-            2,
-            "expected 2 type params for Record"
-        );
-        // TODO: do we care about key type?
-        return Some(TypeInfo::Mapped {
-            value_type: Box::new(
-                alias_type_params
-                    .get(1)
-                    .as_ref()
-                    .unwrap()
-                    .resolve_names(types_by_name_by_file, type_params),
-            ),
-        });
-    }
-
     if name == "Function" {
         return Some(TypeInfo::FuncGroup(FuncGroup {
             overloads: vec![Func {
@@ -621,6 +603,343 @@ fn resolve_builtin(
 
     if let Ok(js_sys_builtin) = JsSysBuiltin::try_from(name) {
         return Some(TypeInfo::JsSysBuiltin(js_sys_builtin));
+    }
+
+    None
+}
+
+fn recursive_class_fields<F, B>(
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    super_class: Option<Box<TypeRef>>,
+    bases: B,
+    fields: F,
+) -> HashMap<String, TypeInfo>
+where
+    F: IntoIterator<Item = (String, Member)>,
+    B: IntoIterator<Item = TypeRef>,
+{
+    fields
+        .into_iter()
+        .filter_map(|(n, m)| match m {
+            Member::Property(ti) => Some((n, ti)),
+            _ => None,
+        })
+        .chain(
+            super_class
+                .and_then(|tr| lookup_type(types_by_name_by_file, &tr.referent))
+                .and_then(|c| match &c.info {
+                    TypeInfo::Class(c) => Some(Box::new(
+                        recursive_class_fields(
+                            types_by_name_by_file,
+                            c.super_class.clone(),
+                            c.implements.clone(),
+                            c.members.clone(),
+                        )
+                        .into_iter(),
+                    )
+                        as Box<dyn Iterator<Item = (String, TypeInfo)>>),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    Box::new(std::iter::empty()) as Box<dyn Iterator<Item = (String, TypeInfo)>>
+                }),
+        )
+        .chain(
+            bases
+                .into_iter()
+                .filter_map(|tr| lookup_type(types_by_name_by_file, &tr.referent))
+                .flat_map(|typ| match &typ.info {
+                    TypeInfo::Class(c) => Box::new(
+                        recursive_class_fields(
+                            types_by_name_by_file,
+                            c.super_class.clone(),
+                            c.implements.clone(),
+                            c.members.clone(),
+                        )
+                        .into_iter(),
+                    )
+                        as Box<dyn Iterator<Item = (String, TypeInfo)>>,
+                    TypeInfo::Interface(iface) => Box::new(
+                        recursive_iface_fields(
+                            types_by_name_by_file,
+                            iface.extends.clone(),
+                            iface.fields.clone(),
+                        )
+                        .into_iter(),
+                    )
+                        as Box<dyn Iterator<Item = (String, TypeInfo)>>,
+                    _ => Box::new(iter::empty()) as Box<dyn Iterator<Item = (String, TypeInfo)>>,
+                }),
+        )
+        .collect()
+}
+
+fn recursive_iface_fields<F, B>(
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    bases: B,
+    fields: F,
+) -> HashMap<String, TypeInfo>
+where
+    F: IntoIterator<Item = (String, TypeInfo)>,
+    B: IntoIterator<Item = BaseClass>,
+{
+    fields
+        .into_iter()
+        .chain(bases.into_iter().flat_map(|b| {
+            let typ = match b {
+                BaseClass::Unresolved(tr) => {
+                    lookup_type(types_by_name_by_file, &tr.referent).map(|t| t.info.clone())
+                }
+                BaseClass::Resolved(ti) => Some(ti),
+            };
+
+            typ.and_then(|typ| match typ {
+                TypeInfo::Interface(iface) => Some(Box::new(
+                    recursive_iface_fields(types_by_name_by_file, iface.extends, iface.fields)
+                        .into_iter(),
+                )
+                    as Box<dyn Iterator<Item = (String, TypeInfo)>>),
+                TypeInfo::Class(class) => Some(Box::new(
+                    recursive_class_fields(
+                        types_by_name_by_file,
+                        class.super_class,
+                        class.implements,
+                        class.members,
+                    )
+                    .into_iter(),
+                )
+                    as Box<dyn Iterator<Item = (String, TypeInfo)>>),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                Box::new(std::iter::empty()) as Box<dyn Iterator<Item = (String, TypeInfo)>>
+            })
+        }))
+        .collect()
+}
+
+fn type_with_filter_mapped_fields<F>(
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    typ: TypeInfo,
+    mapper: F,
+) -> TypeInfo
+where
+    F: Fn(&str, TypeInfo) -> Option<TypeInfo>,
+{
+    match typ {
+        TypeInfo::Interface(iface) => TypeInfo::Interface(Interface {
+            indexer: iface.indexer.and_then(|indexer| {
+                mapper("", *indexer.type_info).map(|type_info| Indexer {
+                    readonly: indexer.readonly,
+                    type_info: Box::new(type_info),
+                })
+            }),
+            extends: Default::default(),
+            type_params: iface.type_params,
+            constructor: iface.constructor,
+            fields: recursive_iface_fields(types_by_name_by_file, iface.extends, iface.fields)
+                .into_iter()
+                .filter_map(|(n, f)| mapper(&n, f).map(|f| (n, f)))
+                .collect(),
+        }),
+        TypeInfo::Class(class) => {
+            let (ctors, fields): (Vec<(String, Member)>, Vec<(String, Member)>) = class
+                .members
+                .into_iter()
+                .partition(|(_, m)| matches!(m, Member::Constructor(_)));
+
+            TypeInfo::Interface(Interface {
+                indexer: None,
+                extends: Default::default(),
+                type_params: class.type_params,
+                constructor: ctors.into_iter().next().and_then(|(_, c)| match c {
+                    Member::Constructor(ctor) => Some(ctor),
+                    _ => None,
+                }),
+                fields: recursive_class_fields(
+                    types_by_name_by_file,
+                    class.super_class,
+                    class.implements,
+                    fields,
+                )
+                .into_iter()
+                .filter_map(|(n, f)| mapper(&n, f).map(|f| (n, f)))
+                .collect(),
+            })
+        }
+        _ => typ,
+    }
+}
+
+fn resolve_utility(
+    referent: &TypeName,
+    alias_type_params: &[TypeInfo],
+    types_by_name_by_file: &HashMap<PathBuf, HashMap<TypeIdent, Type>>,
+    type_params: &HashMap<String, TypeParamConfig>,
+) -> Option<TypeInfo> {
+    let name: &str = match &referent.name {
+        TypeIdent::Name(ref s) => s,
+        TypeIdent::QualifiedName(ref names) => match names.last() {
+            Some(ref n) => n,
+            None => return None,
+        },
+        TypeIdent::DefaultExport() => return None,
+        TypeIdent::TypeEnvironmentParent() => return None,
+    };
+
+    // https://www.typescriptlang.org/docs/handbook/utility-types.html
+
+    if name == "Record" {
+        assert_eq!(
+            alias_type_params.len(),
+            2,
+            "expected 2 type params for Record"
+        );
+        // TODO: do we care about key type?
+        return Some(TypeInfo::Mapped {
+            value_type: Box::new(
+                alias_type_params
+                    .get(1)
+                    .as_ref()
+                    .unwrap()
+                    .resolve_names(types_by_name_by_file, type_params),
+            ),
+        });
+    }
+
+    if name == "Readonly" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for Readonly"
+        );
+
+        // TODO: handle readonly properly
+        return alias_type_params.get(0).map(Clone::clone);
+    }
+
+    if name == "Exclude" || name == "Extract" {
+        assert_eq!(
+            alias_type_params.len(),
+            2,
+            "expected 2 type params for Exclude or Extract"
+        );
+
+        // TODO: handle these properly
+        return alias_type_params.get(0).map(Clone::clone);
+    }
+
+    let resolve_type = |ti: Option<&TypeInfo>| {
+        ti.map(|p| p.resolve_names(types_by_name_by_file, type_params))
+            .and_then(|p| {
+                if let TypeInfo::Ref(tr) = p {
+                    // we have already been canonicalized by the time we get here
+                    lookup_type(types_by_name_by_file, &tr.referent).map(|t| t.info.clone())
+                } else {
+                    Some(p)
+                }
+            })
+    };
+
+    if name == "Partial" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for Partial"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| {
+            type_with_filter_mapped_fields(types_by_name_by_file, p, |_, ti| {
+                Some(match ti {
+                    // anything already optional stays as is
+                    TypeInfo::Optional { .. } => ti,
+                    // anything not yet optional gets wrapped in an optional
+                    _ => TypeInfo::Optional {
+                        item_type: Box::new(ti),
+                    },
+                })
+            })
+        });
+    }
+
+    if name == "Required" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for Required"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| {
+            type_with_filter_mapped_fields(types_by_name_by_file, p, |_, ti| {
+                Some(match ti {
+                    // anything optional gets required
+                    TypeInfo::Optional { item_type } => *item_type,
+                    // anything not optional stays as-is
+                    _ => ti,
+                })
+            })
+        });
+    }
+
+    if name == "NonNullable" {
+        assert_eq!(
+            alias_type_params.len(),
+            1,
+            "expected 1 type param for NonNullable"
+        );
+
+        return resolve_type(alias_type_params.get(0)).map(|p| match p {
+            TypeInfo::Union(Union { types }) => TypeInfo::Union(Union {
+                types: types
+                    .into_iter()
+                    .filter(|t| {
+                        !matches!(
+                            t,
+                            TypeInfo::PrimitiveNull(_) | TypeInfo::PrimitiveUndefined(_)
+                        )
+                    })
+                    .collect(),
+            }),
+            _ => p,
+        });
+    }
+
+    if name == "Pick" {
+        assert_eq!(
+            alias_type_params.len(),
+            2,
+            "expected 2 type params for Pick"
+        );
+
+        let keys = alias_type_params
+            .get(1)
+            .expect("need a keys type param for Pick");
+        let keys = match keys {
+            TypeInfo::LitString(LitString { s }) => iter::once(s as &str).collect(),
+            TypeInfo::Union(Union { types }) => types
+                .iter()
+                .filter_map(|t| -> Option<&str> {
+                    match t {
+                        TypeInfo::LitString(LitString { s }) => Some(s),
+                        _ => None,
+                    }
+                })
+                .collect(),
+            _ => {
+                // TODO: illegal keys for pick
+                HashSet::new()
+            }
+        };
+
+        return resolve_type(alias_type_params.get(0)).map(|p| {
+            type_with_filter_mapped_fields(types_by_name_by_file, p, |n, f| {
+                if keys.contains(n) {
+                    Some(f)
+                } else {
+                    None
+                }
+            })
+        });
     }
 
     None
@@ -678,6 +997,14 @@ impl TypeInfo {
                 .map(Self::Ref)
                 .or_else(|| {
                     resolve_builtin(
+                        &tr.referent,
+                        &tr.type_params,
+                        types_by_name_by_file,
+                        type_params,
+                    )
+                })
+                .or_else(|| {
+                    resolve_utility(
                         &tr.referent,
                         &tr.type_params,
                         types_by_name_by_file,

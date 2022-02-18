@@ -2743,4 +2743,259 @@ mod test {
             }
         )
     }
+
+    #[test]
+    fn test_utility_type_partial() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface Base {
+                    a: string;
+                    opt?: string;
+                }
+                export interface Derived extends Base {
+                    b: string;
+                }
+                export type A = Partial<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Interface(iface) = target.as_ref() {
+                    assert_eq!(iface.fields.len(), 3);
+                    assert!(iface
+                        .fields
+                        .iter()
+                        .all(|(_, f)| { matches!(f, TypeInfo::Optional { .. }) }));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_partial_class() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface IBase {
+                    a: string;
+                    opt?: string;
+                }
+                export class Base implements IBase {
+                    a: string;
+                    opt?: string;
+                }
+                export class Derived extends Base {
+                    b: string;
+                }
+                export type A = Partial<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Interface(iface) = target.as_ref() {
+                    assert_eq!(iface.fields.len(), 3);
+                    assert!(iface
+                        .fields
+                        .iter()
+                        .all(|(_, f)| { matches!(f, TypeInfo::Optional { .. }) }));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_required() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface Base {
+                    a?: string;
+                    req: string;
+                }
+                export interface Derived extends Base {
+                    b?: string;
+                }
+                export type A = Required<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Interface(iface) = target.as_ref() {
+                    assert_eq!(iface.fields.len(), 3);
+                    assert!(iface
+                        .fields
+                        .iter()
+                        .all(|(_, f)| { !matches!(f, TypeInfo::Optional { .. }) }));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_required_class() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface IBase {
+                    a?: string;
+                    req: string;
+                }
+                export class Base implements IBase {
+                    a?: string;
+                    req: string;
+                }
+                export class Derived extends Base {
+                    b?: string;
+                }
+                export type A = Required<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Interface(iface) = target.as_ref() {
+                    assert_eq!(iface.fields.len(), 3);
+                    assert!(iface
+                        .fields
+                        .iter()
+                        .all(|(_, f)| { !matches!(f, TypeInfo::Optional { .. }) }));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_pick() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface Base {
+                    a: string;
+                    opt?: string;
+                }
+                export interface Derived extends Base {
+                    b: string;
+                }
+                export type A = Pick<Derived, "b">;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Interface(iface) = target.as_ref() {
+                    assert_eq!(iface.fields.len(), 1);
+                    assert!(iface.fields.contains_key("b"));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_exclude() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = Exclude<"a" | "b", "b">;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                assert!(matches!(target.as_ref(), TypeInfo::Union(_)));
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_extract() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = Extract<"a" | "b", "b">;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                assert!(matches!(target.as_ref(), TypeInfo::Union(_)));
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_nonnullable() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = NonNullable<"a" | "b" | null | undefined>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Union(Union { types }) = target.as_ref() {
+                    assert_eq!(types.len(), 2);
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_readonly() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface Base {
+                    a: string;
+                }
+                export interface Derived extends Base {
+                    b: string;
+                }
+                export type A = Readonly<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Ref(tr) = target.as_ref() {
+                    if let TypeIdent::Name(n) = &tr.referent.name {
+                        assert_eq!(n, "Derived");
+                    } else {
+                        assert!(false);
+                    }
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_readonly_class() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export interface IBase {
+                    a: string;
+                }
+                export class Base implements IBase {
+                    a: string;
+                }
+                export class Derived extends Base {
+                    b: string;
+                }
+                export type A = Readonly<Derived>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Ref(tr) = target.as_ref() {
+                    if let TypeIdent::Name(n) = &tr.referent.name {
+                        assert_eq!(n, "Derived");
+                    } else {
+                        assert!(false);
+                    }
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
 }
