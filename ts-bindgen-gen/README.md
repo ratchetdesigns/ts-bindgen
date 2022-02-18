@@ -32,12 +32,13 @@ The overall flow is:
  - Issues with typescript modules and name resolution (e.g. referencing A.B in a typescript module should look for A.B in all ancestors but, as implemented, looks for B in all ancestors).
  - Rarely used typescript namespaces are not properly handled yet (they should result in js_namespace attrs in wasm-bindgen) and require special handling in bundling to work (see the [paperjs example](../ts-bindgen/examples/paperjs).
  - Improve performance
+ - Functions passed to js are leaked without interface type support
+ - Functions don't handle `this` parameters properly
 
 # Needed refactorings
 
  - Codegen is too complex and would be *much* better served by another ir transformation pass to convert to a data representation of the rust code we want to generate and **then** generating a TokenStream more straightforwardly from that representation. This would enable, for example, references to a single generated name instead of hoping to re-generate the same name in multiple places.
  - Automatically generate bindings for all [typescript test cases](https://github.com/microsoft/TypeScript/tree/main/tests/baselines/reference) and ensure the generated bindings compile.
- - Builtins should not be enums but should configured struct instances.
  - The ir transformation pipeline could be better served by something like [frunk::Generic](https://docs.rs/frunk/latest/frunk/generic/index.html).
 
 # License
