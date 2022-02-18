@@ -1149,12 +1149,7 @@ impl TsTypes {
     ) -> Result<TypeInfo, InternalError> {
         Ok(match &keyword.kind {
             TsKeywordTypeKind::TsAnyKeyword => TypeInfo::PrimitiveAny(PrimitiveAny()),
-            TsKeywordTypeKind::TsUnknownKeyword => {
-                return Err(InternalError::with_msg_and_span(
-                    "unknown keyword not supported",
-                    keyword.span(),
-                ))
-            }
+            TsKeywordTypeKind::TsUnknownKeyword => TypeInfo::PrimitiveAny(PrimitiveAny()),
             TsKeywordTypeKind::TsNumberKeyword => TypeInfo::PrimitiveNumber(PrimitiveNumber()),
             TsKeywordTypeKind::TsObjectKeyword => TypeInfo::PrimitiveObject(PrimitiveObject()),
             TsKeywordTypeKind::TsBooleanKeyword => TypeInfo::PrimitiveBoolean(PrimitiveBoolean()),
@@ -2570,6 +2565,7 @@ mod test {
                 let n = i.fields.get("thisThing");
                 assert!(n.is_some());
                 let n = n.unwrap();
+                // TODO: this is a very bad solution
                 assert_eq!(*n, TypeInfo::PrimitiveAny(PrimitiveAny()));
             }
         )
@@ -2992,6 +2988,175 @@ mod test {
                     } else {
                         assert!(false);
                     }
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_parameters_inline() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = Parameters<(x: number, y: string) => number>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
+                    assert_eq!(types.len(), 2);
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_parameters_ref() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export declare function f(x: number, y: string): number;
+                export type A = Parameters<typeof f>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
+                    assert_eq!(types.len(), 2);
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_ctorparameters() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                interface C {
+                    new(a: number): C;
+                }
+                export type A = ConstructorParameters<C>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
+                    assert_eq!(types.len(), 1);
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_ctorparameters_class() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                declare class C {
+                    constructor(a: number);
+                }
+                export type A = ConstructorParameters<typeof C>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
+                    assert_eq!(types.len(), 1);
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_return_type_inline() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = ReturnType<(x: number, y: string) => number>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                assert!(matches!(
+                    target.as_ref(),
+                    TypeInfo::PrimitiveNumber(PrimitiveNumber())
+                ));
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_return_type_ref() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                declare function f(x: number, y: string): number;
+                export type A = ReturnType<f>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                assert!(matches!(
+                    target.as_ref(),
+                    TypeInfo::PrimitiveNumber(PrimitiveNumber())
+                ));
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_instance_type() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                declare class C { }
+                export type A = InstanceType<typeof C>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                assert!(matches!(target.as_ref(), TypeInfo::Class(_)));
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_this_param_type() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export class C {}
+                declare function a(this: C, n: number): void;
+                export type A = ThisParameterType<typeof a>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Ref(TypeRef { referent, .. }) = target.as_ref() {
+                    assert_eq!(&referent.name, &TypeIdent::Name("C".to_string()));
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_utility_type_omit_this_param() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export class C {}
+                declare function a(this: C, n: number): void;
+                export type A = OmitThisParameter<typeof a>;
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Func(f) = target.as_ref() {
+                    assert_eq!(f.params.len(), 1);
                 } else {
                     assert!(false);
                 }
