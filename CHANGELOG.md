@@ -1,6 +1,6 @@
 # Change Log
 
-## [Unreleased] - ReleaseDate
+## [0.3.0] - 2022-02-19
 
 ### BREAKING CHANGE
 

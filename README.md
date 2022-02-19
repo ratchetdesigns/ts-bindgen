@@ -25,13 +25,13 @@ To start generating bindings in your rust projects, you have a few options:
 
 1. Run `cargo run ts-bindgen -- --output src/bindings.rs your-ts-module` to generate `src/bindings.rs` from `your-ts-module` where `your-ts-module` is a `./path/to/defs.d.ts`, `/path/to/defs.d.ts`, or `module-in-node_modules`.
 2. Invoke `cargo run ts-bindgen -- --output src/bindings.rs --rerun-if-changed your-ts-module` in your `build.rs`.
-3. Add `ts-bindgen = { version = "0.1.0", default-features = false }` to your `cargo.toml` dependencies and invoke `ts_bindgen::generate_rust_string_for_typescript(ts_bindgen::StdFs, "your-module")` in your `build.rs`. Note: while the ts-bindgen executable will rustfmt the generated bindings, `generate_rust_string_for_typescript` does not.
+3. Add `ts-bindgen = { version = "0.3.0", default-features = false }` to your `cargo.toml` dependencies and invoke `ts_bindgen::generate_rust_string_for_typescript(ts_bindgen::StdFs, "your-module")` in your `build.rs`. Note: while the ts-bindgen executable will rustfmt the generated bindings, `generate_rust_string_for_typescript` does not.
 
 The generated bindings depend on the ts-bindgen runtime: ts-bindgen-rt, wasm-bindgen, serde, and (optionally) js-sys and web-sys so add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ts-bindgen-rt = "0.1.0"
+ts-bindgen-rt = "0.3.0"
 wasm-bindgen = "0.2.63"
 serde = { version = "1.0", features = ["derive"] }
 js-sys = "0.3.53" # optional, depending on your input typescript
