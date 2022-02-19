@@ -540,7 +540,7 @@ fn resolve_builtin(
     let name: &str = match &referent.name {
         TypeIdent::Name(ref s) => s,
         TypeIdent::QualifiedName(ref names) => match names.last() {
-            Some(ref n) => n,
+            Some(n) => n,
             None => return None,
         },
         TypeIdent::DefaultExport() => return None,
@@ -743,7 +743,8 @@ where
                 .collect(),
         }),
         TypeInfo::Class(class) => {
-            let (ctors, fields): (Vec<(String, Member)>, Vec<(String, Member)>) = class
+            type NamedMembers= Vec<(String, Member)>;
+            let (ctors, fields): (NamedMembers, NamedMembers) = class
                 .members
                 .into_iter()
                 .partition(|(_, m)| matches!(m, Member::Constructor(_)));
@@ -780,7 +781,7 @@ fn resolve_utility(
     let name: &str = match &referent.name {
         TypeIdent::Name(ref s) => s,
         TypeIdent::QualifiedName(ref names) => match names.last() {
-            Some(ref n) => n,
+            Some(n) => n,
             None => return None,
         },
         TypeIdent::DefaultExport() => return None,
@@ -975,10 +976,7 @@ fn resolve_utility(
             }),
             TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => {
                 TypeInfo::Tuple(Tuple {
-                    types: tr.type_params[0..tr.type_params.len() - 1]
-                        .into_iter()
-                        .cloned()
-                        .collect(),
+                    types: tr.type_params[0..tr.type_params.len() - 1].to_vec(),
                 })
             }
             _ => {
@@ -1036,12 +1034,12 @@ fn resolve_utility(
                 .into_iter()
                 .last()
                 .map(|f| *f.return_type)
-                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => tr
                 .type_params
                 .into_iter()
                 .last()
-                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             _ => {
                 // TODO: error
                 p
@@ -1084,7 +1082,7 @@ fn resolve_utility(
                         })
                         .next()
                 })
-                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
+                .unwrap_or(TypeInfo::PrimitiveAny(PrimitiveAny())),
             _ => TypeInfo::PrimitiveAny(PrimitiveAny()),
         });
     }
