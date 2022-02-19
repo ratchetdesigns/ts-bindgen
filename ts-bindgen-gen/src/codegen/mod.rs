@@ -976,6 +976,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 quote! {
                     #[wasm_bindgen(module = #path)]
                     extern "C" {
+                        #[allow(non_camel_case_types)]
                         #[wasm_bindgen(#(#attrs),*)]
                         #vis type #internal_class_name;
 
