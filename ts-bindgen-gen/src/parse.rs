@@ -3155,8 +3155,8 @@ mod test {
             "A",
             TypeInfo::Alias(Alias { target, .. }),
             {
-                if let TypeInfo::Func(f) = target.as_ref() {
-                    assert_eq!(f.params.len(), 1);
+                if let TypeInfo::FuncGroup(fg) = target.as_ref() {
+                    assert_eq!(fg.overloads.first().unwrap().params.len(), 1);
                 } else {
                     assert!(false);
                 }
