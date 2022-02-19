@@ -753,7 +753,7 @@ where
                 extends: Default::default(),
                 type_params: class.type_params,
                 constructor: ctors.into_iter().next().and_then(|(_, c)| match c {
-                    Member::Constructor(ctor) => Some(ctor),
+                    Member::Constructor(ctor) => ctor.overloads.into_iter().last(),
                     _ => None,
                 }),
                 fields: recursive_class_fields(
@@ -965,8 +965,13 @@ fn resolve_utility(
         );
 
         return resolve_type(alias_type_params.get(0)).map(|p| match p {
-            TypeInfo::Func(f) => TypeInfo::Tuple(Tuple {
-                types: f.params.into_iter().map(|param| param.type_info).collect(),
+            TypeInfo::FuncGroup(f) => TypeInfo::Tuple(Tuple {
+                types: f
+                    .overloads
+                    .into_iter()
+                    .last()
+                    .map(|f| f.params.into_iter().map(|param| param.type_info).collect())
+                    .unwrap_or_default(),
             }),
             TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => {
                 TypeInfo::Tuple(Tuple {
@@ -1001,7 +1006,9 @@ fn resolve_utility(
                 types: members
                     .into_iter()
                     .filter_map(|(_, m)| match m {
-                        Member::Constructor(ctor) => Some(ctor.params),
+                        Member::Constructor(ctor) => {
+                            ctor.overloads.into_iter().last().map(|c| c.params)
+                        }
                         _ => None,
                     })
                     .next() // it seems like typescript doesn't pull the widened function here anyway
@@ -1024,7 +1031,12 @@ fn resolve_utility(
         );
 
         return resolve_type(alias_type_params.get(0)).map(|p| match p {
-            TypeInfo::Func(f) => *f.return_type,
+            TypeInfo::FuncGroup(fg) => fg
+                .overloads
+                .into_iter()
+                .last()
+                .map(|f| *f.return_type)
+                .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
             TypeInfo::Ref(tr) if tr.referent.name == TypeIdent::Name("Function".to_string()) => tr
                 .type_params
                 .into_iter()
@@ -1056,17 +1068,22 @@ fn resolve_utility(
         );
 
         return resolve_type(alias_type_params.get(0)).map(|p| match p {
-            TypeInfo::Func(f) => f
-                .params
+            TypeInfo::FuncGroup(fg) => fg
+                .overloads
                 .into_iter()
-                .filter_map(|param| {
-                    if param.name == "this" {
-                        Some(param.type_info)
-                    } else {
-                        None
-                    }
+                .last()
+                .and_then(|f| {
+                    f.params
+                        .into_iter()
+                        .filter_map(|param| {
+                            if param.name == "this" {
+                                Some(param.type_info)
+                            } else {
+                                None
+                            }
+                        })
+                        .next()
                 })
-                .next()
                 .unwrap_or_else(|| TypeInfo::PrimitiveAny(PrimitiveAny())),
             _ => TypeInfo::PrimitiveAny(PrimitiveAny()),
         });
@@ -1080,14 +1097,20 @@ fn resolve_utility(
         );
 
         return resolve_type(alias_type_params.get(0)).map(|p| match p {
-            TypeInfo::Func(f) => TypeInfo::Func(Func {
-                class_name: f.class_name,
-                type_params: f.type_params, // technically, these should become any
-                return_type: f.return_type,
-                params: f
-                    .params
+            TypeInfo::FuncGroup(fg) => TypeInfo::FuncGroup(FuncGroup {
+                overloads: fg
+                    .overloads
                     .into_iter()
-                    .filter(|param| param.name == "this")
+                    .map(|f| Func {
+                        class_name: f.class_name,
+                        type_params: f.type_params, // technically, these should become any
+                        return_type: f.return_type,
+                        params: f
+                            .params
+                            .into_iter()
+                            .filter(|param| param.name == "this")
+                            .collect(),
+                    })
                     .collect(),
             }),
             _ => p,
