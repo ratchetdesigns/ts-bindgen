@@ -1421,9 +1421,9 @@ fn render_rust_to_js_conversion(
                     #name.into_iter().fold(
                         Ok(js_sys::Array::new()) as std::result::Result<js_sys::Array, JsValue>,
                         |arr, #inner_name| {
-                            arr.and_then(|a| {
+                            arr.map(|a| {
                                 a.push(&#inner_conversion);
-                                Ok(a)
+                                a
                             })
                         },
                     )#error_mapper
