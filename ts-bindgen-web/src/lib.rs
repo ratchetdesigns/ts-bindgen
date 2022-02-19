@@ -1,6 +1,7 @@
 mod fmt;
 
 use fmt::rust_fmt;
+use js_sys::encode_uri_component;
 use monaco::{
     api::CodeEditorOptions,
     sys::editor::{BuiltinTheme, IStandaloneCodeEditor},
@@ -9,7 +10,10 @@ use monaco::{
 use std::rc::Rc;
 use ts_bindgen::generate_rust_string_for_typescript_string;
 use wasm_bindgen::prelude::*;
+use web_sys::window;
 use yew::{html, Component, Context, Html};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn code_prefix() -> String {
     // TODO: keep this in sync with main README.md
@@ -35,10 +39,7 @@ fn get_options(lang: &str) -> CodeEditorOptions {
         .with_language(lang.to_owned())
         .with_builtin_theme(BuiltinTheme::VsDark);
     if lang == "typescript" {
-        opts.with_value(
-            r#"type MyType = number | string | null;"#
-            .to_owned(),
-        )
+        opts.with_value(r#"type MyType = number | string | null;"#.to_owned())
     } else {
         opts
     }
@@ -53,6 +54,7 @@ struct App {
 
 enum Msg {
     Generate,
+    CreateIssue,
 }
 
 fn set_auto_layout(editor: &CodeEditorLink) {
@@ -97,6 +99,24 @@ impl Component for App {
                     });
                 });
             }
+            Msg::CreateIssue => {
+                self.ts_link.with_editor(|model| {
+                    let ts = model
+                        .get_model()
+                        .map(|m| m.get_value())
+                        .unwrap_or_else(|| String::from(""));
+                    let ts = if ts.len() > 1900 {
+                        "ENTER CODE HERE".to_string()
+                    } else {
+                        ts
+                    };
+                    let body_param = format!("Issue generating bindings.\n\nVersion: {}\n\nExpected: {{description}}\n\nObserved: {{description}}\n\nCode:\n```\n{}\n```", VERSION, ts);
+                    let encoded_body: String = encode_uri_component(&body_param).into();
+                    let encoded_url = format!("https://github.com/ratchetdesigns/ts-bindgen/issues/new?title=ts-bindgen+binding+generation+issue&body={}", encoded_body);
+                    window().expect("window").open_with_url_and_target(&encoded_url, "_blank")
+
+                });
+            }
         }
         false
     }
@@ -110,6 +130,7 @@ impl Component for App {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let on_generate = ctx.link().callback(|_| Msg::Generate);
+        let on_issue = ctx.link().callback(|_| Msg::CreateIssue);
 
         html! {
             <>
@@ -155,6 +176,7 @@ impl Component for App {
                     <div class="pane">
                         <div class="file-header">
                             <div class="title">{"Rust wasm-bindgen bindings"}</div>
+                            <button onclick={on_issue} class="issue-link">{"Report issue"}</button>
                         </div>
                         <CodeEditor options={Rc::clone(&self.rust_options)} link={self.rust_link.clone()} />
                     </div>

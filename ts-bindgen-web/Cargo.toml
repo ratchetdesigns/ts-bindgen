@@ -24,6 +24,8 @@ opt-level = "s"
 wasm-bindgen = "0.2.63"
 yew = "0.19.3"
 ts-bindgen = { version = "0.3.0-pre", path = "../ts-bindgen", default-features = false }
+js-sys = "0.3.53"
+web-sys = { version = "0.3.53", features = ["Window"] }
 
 [dependencies.monaco]
 version = "0.3.0"

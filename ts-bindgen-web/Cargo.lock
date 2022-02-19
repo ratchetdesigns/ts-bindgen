@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen"
-version = "0.1.0"
+version = "0.3.0-pre"
 dependencies = [
  "ts-bindgen-gen",
  "wasm-bindgen",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-build-support"
-version = "0.1.0"
+version = "0.3.0-pre"
 dependencies = [
  "cargo-whatfeatures",
  "proc-macro2 1.0.36",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-gen"
-version = "0.1.0"
+version = "0.3.0-pre"
 dependencies = [
  "enum_to_enum",
  "heck",
@@ -2572,14 +2572,16 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-web"
-version = "0.1.0"
+version = "0.3.0-pre"
 dependencies = [
+ "js-sys",
  "monaco",
  "parking_lot",
  "rustfmt-nightly",
  "ts-bindgen",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-sys",
  "yew",
 ]
 
