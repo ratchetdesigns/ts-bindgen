@@ -55,6 +55,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
+          args: -- --deny warnings
       - name: Doc
         uses: actions-rs/cargo@v1
         with:
