@@ -58,7 +58,7 @@ impl Named for Builtin {
             ),
             Builtin::Optional => ("Option", to_ident("Option")),
             Builtin::Variadic => ("", to_ident("")),
-            Builtin::Named(n) => (&n, Identifier::with_path(n)),
+            Builtin::Named(n) => (n, Identifier::with_path(n)),
         }
     }
 
@@ -256,12 +256,12 @@ pub trait FnOverloadName {
 
 impl FnOverloadName for Func {
     fn overload_name(&self, fn_group_name: &Identifier) -> Identifier {
-        fn_group_name.suffix_name(&format!("_{}", type_name(self).to_string()))
+        fn_group_name.suffix_name(&format!("_{}", type_name(self)))
     }
 }
 
 impl FnOverloadName for Constructor<'_> {
     fn overload_name(&self, fn_group_name: &Identifier) -> Identifier {
-        fn_group_name.suffix_name(&format!("_{}", type_name(self).to_string()))
+        fn_group_name.suffix_name(&format!("_{}", type_name(self)))
     }
 }

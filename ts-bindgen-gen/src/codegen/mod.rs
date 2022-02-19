@@ -603,8 +603,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .iter()
                     .filter_map(|t| {
                         let case = type_to_union_case_name(t).to_snake_case();
-                        let serialize_fn = render_serialize_fn(&case, &t);
-                        let deserialize_fn = render_deserialize_fn(&case, &t);
+                        let serialize_fn = render_serialize_fn(&case, t);
+                        let deserialize_fn = render_deserialize_fn(&case, t);
                         serialize_fn.zip(deserialize_fn).map(|(s, d)| {
                             quote! {
                                 #s
