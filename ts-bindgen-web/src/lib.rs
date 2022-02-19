@@ -1,3 +1,5 @@
+#![allow(clippy::unused_unit)] // TODO: remove after bumping wasm-bindgen version
+
 mod fmt;
 
 use fmt::rust_fmt;
@@ -96,7 +98,9 @@ impl Component for App {
                             format!("// Error generating typescript rust bindings.\n{}", err)
                         });
                     self.rust_link.with_editor(|rs_model| {
-                        rs_model.get_model().map(|m| m.set_value(&rust));
+                        if let Some(m) = rs_model.get_model() {
+                            m.set_value(&rust);
+                        }
                     });
                 });
             }
