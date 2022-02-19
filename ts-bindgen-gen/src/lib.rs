@@ -126,5 +126,8 @@ where
         .map(std::borrow::Borrow::borrow)
         .for_each(process_file);
 
-    Ok(quote! { #(#mod_defs)* })
+    Ok(quote! {
+        #![allow(clippy::let_and_return, clippy::type_complexity, clippy::unused_unit)]
+        #(#mod_defs)*
+    })
 }
