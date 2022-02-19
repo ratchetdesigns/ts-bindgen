@@ -1642,7 +1642,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen"
-version = "0.3.0"
+version = "0.4.0-pre"
 dependencies = [
  "clap",
  "ts-bindgen-gen",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-build-support"
-version = "0.3.0"
+version = "0.4.0-pre"
 dependencies = [
  "cargo-whatfeatures",
  "proc-macro2",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-gen"
-version = "0.3.0"
+version = "0.4.0-pre"
 dependencies = [
  "enum_to_enum",
  "heck",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-macro"
-version = "0.3.0"
+version = "0.4.0-pre"
 dependencies = [
  "quote",
  "syn",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-rt"
-version = "0.3.0"
+version = "0.4.0-pre"
 dependencies = [
  "js-sys",
  "serde",
