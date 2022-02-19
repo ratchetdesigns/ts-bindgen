@@ -1,6 +1,8 @@
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
 use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerializationType {
@@ -55,6 +57,33 @@ impl<'a> SerializationTypeGetter for TypeRefLike<'a> {
         match self {
             TypeRefLike::TypeRef(t) => t.serialization_type(),
             TypeRefLike::OwnedTypeRef(t) => t.serialization_type(),
+        }
+    }
+}
+
+trait IsCopy {
+    fn is_copy(&self) -> bool;
+}
+
+impl IsCopy for TargetEnrichedTypeInfo {
+    fn is_copy(&self) -> bool {
+        match self {
+            TargetEnrichedTypeInfo::Ref(t) => {
+                matches!(&t.referent, TypeIdent::Builtin(
+                    Builtin::PrimitiveNumber | Builtin::PrimitiveBoolean | Builtin::LitNumber | Builtin::LitBoolean
+                ))
+            },
+            _ => false
+        }
+    }
+}
+
+pub fn clone_item_of_type(item: TokenStream2, typ: &TargetEnrichedTypeInfo) -> TokenStream2 {
+    if typ.is_copy() {
+        item
+    } else {
+        quote! {
+            #item.clone()
         }
     }
 }

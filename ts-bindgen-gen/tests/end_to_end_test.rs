@@ -30,6 +30,7 @@ fn end_to_end() -> Result<(), Error> {
     generate_ts_bindgen_file(&ts_index, target_dir.join("src").join("js_lib.rs"))?;
     env::set_current_dir(&cwd)?;
 
+    run_cargo_clippy(target_dir)?;
     run_cargo_test(target_dir)?;
 
     Ok(())
@@ -94,6 +95,34 @@ fn build_ts<Dir: AsRef<Path>, Ts: AsRef<Path>>(dir: Dir, ts_path: Ts) -> std::io
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "test failed",
+        ))
+    }
+}
+
+fn run_cargo_clippy<Dir: AsRef<Path>>(dir: Dir) -> std::io::Result<()> {
+    let status = Command::new("cargo")
+        .current_dir(dir.as_ref())
+        .arg("clippy")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .arg("--")
+        .arg("--deny")
+        .arg("warnings")
+        .env_clear()
+        .env("HOME", env!("HOME"))
+        .env("PATH", env!("PATH"))
+        .env("USER", env!("USER"))
+        .env("CARGO_HOME", env!("CARGO_HOME"))
+        .env("RUSTUP_HOME", env!("RUSTUP_HOME"))
+        .spawn()?
+        .wait()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "clippy failed",
         ))
     }
 }

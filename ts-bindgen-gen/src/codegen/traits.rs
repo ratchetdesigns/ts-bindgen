@@ -3,10 +3,11 @@ use crate::codegen::generics::{render_type_params, render_type_params_with_const
 use crate::codegen::generics::{ResolveGeneric, TypeEnvImplying};
 use crate::codegen::named::{FnOverloadName, Named};
 use crate::codegen::resolve_target_type::ResolveTargetType;
+use crate::codegen::serialization_type::clone_item_of_type;
 use crate::identifier::{to_snake_case_ident, Identifier};
 use crate::ir::{
     Class, Context, Func, Interface, Intersection, Member, TargetEnrichedTypeInfo, TypeIdent,
-    TypeParamConfig, TypeRef,
+    TypeParamConfig, TypeRef, Builtin,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -346,8 +347,19 @@ impl Traitable for Interface {
             }
             TraitMember::Getter { prop, .. } => {
                 let property_name = &prop.property_name;
+                let typ = prop.typ.resolve_target_type()
+                    .unwrap_or_else(|| TargetEnrichedTypeInfo::Ref(TypeRef {
+                        referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                        type_params: Default::default(),
+                        context: prop.typ.context.clone(),
+                    }));
+                let cloned = clone_item_of_type(
+                    quote! { self.#property_name },
+                    &typ,
+                );
+
                 quote! {
-                    Ok(self.#property_name.clone())
+                    Ok(#cloned)
                 }
             }
             TraitMember::Setter { prop, .. } => {
@@ -397,8 +409,6 @@ impl Traitable for Class {
         let name = trait_member.name();
         let name = &name.in_namespace(&cn);
         let slf = quote! { self };
-        let target = quote! { &target };
-        let mut_target = quote! { &mut target };
         let is_direct_member = member_defn_source
             .resolve_target_type()
             .map(|t| match t {
@@ -406,11 +416,23 @@ impl Traitable for Class {
                 _ => false,
             })
             .unwrap_or(false);
+        let target = if is_direct_member {
+            quote! { target }
+        } else {
+            quote! { &target }
+        };
+        // TODO: maybe we should require mut on setters in classes?
+        // if so, we can use the mut_target and tgt_mut should be as below
+        /*
+        let mut_target = quote! { &mut target };
         let tgt_mut = if matches!(trait_member, TraitMember::Setter { .. }) {
             quote! { mut }
         } else {
             quote! {}
         };
+        */
+        let mut_target = target.clone();
+        let tgt_mut = quote! {};
         let conv = if is_direct_member {
             quote! {
                 let #tgt_mut target = #slf;
