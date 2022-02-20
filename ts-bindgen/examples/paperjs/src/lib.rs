@@ -16,7 +16,7 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     let point_distance = 35.0;
 
     let scope = PaperScope::new();
-    scope.setup(PaperScopeSetupParamsElementParam::WebSysHtmlCanvasElementCase(
+    scope.setup(PaperScopeSetupParamsElementParam::WebSysHtmlCanvasElement(
         view.clone(),
     ))?;
     scope.install(window().unwrap().into())?;
@@ -36,7 +36,7 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
                 0.0,
             ))
         })
-        .map(|p| p.map(|p| PathAddParamsSegmentParam::PointCase(p)))
+        .map(|p| p.map(|p| PathAddParamsSegmentParam::Point(p)))
         .collect::<Result<Vec<_>, _>>()?;
     path.add(points.into_boxed_slice())?;
 
@@ -61,7 +61,7 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     }) as Rc<dyn Fn(Box<[JsValue]>) -> Result<JsValue, JsValue>>;
     scope
         .view()?
-        .set_on_mouse_move(ViewOnMouseMove::FnJsValueToJsValueCase(
+        .set_on_mouse_move(ViewOnMouseMove::FnJsValueToJsValue(
             mouse_handler
         ))?;
 
