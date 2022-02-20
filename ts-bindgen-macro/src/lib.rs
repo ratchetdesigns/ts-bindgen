@@ -30,7 +30,9 @@ pub fn import_ts(input: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
     (quote! {
-        #(#mods)*
+        mod ts {
+            #(#mods)*
+        }
     })
     .into()
 }
