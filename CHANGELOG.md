@@ -1,5 +1,15 @@
 # Change Log
 
+## [0.4.0] - 2022-02-20
+
+### BREAKING CHANGE
+
+- generate typescript union variant names without a "Case" suffix
+
+### Fixed
+
+- fix clippy issues with generated code
+
 ## [0.3.0] - 2022-02-19
 
 ### BREAKING CHANGE
