@@ -743,7 +743,7 @@ where
                 .collect(),
         }),
         TypeInfo::Class(class) => {
-            type NamedMembers= Vec<(String, Member)>;
+            type NamedMembers = Vec<(String, Member)>;
             let (ctors, fields): (NamedMembers, NamedMembers) = class
                 .members
                 .into_iter()

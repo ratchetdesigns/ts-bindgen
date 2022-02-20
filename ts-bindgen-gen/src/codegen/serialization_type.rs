@@ -69,11 +69,17 @@ impl IsCopy for TargetEnrichedTypeInfo {
     fn is_copy(&self) -> bool {
         match self {
             TargetEnrichedTypeInfo::Ref(t) => {
-                matches!(&t.referent, TypeIdent::Builtin(
-                    Builtin::PrimitiveNumber | Builtin::PrimitiveBoolean | Builtin::LitNumber | Builtin::LitBoolean
-                ))
-            },
-            _ => false
+                matches!(
+                    &t.referent,
+                    TypeIdent::Builtin(
+                        Builtin::PrimitiveNumber
+                            | Builtin::PrimitiveBoolean
+                            | Builtin::LitNumber
+                            | Builtin::LitBoolean
+                    )
+                )
+            }
+            _ => false,
         }
     }
 }

@@ -6,8 +6,8 @@ use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::clone_item_of_type;
 use crate::identifier::{to_snake_case_ident, Identifier};
 use crate::ir::{
-    Class, Context, Func, Interface, Intersection, Member, TargetEnrichedTypeInfo, TypeIdent,
-    TypeParamConfig, TypeRef, Builtin,
+    Builtin, Class, Context, Func, Interface, Intersection, Member, TargetEnrichedTypeInfo,
+    TypeIdent, TypeParamConfig, TypeRef,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -347,16 +347,14 @@ impl Traitable for Interface {
             }
             TraitMember::Getter { prop, .. } => {
                 let property_name = &prop.property_name;
-                let typ = prop.typ.resolve_target_type()
-                    .unwrap_or_else(|| TargetEnrichedTypeInfo::Ref(TypeRef {
+                let typ = prop.typ.resolve_target_type().unwrap_or_else(|| {
+                    TargetEnrichedTypeInfo::Ref(TypeRef {
                         referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
                         type_params: Default::default(),
                         context: prop.typ.context.clone(),
-                    }));
-                let cloned = clone_item_of_type(
-                    quote! { self.#property_name },
-                    &typ,
-                );
+                    })
+                });
+                let cloned = clone_item_of_type(quote! { self.#property_name }, &typ);
 
                 quote! {
                     Ok(#cloned)
