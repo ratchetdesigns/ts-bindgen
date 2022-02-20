@@ -9,10 +9,12 @@ use crate::js_lib::ts::function_overload::{overloaded_FnF64ToF64, overloaded_FnS
 use crate::js_lib::ts::array_passing::{accept_string_array, accept_class_array, return_string_array, return_class_array, C};
 
 pub fn cloner(t: AnyType) -> Result<AnyType, JsValue> {
+    #[allow(clippy::redundant_clone)]
     Ok(t.clone())
 }
 
 pub fn generic_cloner<T: Clone>(t: SimpleGeneric<T>) -> Result<SimpleGeneric<T>, JsValue> {
+    #[allow(clippy::redundant_clone)]
     Ok(t.clone())
 }
 
