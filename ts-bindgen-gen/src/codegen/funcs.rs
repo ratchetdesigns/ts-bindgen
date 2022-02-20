@@ -1421,9 +1421,10 @@ fn render_rust_to_js_conversion(
                     #name.into_iter().fold(
                         Ok(js_sys::Array::new()) as std::result::Result<js_sys::Array, JsValue>,
                         |arr, #inner_name| {
-                            arr.map(|a| {
+                            #[allow(clippy::bind_instead_of_map)]
+                            arr.and_then(|a| {
                                 a.push(&#inner_conversion);
-                                a
+                                Ok(a)
                             })
                         },
                     )#error_mapper
