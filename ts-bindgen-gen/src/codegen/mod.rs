@@ -27,7 +27,7 @@ use crate::identifier::{
     to_camel_case_ident, to_ident, to_snake_case_ident, to_unique_ident, Identifier,
 };
 use crate::ir::{
-    Alias, Builtin, Class, Context, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
+    Alias, Builtin, Class, Context, Ctor, Enum, EnumMember, EnumValue, Func, Indexer, Interface,
     Intersection, Member, NamespaceImport, Param, TargetEnrichedType, TargetEnrichedTypeInfo,
     Tuple, TypeIdent, TypeParamConfig, TypeRef, Union,
 };
@@ -239,7 +239,7 @@ impl IsUninhabited for TypeRef {
 }
 
 fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
-    type_name(typ).suffix_name("Case")
+    type_name(typ)
 }
 
 fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
@@ -788,13 +788,49 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .collect();
 
                 let target = quote! { self.0 };
+                let ctor_name = |overloads: &[Ctor], ctor: &Constructor| {
+                    let is_overloaded = overloads.len() > 1;
+                    let fn_group_name = to_snake_case_ident("new");
+                    if is_overloaded {
+                        ctor.overload_name(&fn_group_name)
+                    } else {
+                        fn_group_name
+                    }
+                };
+                let default_ctor_name = members.iter().find_map(|(_, member)| {
+                    if let Member::Constructor(ctor) = member {
+                        ctor.overloads
+                            .iter()
+                            .find(|o| o.params.is_empty())
+                            .map(|o| {
+                                let c = Constructor::new(
+                                    Cow::Borrowed(o),
+                                    TypeIdent::LocalName(js_name.to_string()),
+                                );
+                                ctor_name(&ctor.overloads, &c)
+                            })
+                    } else {
+                        None
+                    }
+                });
+                let default_impl = default_ctor_name
+                    .map(|default_ctor_name| {
+                        quote! {
+                            impl #full_type_params std::default::Default for #name #full_type_params {
+                                fn default() -> Self {
+                                    Self::#default_ctor_name()
+                                }
+                            }
+                        }
+                    })
+                    .unwrap_or_default();
                 let (member_defs, public_methods): (Vec<TokenStream2>, Vec<TokenStream2>) = members.iter()
                     .flat_map(|(member_js_name, member)| {
                         let member_js_ident = format_ident!("{}", member_js_name);
                         match member {
                             Member::Constructor(ctor) => {
-                                let is_overloaded = ctor.overloads.len() > 1;
-                                ctor.overloads
+                                let overloads = &ctor.overloads;
+                                overloads
                                     .iter()
                                     .map(|ctor| {
                                         let ctor = ctor.resolve_generic_in_env(&type_env);
@@ -806,12 +842,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                             .params()
                                             .map(|p| p.as_exposed_to_js_named_param_list(None));
 
-                                        let fn_group_name = to_snake_case_ident("new");
-                                        let fn_name = if is_overloaded {
-                                            ctor.overload_name(&fn_group_name)
-                                        } else {
-                                            fn_group_name
-                                        };
+                                        let fn_name = ctor_name(overloads, &ctor);
 
                                         let member_def = quote! {
                                             #[wasm_bindgen(constructor, js_class = #js_name)]
@@ -987,6 +1018,8 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     #vis struct #name #full_type_params(#(#wrapper_struct_members),*);
 
                     #(#super_as_ref_impls)*
+
+                    #default_impl
 
                     impl #full_type_params std::convert::From<#name #full_type_params> for JsValue {
                         fn from(src: #name #full_type_params) -> JsValue {
@@ -1579,7 +1612,7 @@ fn render_deserialize_fn(
         {
             let jsv: JsValue = ts_bindgen_rt::deserialize_as_jsvalue(deserializer)?;
             let #field_name: Option<&js_sys::Function> = wasm_bindgen::JsCast::dyn_ref(&jsv);
-            Ok(#field_name.map(|f| {
+            #field_name.map(|f| {
                 let f = f.clone();
                 std::rc::Rc::new(move |#(#params),*| {
                     #(#conversions);*
@@ -1590,7 +1623,7 @@ fn render_deserialize_fn(
                 }) as #rendered_type
             })
             .ok_or_else(|| ts_bindgen_rt::jsvalue_serde::Error::InvalidType("expected function".to_string()))
-            .map_err(serde::de::Error::custom)?)
+            .map_err(serde::de::Error::custom)
         }
     })
 }
