@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen"
-version = "0.4.0-pre"
+version = "0.4.0"
 dependencies = [
  "ts-bindgen-gen",
  "wasm-bindgen",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-build-support"
-version = "0.4.0-pre"
+version = "0.4.0"
 dependencies = [
  "cargo-whatfeatures",
  "proc-macro2 1.0.36",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-gen"
-version = "0.4.0-pre"
+version = "0.4.0"
 dependencies = [
  "enum_to_enum",
  "heck",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-web"
-version = "0.4.0-pre"
+version = "0.4.0"
 dependencies = [
  "js-sys",
  "monaco",
