@@ -1,6 +1,6 @@
 [package]
 name = "ts-bindgen-build-support"
-version = "0.4.0-pre"
+version = "0.4.0"
 description = "Generate a wasm-bindgen interface from typescript definitions. Build-time utilities."
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
