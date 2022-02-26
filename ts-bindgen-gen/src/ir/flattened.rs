@@ -409,7 +409,7 @@ macro_rules! combine_effects {
 
 mod effect_mappers {
     use super::Effect;
-    use heck::TitleCase;
+    use heck::CamelCase;
 
     pub fn prepend_name<T: AsRef<str>>(prefix: T) -> impl Fn(Effect) -> Effect {
         move |e: Effect| match e {
@@ -420,7 +420,11 @@ mod effect_mappers {
                 typ,
                 generated_name_id,
             } => Effect::CreateType {
-                name: format!("{}_{}", prefix.as_ref().to_title_case(), &name),
+                name: if name.is_empty() {
+                    prefix.as_ref().to_camel_case()
+                } else {
+                    format!("{}_{}", prefix.as_ref().to_camel_case(), &name)
+                },
                 file,
                 ns,
                 typ,
@@ -918,7 +922,7 @@ impl From<Namespaced<Box<TypeInfoIR>>> for EffectContainer<Box<FlattenedTypeInfo
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
-    pub types: Vec<FlattenedTypeInfo>,
+    pub types: Vec<TypeRef>,
 }
 
 impl ApplyNames for Union {
@@ -940,10 +944,17 @@ impl From<Namespaced<UnionIR>> for EffectContainer<Union> {
                 .types
                 .into_iter()
                 .map(|t| ns.in_ns(t))
-                .map(EffectContainer::from)
+                .enumerate()
+                .map(|(i, t)| {
+                    let ec = EffectContainer::from(t);
+                    combine_effects!(
+                        ec => (effect_mappers::prepend_name(i.to_string()));
+                        ec
+                    )
+                })
                 .collect();
             combine_effects!(
-                types => (effect_mappers::identity());
+                types => (effect_mappers::prepend_name("Union"));
                 Union {
                     types,
                 }
@@ -1241,7 +1252,7 @@ impl From<Namespaced<ParamIR>> for EffectContainer<Param> {
             let type_info = ns.in_ns(v.type_info).into();
 
             combine_effects!(
-                type_info => (effect_mappers::prepend_name(v.name.clone() + "Param"));
+                type_info => (effect_mappers::prepend_name(v.name.clone()));
                 Param {
                     name: v.name,
                     type_info,
@@ -1654,7 +1665,7 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
 
 #[cfg(test)]
 mod test {
-    use super::{flatten_types, FlatType, TypeIdent};
+    use super::{flatten_types, FlatType, FlattenedTypeInfo, TypeIdent};
     use crate::fs::MemFs;
     use crate::parse::TsTypes;
     use crate::ArcFs;
@@ -1702,5 +1713,37 @@ mod test {
         // make sure that nested GeneratedNames are properly transformed
         // into real names. this avoids having to write some generic mapper.
         assert!(!debug.contains("GeneratedName"));
+    }
+
+    #[test]
+    fn test_nested_generated_names_in_arg() {
+        let code = r#"
+            export declare function myFunc(a: { n: string } | number);
+        "#;
+
+        let types = get_types_for_code(code).unwrap();
+
+        let i = types.get(&TypeIdent::Name {
+            name: "MyFunc_Params_A_Union_0".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            i.map(|i| &i.info),
+            Some(FlattenedTypeInfo::Interface(_)),
+        ));
+
+        let u = types.get(&TypeIdent::Name {
+            name: "MyFunc_Params_A".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            u.map(|u| &u.info),
+            Some(FlattenedTypeInfo::Union(_)),
+        ));
+
+        assert!(types.contains_key(&TypeIdent::Name {
+            name: "MyFunc_Params_A".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        }));
     }
 }
