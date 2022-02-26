@@ -1008,7 +1008,7 @@ impl From<Namespaced<IntersectionIR>> for EffectContainer<Intersection> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tuple {
-    pub types: Vec<FlattenedTypeInfo>,
+    pub types: Vec<TypeRef>,
 }
 
 impl ApplyNames for Tuple {
@@ -1030,10 +1030,17 @@ impl From<Namespaced<TupleIR>> for EffectContainer<Tuple> {
                 .types
                 .into_iter()
                 .map(|t| ns.in_ns(t))
-                .map(EffectContainer::from)
+                .enumerate()
+                .map(|(i, t)| {
+                    let ec = EffectContainer::from(t);
+                    combine_effects!(
+                        ec => (effect_mappers::prepend_name(i.to_string()));
+                        ec
+                    )
+                })
                 .collect();
             combine_effects!(
-                types => (effect_mappers::identity());
+                types => (effect_mappers::prepend_name("Tuple"));
                 Tuple {
                     types,
                 }
@@ -1723,7 +1730,7 @@ mod test {
     }
 
     #[test]
-    fn test_nested_generated_names_in_union() {
+    fn test_flatten_union_members() {
         let code = r#"
             export declare function myFunc(a: { n: string } | number);
         "#;
@@ -1750,7 +1757,7 @@ mod test {
     }
 
     #[test]
-    fn test_nested_generated_names_in_intersection() {
+    fn test_flatten_intersection_members() {
         let code = r#"
             export declare function myFunc(a: { s: string } & { n: number });
         "#;
@@ -1782,6 +1789,42 @@ mod test {
         assert!(matches!(
             i.map(|i| &i.info),
             Some(FlattenedTypeInfo::Intersection(_)),
+        ));
+    }
+
+    #[test]
+    fn test_flatten_tuple_members() {
+        let code = r#"
+            export type A = [{ n: number }];
+        "#;
+
+        let types = get_types_for_code(code).unwrap();
+
+        let t = types.get(&TypeIdent::Name {
+            name: "A_Aliased".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            t.map(|t| &t.info),
+            Some(FlattenedTypeInfo::Tuple(_)),
+        ));
+
+        let i = types.get(&TypeIdent::Name {
+            name: "A_Aliased_Tuple_0".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            i.map(|i| &i.info),
+            Some(FlattenedTypeInfo::Interface(_)),
+        ));
+
+        let a = types.get(&TypeIdent::Name {
+            name: "A".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            a.map(|a| &a.info),
+            Some(FlattenedTypeInfo::Alias(_)),
         ));
     }
 }
