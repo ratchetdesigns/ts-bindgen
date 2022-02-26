@@ -965,7 +965,7 @@ impl From<Namespaced<UnionIR>> for EffectContainer<Union> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intersection {
-    pub types: Vec<FlattenedTypeInfo>,
+    pub types: Vec<TypeRef>,
 }
 
 impl ApplyNames for Intersection {
@@ -987,10 +987,17 @@ impl From<Namespaced<IntersectionIR>> for EffectContainer<Intersection> {
                 .types
                 .into_iter()
                 .map(|t| ns.in_ns(t))
-                .map(EffectContainer::from)
+                .enumerate()
+                .map(|(i, t)| {
+                    let ec = EffectContainer::from(t);
+                    combine_effects!(
+                        ec => (effect_mappers::prepend_name(i.to_string()));
+                        ec
+                    )
+                })
                 .collect();
             combine_effects!(
-                types => (effect_mappers::identity());
+                types => (effect_mappers::prepend_name("Intersection"));
                 Intersection {
                     types,
                 }
@@ -1716,7 +1723,7 @@ mod test {
     }
 
     #[test]
-    fn test_nested_generated_names_in_arg() {
+    fn test_nested_generated_names_in_union() {
         let code = r#"
             export declare function myFunc(a: { n: string } | number);
         "#;
@@ -1740,10 +1747,41 @@ mod test {
             u.map(|u| &u.info),
             Some(FlattenedTypeInfo::Union(_)),
         ));
+    }
 
-        assert!(types.contains_key(&TypeIdent::Name {
+    #[test]
+    fn test_nested_generated_names_in_intersection() {
+        let code = r#"
+            export declare function myFunc(a: { s: string } & { n: number });
+        "#;
+
+        let types = get_types_for_code(code).unwrap();
+
+        let i = types.get(&TypeIdent::Name {
+            name: "MyFunc_Params_A_Intersection_0".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            i.map(|i| &i.info),
+            Some(FlattenedTypeInfo::Interface(_)),
+        ));
+
+        let i = types.get(&TypeIdent::Name {
+            name: "MyFunc_Params_A_Intersection_1".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+        assert!(matches!(
+            i.map(|i| &i.info),
+            Some(FlattenedTypeInfo::Interface(_)),
+        ));
+
+        let i = types.get(&TypeIdent::Name {
             name: "MyFunc_Params_A".to_string(),
             file: Path::new("/test.d.ts").to_path_buf(),
-        }));
+        });
+        assert!(matches!(
+            i.map(|i| &i.info),
+            Some(FlattenedTypeInfo::Intersection(_)),
+        ));
     }
 }
