@@ -376,7 +376,7 @@ from_struct!(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
-    pub types: Vec<TargetEnrichedTypeInfo>,
+    pub types: Vec<TypeRef>,
     pub context: Context,
 }
 

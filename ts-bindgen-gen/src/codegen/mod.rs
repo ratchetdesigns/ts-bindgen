@@ -238,8 +238,8 @@ impl IsUninhabited for TypeRef {
     }
 }
 
-fn type_to_union_case_name(typ: &TargetEnrichedTypeInfo) -> Identifier {
-    type_name(typ)
+fn type_to_union_case_name(tr: &TypeRef) -> Identifier {
+    type_name(tr)
 }
 
 fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
@@ -271,6 +271,14 @@ fn get_field_count<T: FieldCountGetter>(t: &T) -> usize {
 
 trait FieldCountGetter {
     fn get_field_count(&self) -> usize;
+}
+
+impl FieldCountGetter for TypeRef {
+    fn get_field_count(&self) -> usize {
+        self.resolve_target_type()
+            .map(|t| t.get_field_count())
+            .unwrap_or(0usize)
+    }
 }
 
 impl FieldCountGetter for TargetEnrichedType {
@@ -326,9 +334,7 @@ impl FieldCountGetter for TargetEnrichedTypeInfo {
 }
 
 trait MemberContainer {
-    fn undefined_and_standard_members(
-        &self,
-    ) -> (Vec<&TargetEnrichedTypeInfo>, Vec<&TargetEnrichedTypeInfo>);
+    fn undefined_and_standard_members(&self) -> (Vec<&TypeRef>, Vec<&TypeRef>);
 
     fn has_undefined_member(&self) -> bool {
         !self.undefined_and_standard_members().0.is_empty()
@@ -336,17 +342,17 @@ trait MemberContainer {
 }
 
 impl MemberContainer for Union {
-    fn undefined_and_standard_members(
-        &self,
-    ) -> (Vec<&TargetEnrichedTypeInfo>, Vec<&TargetEnrichedTypeInfo>) {
-        self.types.iter().partition(|t| match t {
-            TargetEnrichedTypeInfo::Ref(t)
-                if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
-            {
-                true
-            }
-            _ => false,
-        })
+    fn undefined_and_standard_members(&self) -> (Vec<&TypeRef>, Vec<&TypeRef>) {
+        self.types
+            .iter()
+            .partition(|t| match t.resolve_target_type() {
+                Some(TargetEnrichedTypeInfo::Ref(t))
+                    if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
+                {
+                    true
+                }
+                _ => false,
+            })
     }
 }
 
@@ -566,7 +572,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                             )
                         } else {
                             let t = OwnedTypeInfo {
-                                type_info: t,
+                                type_info: &TargetEnrichedTypeInfo::Ref((*t).clone()),
                             };
                             (
                                 case.clone(),
@@ -603,8 +609,9 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                     .iter()
                     .filter_map(|t| {
                         let case = type_to_union_case_name(t).to_snake_case();
-                        let serialize_fn = render_serialize_fn(&case, t);
-                        let deserialize_fn = render_deserialize_fn(&case, t);
+                        let typ = t.resolve_target_type()?;
+                        let serialize_fn = render_serialize_fn(&case, &typ);
+                        let deserialize_fn = render_deserialize_fn(&case, &typ);
                         serialize_fn.zip(deserialize_fn).map(|(s, d)| {
                             quote! {
                                 #s
