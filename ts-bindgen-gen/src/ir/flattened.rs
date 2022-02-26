@@ -1051,7 +1051,7 @@ impl From<Namespaced<TupleIR>> for EffectContainer<Tuple> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParamConfig {
-    pub constraint: Option<FlattenedTypeInfo>,
+    pub constraint: Option<TypeRef>,
     pub default_type_arg: Option<TypeRef>,
 }
 
