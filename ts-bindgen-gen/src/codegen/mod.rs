@@ -1648,3 +1648,98 @@ fn render_serialize_fn(
         }
     })
 }
+
+#[cfg(test)]
+mod test {
+    use crate::{generate_rust_for_typescript, Error, MemFs};
+    use std::path::Path;
+
+    fn ts_to_rust(code: &str) -> Result<String, Error> {
+        let fs = {
+            let mut fs: MemFs = Default::default();
+            fs.set_cwd(Path::new("/"));
+            fs.add_file_at(Path::new("/test.d.ts"), code.to_string());
+            fs
+        };
+
+        Ok(generate_rust_for_typescript(fs, "/test")?.to_string())
+    }
+
+    #[test]
+    fn test_fn_tuple_spread_args() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export declare function foo(...args: [string, number]): void;
+        "#,
+        )?;
+
+        assert!(rust.replace(" ", "").contains("vec![]"));
+        assert!(rust.replace(" ", "").contains("JsValue::from"));
+        assert!(rust.replace(" ", "").contains("into_boxed_slice"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_fn_union_tuple_spread_args() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export declare function foo(...args: [string, number] | [number, string]): void;
+        "#,
+        )?;
+
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"match args".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"FooParamsArgsUnion0(args) => {".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"FooParamsArgsUnion1(args) => {".replace(" ", "")));
+        assert!(rust.replace(" ", "").contains("into_boxed_slice()"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_closure_tuple_spread_args() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export type foo = (...args: [string, number] | [number, string]) => void;
+        "#,
+        )?;
+
+        assert!(rust.replace(" ", "").contains(
+            &"pub type foo = dyn Fn(FooAliasedParamsArgs) -> std::result::Result<(), JsValue>;"
+                .replace(" ", "")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_fn_spread_args() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export declare function foo(...args: Array<string>): void;
+        "#,
+        )?;
+
+        // aiming to ensure that we are creating an array to pass variadic args
+        assert!(rust.replace(" ", "").contains("collect::<Vec<_>>"));
+        assert!(rust.replace(" ", "").contains("into_boxed_slice"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_closure_spread_args() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export type foo = (...args: Array<string>) => void;
+        "#,
+        )?;
+
+        assert!(rust.replace(" ", "").contains(
+            &"dyn Fn (Vec<String>) -> std::result::Result<(), JsValue>".replace(" ", "")
+        ));
+        Ok(())
+    }
+}

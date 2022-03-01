@@ -15,7 +15,7 @@ export function runTest<G>(
   genericStringClone: GenericCloneFn<string>,
   genericObjClone: GenericCloneFn<AInt>,
   genericDClone: GenericCloneFn<D<string>>,
-  ...a: number[]
+  ...a: Array<number>
 ): boolean {
   return roundTripClone(cloneFn)
     && genericTestString(genericStringClone)
