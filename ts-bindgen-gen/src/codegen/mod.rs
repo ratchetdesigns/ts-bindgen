@@ -18,6 +18,7 @@ use crate::codegen::generics::{
     render_type_params_with_lifetimes, ResolveGeneric, TypeEnvImplying,
 };
 use crate::codegen::is_uninhabited::IsUninhabited;
+use crate::codegen::named::{CasedTypeIdent, FnOverloadName, Named, SimpleNamed, UnionCaseName};
 use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -210,11 +211,6 @@ fn get_recursive_fields_with_type_params(
         });
 
     our_fields.chain(super_fields).collect()
-}
-
-
-fn type_to_union_case_name(tr: &TypeRef) -> Identifier {
-    type_name(tr)
 }
 
 fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
@@ -513,7 +509,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let member_cases = not_undefined_members
                     .iter()
                     .map(|t| {
-                        let case = type_to_union_case_name(t);
+                        let case = t.union_case_name();
                         let attrs = match t.serialization_type() {
                             SerializationType::JsValue => {
                                 quote! {
@@ -559,7 +555,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                         }
                     })
                     .chain(undefined_members.iter().map(|t| {
-                        let case = type_to_union_case_name(t);
+                        let case = t.union_case_name();
 
                         (
                             case.clone(),
@@ -583,7 +579,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                 let impl_fns: Vec<_> = not_undefined_members
                     .iter()
                     .filter_map(|t| {
-                        let case = type_to_union_case_name(t).to_snake_case();
+                        let case = t.union_case_name().to_snake_case();
                         let typ = t.resolve_target_type()?;
                         let serialize_fn = render_serialize_fn(&case, &typ);
                         let deserialize_fn = render_deserialize_fn(&case, &typ);
