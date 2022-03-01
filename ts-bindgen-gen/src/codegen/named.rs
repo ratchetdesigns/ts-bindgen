@@ -265,3 +265,13 @@ impl FnOverloadName for Constructor<'_> {
         fn_group_name.suffix_name(&format!("_{}", type_name(self)))
     }
 }
+
+pub trait UnionCaseName {
+    fn union_case_name(&self) -> Identifier;
+}
+
+impl UnionCaseName for TypeRef {
+    fn union_case_name(&self) -> Identifier {
+        type_name(self)
+    }
+}
