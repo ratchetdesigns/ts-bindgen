@@ -1,6 +1,6 @@
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::type_ref_like::{OwnedTypeRef, TypeRefLike};
-use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef};
+use crate::ir::{Builtin, TargetEnrichedTypeInfo, TypeIdent, TypeRef, Union};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -31,6 +31,17 @@ impl SerializationTypeGetter for TargetEnrichedTypeInfo {
         match self {
             TargetEnrichedTypeInfo::FuncGroup(_) => SerializationType::Fn,
             TargetEnrichedTypeInfo::Class(_) => SerializationType::Raw,
+            TargetEnrichedTypeInfo::Tuple(_) => SerializationType::Array,
+            TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
+                if types
+                    .iter()
+                    .all(|t| t.serialization_type() == SerializationType::Array)
+                {
+                    SerializationType::Array
+                } else {
+                    SerializationType::SerdeJson
+                }
+            }
             TargetEnrichedTypeInfo::Ref(t) => match &t.referent {
                 TypeIdent::Builtin(Builtin::Fn) => SerializationType::Fn,
                 TypeIdent::Builtin(Builtin::Array) => SerializationType::Array,

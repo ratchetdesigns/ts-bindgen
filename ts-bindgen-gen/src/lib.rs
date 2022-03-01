@@ -127,7 +127,7 @@ where
         .for_each(process_file);
 
     Ok(quote! {
-        #![allow(clippy::let_and_return, clippy::type_complexity, clippy::unused_unit, clippy::manual_non_exhaustive)]
+        #![allow(clippy::let_and_return, clippy::type_complexity, clippy::unused_unit, clippy::manual_non_exhaustive, clippy::redundant_closure)]
         #(#mod_defs)*
     })
 }
