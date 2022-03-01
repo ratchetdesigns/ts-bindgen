@@ -1,6 +1,7 @@
 mod contextual;
 mod funcs;
 mod generics;
+mod is_uninhabited;
 mod named;
 mod ns_path;
 mod resolve_target_type;
@@ -16,7 +17,7 @@ use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
     render_type_params_with_lifetimes, ResolveGeneric, TypeEnvImplying,
 };
-use crate::codegen::named::{type_name, CasedTypeIdent, FnOverloadName, Named, SimpleNamed};
+use crate::codegen::is_uninhabited::IsUninhabited;
 use crate::codegen::ns_path::ToNsPath;
 use crate::codegen::resolve_target_type::ResolveTargetType;
 use crate::codegen::serialization_type::{SerializationType, SerializationTypeGetter};
@@ -211,32 +212,6 @@ fn get_recursive_fields_with_type_params(
     our_fields.chain(super_fields).collect()
 }
 
-trait IsUninhabited {
-    fn is_uninhabited(&self) -> bool;
-}
-
-impl IsUninhabited for TargetEnrichedTypeInfo {
-    fn is_uninhabited(&self) -> bool {
-        match self {
-            TargetEnrichedTypeInfo::Ref(r) => r.is_uninhabited(),
-            TargetEnrichedTypeInfo::Union(Union { types, .. }) => {
-                types.iter().all(IsUninhabited::is_uninhabited)
-            }
-            _ => false,
-        }
-    }
-}
-
-impl IsUninhabited for TypeRef {
-    fn is_uninhabited(&self) -> bool {
-        matches!(
-            self.referent,
-            TypeIdent::Builtin(Builtin::PrimitiveNull)
-                | TypeIdent::Builtin(Builtin::PrimitiveUndefined)
-                | TypeIdent::Builtin(Builtin::PrimitiveVoid),
-        )
-    }
-}
 
 fn type_to_union_case_name(tr: &TypeRef) -> Identifier {
     type_name(tr)
