@@ -1634,6 +1634,7 @@ fn render_serialize_fn(
     let serialize_fn_name = serialize_field_name(field_name);
     let invocation = f.invoke_with_name(field_name);
     let closure = f.exposed_to_js_wrapped_closure(invocation, None);
+    let closure_name = field_name.suffix_name("_closure");
     Some(quote! {
         #[allow(non_snake_case)]
         fn #serialize_fn_name<S>(#field_name: &#rendered_type, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -1641,9 +1642,9 @@ fn render_serialize_fn(
             S: serde::ser::Serializer,
         {
             let #field_name = #field_name.clone();
-            let #field_name = #closure;
-            let jsv = ts_bindgen_rt::serialize_as_jsvalue(serializer, &#field_name.into_js_value());
-            //#field_name.forget(); // TODO: how do we properly handle memory management?
+            let #closure_name = #closure;
+            let jsv = ts_bindgen_rt::serialize_as_jsvalue(serializer, &#closure_name.into_js_value());
+            //#closure_name.forget(); // TODO: how do we properly handle memory management?
             jsv
         }
     })
