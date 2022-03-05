@@ -481,14 +481,6 @@ impl FnParamExt for RestPat {
                 .type_ann
                 .as_ref()
                 .map(|t| ts_types.process_type(ts_path, &t.type_ann))
-                .map(|t_result| {
-                    t_result.map(|t| match t {
-                        // rest params should be arrays but, since we handle rest params (is_variadic) explicitly
-                        // later, we unpack the array now
-                        TypeInfo::Array { item_type } => *item_type,
-                        _ => t,
-                    })
-                })
                 .unwrap_or(Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
         })
     }
@@ -3160,6 +3152,60 @@ mod test {
                 } else {
                     assert!(false);
                 }
+            }
+        )
+    }
+
+    #[test]
+    fn test_array_of_union() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export type A = (string | number)[];
+            "#,
+            "A",
+            TypeInfo::Alias(Alias { target, .. }),
+            {
+                if let TypeInfo::Array { item_type } = target.as_ref() {
+                    if let TypeInfo::Union(Union { types }) = item_type.as_ref() {
+                        assert_eq!(types.len(), 2);
+                    } else {
+                        assert!(false);
+                    }
+                } else {
+                    assert!(false);
+                }
+            }
+        )
+    }
+
+    #[test]
+    fn test_array_of_union_param() -> Result<(), Error> {
+        test_exported_type!(
+            r#"
+                export declare function f(a: (string | number)[], ...s: (string | number)[]): void;
+            "#,
+            "f",
+            TypeInfo::FuncGroup(FuncGroup { overloads }),
+            {
+                assert_eq!(overloads.len(), 1);
+                let f = overloads.first().unwrap();
+
+                assert_eq!(f.params.len(), 2);
+                let first = f.params.first().unwrap();
+
+                assert!(matches!(
+                    first.type_info,
+                    TypeInfo::Array { .. }
+                ));
+                assert!(!first.is_variadic);
+
+                let rest = f.params.last().unwrap();
+
+                assert!(rest.is_variadic);
+                assert!(matches!(
+                    rest.type_info,
+                    TypeInfo::Array { .. }
+                ));
             }
         )
     }
