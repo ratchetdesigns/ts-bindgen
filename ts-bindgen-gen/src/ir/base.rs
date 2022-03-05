@@ -572,7 +572,9 @@ fn resolve_builtin(
                 class_name: None,
                 params: vec![Param {
                     name: "args".to_string(),
-                    type_info: TypeInfo::PrimitiveAny(PrimitiveAny()),
+                    type_info: TypeInfo::Array {
+                        item_type: Box::new(TypeInfo::PrimitiveAny(PrimitiveAny())),
+                    },
                     is_variadic: true,
                 }],
             }],
