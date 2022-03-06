@@ -3193,19 +3193,13 @@ mod test {
                 assert_eq!(f.params.len(), 2);
                 let first = f.params.first().unwrap();
 
-                assert!(matches!(
-                    first.type_info,
-                    TypeInfo::Array { .. }
-                ));
+                assert!(matches!(first.type_info, TypeInfo::Array { .. }));
                 assert!(!first.is_variadic);
 
                 let rest = f.params.last().unwrap();
 
                 assert!(rest.is_variadic);
-                assert!(matches!(
-                    rest.type_info,
-                    TypeInfo::Array { .. }
-                ));
+                assert!(matches!(rest.type_info, TypeInfo::Array { .. }));
             }
         )
     }

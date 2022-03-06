@@ -515,6 +515,7 @@ pub trait FnPrototypeExt {
         body: Body,
         in_context: Option<&Context>,
     ) -> TokenStream2;
+
     fn exposed_to_js_closure_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
 
     fn exposed_to_js_closure_boxed_fn_type(&self, in_context: Option<&Context>) -> TokenStream2;
@@ -638,9 +639,12 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
                 }
 
                 let name = p.rust_name();
-                let typ = p.as_exposed_to_js_unnamed_param_list(in_context);
                 Some(quote! {
-                    let #name: #typ = Box::new([#(#variadic_names),*]);
+                    let #name = {
+                        let #name = js_sys::Array::new();
+                        #(#name.push(&#variadic_names));*;
+                        #name
+                    };
                 })
             })
             .unwrap_or_default();
@@ -804,15 +808,18 @@ impl<T: HasFnPrototype + ?Sized> FnPrototypeExt for T {
             let tr = arg.type_ref();
             if is_generic_type(&tr) {
                 let a_name = arg.rust_name();
-                if is_fallible {
-                    Some(quote! {
-                        let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).map_err(ts_bindgen_rt::Error::from)?;
-                    })
+                let err_mapper = if is_fallible {
+                    quote! {
+                        .map_err(ts_bindgen_rt::Error::from)?
+                    }
                 } else {
-                    Some(quote! {
-                        let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name).unwrap();
-                    })
-                }
+                    quote! {
+                        .unwrap()
+                    }
+                };
+                Some(quote! {
+                    let #a_name = ts_bindgen_rt::jsvalue_serde::to_jsvalue(&#a_name)#err_mapper;
+                })
             } else {
                 None
             }
@@ -1027,6 +1034,127 @@ impl<'a> WrappedParam for OwnedParam<'a> {
     }
 }
 
+pub fn render_exposed_to_js_wrapper_closure<F: HasFnPrototype + ?Sized>(
+    f: &F,
+    wrapped_fn_name: &Identifier,
+    in_context: Option<&Context>,
+) -> TokenStream2 {
+    // TODO: needs to render wrappers for typ.params() that are
+    // functions
+    let args = f.args().map(|p| p.js_to_rust_conversion(in_context));
+    let result = to_snake_case_ident("result");
+    let fn_name = to_snake_case_ident("result_adapter");
+    let (_, conversion) = render_rust_to_js_conversion(
+        &result,
+        &fn_name,
+        &f.return_type().into(),
+        false,
+        quote! { .map_err(ts_bindgen_rt::Error::from)? },
+    );
+    let invocation = quote! {
+        let #result = #wrapped_fn_name(#(#args),*)?;
+        Ok(#conversion)
+    };
+    f.exposed_to_js_wrapped_closure(invocation, in_context)
+}
+
+fn render_array_js_to_rust_conversion(
+    name: &Identifier,
+    typ: &TypeRefLike,
+    error_mapper: TokenStream2,
+) -> TokenStream2 {
+    let tr = typ.as_ref();
+    let vec_name = name.suffix_name("_vec");
+    if let TypeIdent::Builtin(Builtin::Array) = &tr.referent {
+        let inner_type = tr
+            .type_params
+            .first()
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| {
+                Cow::Owned(TypeRef {
+                    referent: TypeIdent::Builtin(Builtin::PrimitiveAny),
+                    type_params: Default::default(),
+                    context: tr.context.clone(),
+                })
+            });
+        let inner_name = name.suffix_name("_item");
+        let inner_conversion =
+            render_js_to_rust_conversion(&inner_name, &typ.similarly_wrap(inner_type.as_ref()));
+        quote! {
+            {
+                let mut #vec_name = vec![];
+                for #inner_name in #name.iter() {
+                    #vec_name.push(#inner_conversion);
+                }
+                #vec_name
+            }
+        }
+    } else {
+        let target = typ.resolve_target_type();
+        match target {
+            Some(TargetEnrichedTypeInfo::Tuple(Tuple { types, .. })) => {
+                let convs = types.iter().enumerate().map(|(i, inner_type)| {
+                    let inner_name = name.suffix_name(&format!("_item_{}", i));
+                    let inner_conversion =
+                        render_js_to_rust_conversion(&inner_name, &typ.similarly_wrap(inner_type));
+                    let idx = Literal::usize_unsuffixed(i);
+                    quote! {
+                        let #inner_name = #name.get(#idx);
+                        #vec_name.push(&#inner_conversion);
+                    }
+                });
+                quote! {
+                    {
+                        let mut #vec_name = vec![];
+                        #(#convs)*
+                        #vec_name
+                    }
+                }
+            }
+            Some(TargetEnrichedTypeInfo::Union(_)) => {
+                render_serde_json_js_to_rust_conversion(name, error_mapper)
+            }
+            _ => {
+                panic!("non-array type for conversion from js array");
+            }
+        }
+    }
+}
+
+fn render_serde_json_js_to_rust_conversion(
+    name: &Identifier,
+    error_mapper: TokenStream2,
+) -> TokenStream2 {
+    quote! {
+        ts_bindgen_rt::from_jsvalue(&#name)#error_mapper
+    }
+}
+
+fn render_js_to_rust_conversion(name: &Identifier, typ: &TypeRefLike) -> TokenStream2 {
+    let serialization_type = typ.serialization_type();
+
+    match serialization_type {
+        SerializationType::Raw | SerializationType::JsValue => quote! { #name },
+        SerializationType::SerdeJson => render_serde_json_js_to_rust_conversion(
+            name,
+            quote! {
+                .map_err(ts_bindgen_rt::Error::from)?
+            },
+        ),
+        SerializationType::Array => render_array_js_to_rust_conversion(
+            name,
+            typ,
+            quote! {
+                .map_err(ts_bindgen_rt::Error::from)?
+            },
+        ),
+        SerializationType::Fn => {
+            // TODO: we're not recursive yet
+            unimplemented!();
+        }
+    }
+}
+
 impl<T: WrappedParam> ParamExt for T {
     fn rust_name(&self) -> Identifier {
         to_snake_case_ident(self.name())
@@ -1061,22 +1189,7 @@ impl<T: WrappedParam> ParamExt for T {
     }
 
     fn js_to_rust_conversion(&self, _in_context: Option<&Context>) -> TokenStream2 {
-        let wrapped = self.wrapped_type();
-        let serialization_type = wrapped.serialization_type();
-        let name = self.rust_name();
-
-        match serialization_type {
-            SerializationType::Raw | SerializationType::JsValue => quote! { #name },
-            SerializationType::SerdeJson | SerializationType::Array => {
-                quote! {
-                    ts_bindgen_rt::from_jsvalue(&#name).map_err(ts_bindgen_rt::Error::from)?
-                }
-            }
-            SerializationType::Fn => {
-                // TODO: we're not recursive yet
-                unimplemented!();
-            }
-        }
+        render_js_to_rust_conversion(&self.rust_name(), &self.wrapped_type())
     }
 
     fn local_fn_name(&self) -> Identifier {
@@ -1134,24 +1247,11 @@ impl<T: WrappedParam> ParamExt for T {
                 return None;
             }
 
-            // TODO: needs to render wrappers for typ.params() that are
-            // functions
-            let args = typ.args().map(|p| p.js_to_rust_conversion(in_context));
-            let result = to_snake_case_ident("result");
-            let fn_name = to_snake_case_ident("result_adapter");
-            let (_, conversion) = render_rust_to_js_conversion(
-                &result,
-                &fn_name,
-                &typ.return_type().into(),
-                false,
-                quote! { .map_err(ts_bindgen_rt::Error::from)? },
-            );
-            let name = self.rust_name();
-            let invocation = quote! {
-                let #result = #name(#(#args),*)?;
-                Ok(#conversion)
-            };
-            Some(typ.exposed_to_js_wrapped_closure(invocation, in_context))
+            Some(render_exposed_to_js_wrapper_closure(
+                &typ,
+                &self.rust_name(),
+                in_context,
+            ))
         } else {
             None
         }
@@ -1361,7 +1461,10 @@ fn render_variadic_rust_to_js_conversion(
             fn_name, // TODO: what do we do here?
             &typ.similarly_wrap(inner_type.as_ref()),
             false,
-            error_mapper.clone(),
+            quote! {
+                .map_err(ts_bindgen_rt::Error::from)
+                .map_err(JsValue::from)
+            },
         );
         let collect = if is_inner_fallible {
             quote! {
@@ -1466,7 +1569,7 @@ fn render_array_rust_to_js_conversion(
             fn_name, // TODO: what do we do here?
             &typ.similarly_wrap(inner_type.as_ref()),
             false,
-            error_mapper.clone(),
+            error_mapper,
         )
         .1;
         quote! {

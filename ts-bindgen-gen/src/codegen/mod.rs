@@ -10,8 +10,8 @@ mod traits;
 mod type_ref_like;
 
 use crate::codegen::funcs::{
-    fn_types, render_raw_return_to_js, AccessType, Constructor, FnPrototypeExt, HasFnPrototype,
-    InternalFunc, PropertyAccessor, WrapperFunc,
+    fn_types, render_exposed_to_js_wrapper_closure, render_raw_return_to_js, AccessType,
+    Constructor, FnPrototypeExt, HasFnPrototype, InternalFunc, PropertyAccessor, WrapperFunc,
 };
 use crate::codegen::generics::{
     apply_type_params, render_type_params, render_type_params_with_constraints,
@@ -1570,8 +1570,8 @@ fn render_deserialize_fn(
         let name = p.rust_name();
         if p.is_variadic() {
             quote! {
-                for #name in #name.values().into_iter(){
-                    #args.push(&#name?);
+                for #name in #name.into_iter(){
+                    #args.push(&#name);
                 }
             }
         } else {
@@ -1632,8 +1632,7 @@ fn render_serialize_fn(
         }
     };
     let serialize_fn_name = serialize_field_name(field_name);
-    let invocation = f.invoke_with_name(field_name);
-    let closure = f.exposed_to_js_wrapped_closure(invocation, None);
+    let closure = render_exposed_to_js_wrapper_closure(f, field_name, None);
     let closure_name = field_name.suffix_name("_closure");
     Some(quote! {
         #[allow(non_snake_case)]
@@ -1740,6 +1739,124 @@ mod test {
 
         assert!(rust.replace(" ", "").contains(
             &"dyn Fn (Vec<String>) -> std::result::Result<(), JsValue>".replace(" ", "")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_interface_function() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export interface Foo {
+                onSomething: Function;
+            }
+        "#,
+        )?;
+
+        assert!(rust.replace(" ", "").contains(
+            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>, JsValue>".replace(" ", "")
+        ));
+        assert!(rust.replace(" ", "").contains(
+            &"pub on_something: std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>".replace(" ", "")
+        ));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"let _Args = js_sys::Array::new();".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(" ", "")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_interface_function_with_return() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export interface FooRet {
+                n: number;
+            }
+            export interface Foo {
+                onSomething(...args: Array<number>): FooRet;
+            }
+        "#,
+        )?;
+
+        assert!(rust.replace(" ", "").contains(
+            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>, JsValue>".replace(" ", "")
+        ));
+        assert!(rust.replace(" ", "").contains(
+            &"pub on_something: std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>".replace(" ", "")
+        ));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"let _Args = js_sys::Array::new()".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(" ", "")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_class_variadic_method() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export declare class Foo {
+                onSomething(...s: (string | number)[]): void;
+            }
+        "#,
+        )?;
+
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl std::convert::From<Foo> for JsValue".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl std::convert::AsRef<JsValue> for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl wasm_bindgen::JsCast for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl wasm_bindgen::describe::WasmDescribe for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl wasm_bindgen::convert::IntoWasmAbi for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl wasm_bindgen::convert::FromWasmAbi for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl<'a> wasm_bindgen::convert::IntoWasmAbi for &'a Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl serde::ser::Serialize for Foo".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"impl<'de> serde::de::Deserialize<'de> for Foo".replace(" ", "")));
+        assert!(rust.replace(" ", "").contains(
+            &"self.0.__TSB_on_something_FnVecOfFooOnSomethingParamsSTo(s.into_iter().map(|s_item| ts_bindgen_rt::to_jsvalue(&s_item).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)).collect::<std::result::Result<Vec<_>, _>>().map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)?.into_boxed_slice())".replace(" ", "")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_class_callback_method() -> Result<(), Error> {
+        let rust = ts_to_rust(
+            r#"
+            export declare class Foo {
+                onSomething(f: Function): void;
+            }
+        "#,
+        )?;
+
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"let arg0 = js_sys::Array::new()".replace(" ", "")));
+        assert!(rust
+            .replace(" ", "")
+            .contains(&"arg0.push(&_Variadic0_arg0);".replace(" ", "")));
+        assert!(rust.replace(" ", "").contains(
+            &"let result = f({ let mut arg0_vec = vec![]; for arg0_item in arg0.iter() { arg0_vec.push(arg0_item); } arg0_vec })?".replace(" ", "")
         ));
         Ok(())
     }
