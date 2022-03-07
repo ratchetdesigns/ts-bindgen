@@ -1114,9 +1114,15 @@ fn combine_to_union(a: &TypeInfoIR, b: &TypeInfoIR) -> TypeInfoIR {
         (t1, TypeInfoIR::Union(u2)) => TypeInfoIR::Union(UnionIR {
             types: u2.types.iter().chain(iter::once(t1)).cloned().collect(),
         }),
-        (t1, t2) => TypeInfoIR::Union(UnionIR {
-            types: vec![t1.clone(), t2.clone()],
-        }),
+        (t1, t2) => {
+            if t1 == t2 {
+                t1.clone()
+            } else {
+                TypeInfoIR::Union(UnionIR {
+                    types: vec![t1.clone(), t2.clone()],
+                })
+            }
+        }
     }
 }
 
@@ -1679,7 +1685,7 @@ pub fn flatten_types<Ts: IntoIterator<Item = TypeIR>>(types: Ts) -> impl Iterato
 
 #[cfg(test)]
 mod test {
-    use super::{flatten_types, FlatType, FlattenedTypeInfo, TypeIdent};
+    use super::{flatten_types, Builtin, FlatType, FlattenedTypeInfo, TypeIdent};
     use crate::fs::MemFs;
     use crate::parse::TsTypes;
     use crate::ArcFs;
@@ -1826,5 +1832,29 @@ mod test {
             a.map(|a| &a.info),
             Some(FlattenedTypeInfo::Alias(_)),
         ));
+    }
+
+    #[test]
+    fn test_widened_fn() {
+        let code = r#"
+            export declare function a(n: number): void;
+            export declare function a(s: string): void;
+        "#;
+
+        let types = get_types_for_code(code).unwrap();
+
+        let t = types.get(&TypeIdent::Name {
+            name: "a".to_string(),
+            file: Path::new("/test.d.ts").to_path_buf(),
+        });
+
+        if let FlattenedTypeInfo::FuncGroup(fg) = &t.unwrap().info {
+            assert_eq!(
+                fg.widened_fn.return_type.referent,
+                TypeIdent::Builtin(Builtin::PrimitiveVoid)
+            );
+        } else {
+            assert!(false);
+        }
     }
 }
