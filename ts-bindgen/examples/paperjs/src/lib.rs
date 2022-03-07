@@ -2,7 +2,7 @@ mod paper;
 
 use js_sys::{Object, Reflect};
 use paper::paper::dist::paper::paper::{
-    MouseEvent, PaperScope, PaperScopeSetupParamsElementParam, Path, PathAddParamsSegmentParam,
+    MouseEvent, PaperScope, PaperScopeSetupParamsElement, Path, PathAddParamsSegment,
     PathItem_Trait, Point, ViewOnMouseMove,
 };
 use wasm_bindgen::prelude::*;
@@ -16,7 +16,7 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
     let point_distance = 35.0;
 
     let scope = PaperScope::new();
-    scope.setup(PaperScopeSetupParamsElementParam::WebSysHtmlCanvasElement(
+    scope.setup(PaperScopeSetupParamsElement::WebSysHtmlCanvasElement(
         view.clone(),
     ))?;
     scope.install(window().unwrap().into())?;
@@ -36,11 +36,11 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
                 0.0,
             ))
         })
-        .map(|p| p.map(|p| PathAddParamsSegmentParam::Point(p)))
+        .map(|p| p.map(|p| PathAddParamsSegment::Point(p)))
         .collect::<Result<Vec<_>, _>>()?;
-    path.add(points.into_boxed_slice())?;
+    path.add(points)?;
 
-    let mouse_handler = Rc::new(move |args: Box<[JsValue]>| -> Result<JsValue, JsValue> {
+    let mouse_handler = Rc::new(move |args: Vec<JsValue>| -> Result<JsValue, JsValue> {
         let event = args.into_iter().next().ok_or::<JsValue>("no event passed".into())?;
         let event = MouseEvent(event.clone().into());
         path.first_segment()?.set_point(event.point()?)?;
@@ -58,10 +58,10 @@ pub fn chain_example(view: &HtmlCanvasElement) -> Result<(), JsValue> {
         path.smooth(SmoothOptions::new("continuous").into())?;
 
         Ok(JsValue::null())
-    }) as Rc<dyn Fn(Box<[JsValue]>) -> Result<JsValue, JsValue>>;
+    }) as Rc<dyn Fn(Vec<JsValue>) -> Result<JsValue, JsValue>>;
     scope
         .view()?
-        .set_on_mouse_move(ViewOnMouseMove::FnJsValueToJsValue(
+        .set_on_mouse_move(ViewOnMouseMove::DynFnVecOfJsValueToStdResultResultOfJsValueAndJsValue(
             mouse_handler
         ))?;
 
