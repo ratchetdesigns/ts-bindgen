@@ -13,7 +13,7 @@ serde = { version = "1.0", features = ["derive"] }
 wasm-bindgen = { version = "0.2.63", features = ["serde-serialize"] }
 js-sys = "0.3.53"
 console_error_panic_hook = { version = "0.1.6", optional = true }
-ts-bindgen-rt = { version = "0.5.0-pre", path = "ts-bindgen-rt" }
+ts-bindgen-rt = { version = "0.5.0", path = "ts-bindgen-rt" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.13"

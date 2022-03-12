@@ -1,6 +1,6 @@
 [package]
 name = "ts-bindgen-gen"
-version = "0.5.0-pre"
+version = "0.5.0"
 description = "Generate a wasm-bindgen interface from typescript definitions"
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
@@ -23,7 +23,7 @@ unicode-xid = "0.2.2"
 heck = "0.3.3"
 strum_macros = "0.23.0"
 enum_to_enum = "0.1.0"
-ts-bindgen-build-support = { version = "=0.5.0-pre", path = "../ts-bindgen-build-support" }
+ts-bindgen-build-support = { version = "=0.5.0", path = "../ts-bindgen-build-support" }
 
 [dev-dependencies]
 tempfile = "3.2.0"
