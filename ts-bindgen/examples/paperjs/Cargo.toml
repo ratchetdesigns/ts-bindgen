@@ -1,6 +1,6 @@
 [package]
 name = "ts-bindgen-example-paperjs"
-version = "0.5.0"
+version = "0.6.0-pre"
 description = "Example of using ts-bindgen to interface with three.js"
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
@@ -21,5 +21,5 @@ wasm-bindgen-test = "0.3.13"
 wasm-bindgen = "0.2.63"
 js-sys = "0.3.53"
 web-sys = { version = "0.3.53", features = ["Window", "HtmlCanvasElement", "ImageData", "SvgElement", "HtmlImageElement", "CanvasRenderingContext2d", "HtmlScriptElement"] }
-ts-bindgen-rt = { version = "0.5.0", path = "../../../ts-bindgen-rt" }
+ts-bindgen-rt = { version = "0.6.0-pre", path = "../../../ts-bindgen-rt" }
 serde = { version = "1.0", features = ["derive"] }

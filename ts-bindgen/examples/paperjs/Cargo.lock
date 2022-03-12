@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-example-paperjs"
-version = "0.5.0"
+version = "0.6.0-pre"
 dependencies = [
  "js-sys",
  "serde",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "ts-bindgen-rt"
-version = "0.5.0"
+version = "0.6.0-pre"
 dependencies = [
  "js-sys",
  "serde",
