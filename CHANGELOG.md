@@ -1,5 +1,16 @@
 # Change Log
 
+## [0.5.0] - 2022-03-12
+
+### BREAKING CHANGE
+
+- generate Vec<_> for rust-exposed variadic arguments instead of Box<[_]>
+
+### Fixed
+
+- fix variadic argument handling
+- fix handling of voids in overloaded functions
+
 ## [0.4.0] - 2022-02-20
 
 ### BREAKING CHANGE
