@@ -8,6 +8,16 @@ fi
 version="$1"
 next_version="$2"
 
+#if ! cargo install --list | grep 'cargo-edit: v0.8.0' ; then
+#  echo "Install cargo-edit: cargo install --version 0.8.0 --locked --features vendored-openssl cargo-edit"
+#  exit 1
+#fi
+
+if ! git config --get user.email > /dev/null && git config --get user.name > /dev/null; then
+  echo "Set git email and name: git config --global user.name <name> && git config --global user.email <email>"
+  exit 1
+fi
+
 head CHANGELOG.md
 
 echo "Using version ${version} and next version ${next_version}"
