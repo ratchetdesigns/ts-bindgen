@@ -26,12 +26,12 @@ impl Error {
             .into_iter()
             .map(|error| match error {
                 InternalError::Logic { msg, span } => format!(
-                    "binding generation error: {}\n{}",
+                    "binding generation error: {}\n  source: {}",
                     msg,
                     span_error_msg(span, source_map)
                 ),
                 InternalError::Parse { error } => format!(
-                    "typescript parsing error: {}\n{}",
+                    "typescript parsing error: {}\n  source: {}",
                     error.kind().msg(),
                     span_error_msg(error.span(), source_map)
                 ),
