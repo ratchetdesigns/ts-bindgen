@@ -1,7 +1,7 @@
 [package]
 name = "ts-bindgen-example-paperjs"
 version = "0.6.0-pre"
-description = "Example of using ts-bindgen to interface with three.js"
+description = "Example of using ts-bindgen to interface with paper.js"
 authors = ["Adam Berger <adam@ratchetdesigns.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
