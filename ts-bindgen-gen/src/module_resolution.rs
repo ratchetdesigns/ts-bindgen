@@ -9,18 +9,18 @@ pub fn typings_module_resolver<FS: Fs + ?Sized>(
     import_path: &Path,
     pkg: &Value,
 ) -> Result<PathBuf> {
-    let types_rel_path = pkg
-        .as_object()
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Bad package.json (expected top-level object) found in {}",
-                    import_path.display()
-                ),
-            )
-        })?
+    let pkg_json = pkg.as_object().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Bad package.json (expected top-level object) found in {}",
+                import_path.display()
+            ),
+        )
+    })?;
+    let types_rel_path = pkg_json
         .get("types")
+        .or_else(|| pkg_json.get("typings"))
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

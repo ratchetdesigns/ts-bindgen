@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.6.0] - yyyy-mm-dd
+
+### Added
+
+- support "types" or "typings" interchangably in package.json
+
 ## [0.5.0] - 2022-03-12
 
 ### BREAKING CHANGE
