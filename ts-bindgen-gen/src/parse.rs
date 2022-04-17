@@ -1156,10 +1156,9 @@ impl TsTypes {
             }
             TsKeywordTypeKind::TsNullKeyword => TypeInfo::PrimitiveNull(PrimitiveNull()),
             TsKeywordTypeKind::TsNeverKeyword => {
-                return Err(InternalError::with_msg_and_span(
-                    "never keyword not supported",
-                    keyword.span(),
-                ))
+                // maybe replace with rust's never type (!) when it's stabilized
+                // https://doc.rust-lang.org/std/primitive.never.html
+                TypeInfo::PrimitiveUndefined(PrimitiveUndefined())
             }
             TsKeywordTypeKind::TsIntrinsicKeyword => {
                 return Err(InternalError::with_msg_and_span(

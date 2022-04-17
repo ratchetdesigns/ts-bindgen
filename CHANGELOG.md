@@ -2,6 +2,10 @@
 
 ## [0.6.0] - yyyy-mm-dd
 
+### Fixed
+
+- typescript never types now generate as undefined, awaiting stabilization of https://doc.rust-lang.org/std/primitive.never.html
+
 ### Added
 
 - support "types" or "typings" interchangably in package.json
