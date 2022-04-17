@@ -834,7 +834,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                             } else {
                                                 vec![
                                                     quote! { #res },
-                                                    quote! { std::marker::PhantomData #full_type_params },
+                                                    quote! { std::marker::PhantomData },
                                                 ]
                                             };
                                             quote! {
