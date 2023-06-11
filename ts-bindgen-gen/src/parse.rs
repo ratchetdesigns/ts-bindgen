@@ -1194,12 +1194,23 @@ impl TsTypes {
         ts_path: &Path,
         TsUnionType { types, .. }: &TsUnionType,
     ) -> Result<TypeInfo, InternalError> {
-        Ok(TypeInfo::Union(Union {
-            types: types
-                .iter()
-                .map(|t| self.process_type(ts_path, t))
-                .collect::<Result<Vec<_>, InternalError>>()?,
-        }))
+        let union_items = types
+            .iter()
+            .map(|t| self.process_type(ts_path, t))
+            .collect::<Result<Vec<_>, InternalError>>()?;
+
+        // Special case: unions of string literals get turned into a single String. This is valid while
+        //               we don't support serializing string literals into type-safe enums, but instead just turn
+        //               them into `String`.
+        if union_items
+            .iter()
+            .all(|t| matches!(t, TypeInfo::LitString(_)))
+        {
+            return Ok(TypeInfo::PrimitiveString(PrimitiveString()));
+        }
+
+        // Normal union
+        Ok(TypeInfo::Union(Union { types: union_items }))
     }
 
     fn process_intersection_type(
@@ -1275,12 +1286,7 @@ impl TsTypes {
                     lit.span(),
                 ))
             }
-            TsLit::Tpl(_) => {
-                return Err(InternalError::with_msg_and_span(
-                    "we don't support template literals yet",
-                    lit.span(),
-                ))
-            }
+            TsLit::Tpl(_) => TypeInfo::LitString(LitString { s: "".to_string() }),
         })
     }
 
