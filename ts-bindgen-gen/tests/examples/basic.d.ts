@@ -9,6 +9,12 @@ export declare enum MyEnum {
   B = "B",
 }
 
+export declare enum MyNumericEnum {
+  A = -1,
+  B = 1,
+  C = 2,
+}
+
 export interface Base {
   baseField: number;
 }
