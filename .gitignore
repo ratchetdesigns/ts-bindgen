@@ -1,6 +1,7 @@
 target/
 **/*.rs.bk
 *.sw[po]
+.idea/
 node_modules
 ts-bindgen-web/public/bundle.js
 ts-bindgen-web/public/ts_bindgen_web_bg.wasm
