@@ -2139,6 +2139,22 @@ fn make_enum_member(
                     }
                     _ => None,
                 },
+                Expr::Unary(UnaryExpr {
+                    op: UnaryOp::Minus,
+                    arg,
+                    ..
+                }) => match &**arg {
+                    Expr::Lit(Lit::Num(n)) => {
+                        let n = -n.value;
+                        *last_numeric_discriminator = Some(n);
+                        Some(Ok(EnumValue::Num(n)))
+                    }
+                    Expr::Lit(_) => None,
+                    _ => Some(Err(InternalError::with_msg_and_span(
+                        "enums with non-literal initializers not supported",
+                        v.span(),
+                    ))),
+                },
                 _ => Some(Err(InternalError::with_msg_and_span(
                     "enums with non-literal initializers not supported",
                     v.span(),
