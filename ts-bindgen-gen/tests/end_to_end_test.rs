@@ -14,7 +14,7 @@ fn end_to_end() -> Result<(), Error> {
     let target_dir = target_dir.path();
     let test_template_path = cargo_dir.join("tests/end_to_end_template");
 
-    copy_dir(&test_template_path, &target_dir)?;
+    copy_dir(test_template_path, target_dir)?;
 
     make_symlink(
         cargo_dir.join("../ts-bindgen-rt"),
@@ -22,13 +22,13 @@ fn end_to_end() -> Result<(), Error> {
     )?;
 
     let ts_index = target_dir.join("ts").join("index");
-    npm_ci(&target_dir)?;
-    build_ts(&target_dir, &ts_index)?;
+    npm_ci(target_dir)?;
+    build_ts(target_dir, &ts_index)?;
 
     let cwd = env::current_dir()?;
-    env::set_current_dir(&target_dir)?;
+    env::set_current_dir(target_dir)?;
     generate_ts_bindgen_file(&ts_index, target_dir.join("src").join("js_lib.rs"))?;
-    env::set_current_dir(&cwd)?;
+    env::set_current_dir(cwd)?;
 
     run_cargo_clippy(target_dir)?;
     run_cargo_test(target_dir)?;
