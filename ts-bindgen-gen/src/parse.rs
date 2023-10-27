@@ -2907,7 +2907,7 @@ mod test {
     fn test_utility_type_exclude() -> Result<(), Error> {
         test_exported_type!(
             r#"
-                export type A = Exclude<"a" | "b", "b">;
+                export type A = Exclude<"a" | "b" | null, "b">;
             "#,
             "A",
             TypeInfo::Alias(Alias { target, .. }),
@@ -2921,7 +2921,7 @@ mod test {
     fn test_utility_type_extract() -> Result<(), Error> {
         test_exported_type!(
             r#"
-                export type A = Extract<"a" | "b", "b">;
+                export type A = Extract<"a" | "b" | null, "b">;
             "#,
             "A",
             TypeInfo::Alias(Alias { target, .. }),
