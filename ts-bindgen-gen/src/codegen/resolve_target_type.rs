@@ -17,7 +17,7 @@ impl ResolveTargetType for TargetEnrichedType {
 }
 
 macro_rules! if_requires_resolution {
-    ($matcher:ident, $id:ident then $then:tt else $else:tt) => {
+    ($matcher:ident, $id:ident then $then:expr ; $else:expr) => {
         match $matcher {
             TargetEnrichedTypeInfo::Ref($id) => $then,
             TargetEnrichedTypeInfo::NamespaceImport($id) => $then,
@@ -69,8 +69,8 @@ fn resolve_type(context: &Context, path: &Path, id: &TypeIdent) -> Option<Target
         Some(t) => if_requires_resolution!(
             t,
             x
-            then (x.resolve_target_type())
-            else (Some(t))
+            then x.resolve_target_type();
+            Some(t)
         ),
     }
 }
@@ -133,8 +133,8 @@ impl ResolveTargetType for TargetEnrichedTypeInfo {
         if_requires_resolution!(
             self,
             x
-            then (x.resolve_target_type())
-            else (Some(self.clone()))
+            then x.resolve_target_type();
+            Some(self.clone())
         )
     }
 }

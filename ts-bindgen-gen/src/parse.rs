@@ -195,7 +195,7 @@ impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
 
         match node.entity_name() {
             TsEntityName::Ident(Ident { sym, .. }) => {
-                let type_name = TypeName::for_name(ts_path.to_path_buf(), &sym.to_string());
+                let type_name = TypeName::for_name(ts_path.to_path_buf(), sym);
                 let type_params = node
                     .type_args()
                     .as_ref()
@@ -266,31 +266,31 @@ impl<T: ExprKeyed> KeyedExt for T {
 
 impl ExprKeyed for TsPropertySignature {
     fn expr_key(&self) -> &Expr {
-        &*self.key
+        &self.key
     }
 }
 
 impl ExprKeyed for TsMethodSignature {
     fn expr_key(&self) -> &Expr {
-        &*self.key
+        &self.key
     }
 }
 
 impl ExprKeyed for TsGetterSignature {
     fn expr_key(&self) -> &Expr {
-        &*self.key
+        &self.key
     }
 }
 
 impl ExprKeyed for TsSetterSignature {
     fn expr_key(&self) -> &Expr {
-        &*self.key
+        &self.key
     }
 }
 
 impl ExprKeyed for ClassProp {
     fn expr_key(&self) -> &Expr {
-        &*self.key
+        &self.key
     }
 }
 
@@ -437,7 +437,7 @@ impl FnParamExt for BindingIdent {
             type_info: self
                 .type_ann
                 .as_ref()
-                .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                .map(|t| ts_types.process_type(ts_path, &t.type_ann))
                 .unwrap_or(Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
         })
     }
@@ -456,7 +456,7 @@ impl FnParamExt for ObjectPat {
             type_info: self
                 .type_ann
                 .as_ref()
-                .map(|t| ts_types.process_type(ts_path, &*t.type_ann))
+                .map(|t| ts_types.process_type(ts_path, &t.type_ann))
                 .unwrap_or(Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
         })
     }
@@ -1016,8 +1016,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self
-                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym)),
                         is_exported: false,
                         info,
                     }),
@@ -1027,8 +1026,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self
-                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym)),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::Default {
                             src: file.to_path_buf(),
@@ -1040,8 +1038,7 @@ impl TsTypes {
                 self.set_type_for_file(
                     ts_path,
                     Ok(Type {
-                        name: self
-                            .ns_type_name(TypeName::for_name(ts_path, &local.sym.to_string())),
+                        name: self.ns_type_name(TypeName::for_name(ts_path, &local.sym)),
                         is_exported: false,
                         info: TypeInfo::NamespaceImport(NamespaceImport::All {
                             src: file.to_path_buf(),
@@ -1394,7 +1391,7 @@ impl TsTypes {
         Ok(match op {
             TsTypeOperatorOp::KeyOf => TypeInfo::PrimitiveString(PrimitiveString()),
             TsTypeOperatorOp::Unique | TsTypeOperatorOp::ReadOnly => {
-                self.process_type(ts_path, &*type_ann)?
+                self.process_type(ts_path, type_ann)?
             }
         })
     }
@@ -1491,7 +1488,7 @@ impl TsTypes {
                         getter
                             .type_ann
                             .as_ref()
-                            .map(|t| self.process_type(ts_path, &*t.type_ann))
+                            .map(|t| self.process_type(ts_path, &t.type_ann))
                             .unwrap_or_else(|| Ok(TypeInfo::PrimitiveAny(PrimitiveAny())))?,
                     )),
                     TsTypeElement::TsSetterSignature(setter) => Some((
@@ -1534,7 +1531,7 @@ impl TsTypes {
         }: &TsInterfaceDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym)),
             is_exported: false,
             info: TypeInfo::Interface(Interface {
                 indexer: self.process_interface_indexer(ts_path, &body.body)?,
@@ -1559,7 +1556,7 @@ impl TsTypes {
         TsEnumDecl { id, members, .. }: &TsEnumDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym)),
             is_exported: false,
             info: TypeInfo::Enum(Enum {
                 members: members
@@ -1585,9 +1582,9 @@ impl TsTypes {
             ..
         }: &TsTypeAliasDecl,
     ) -> Result<Type, InternalError> {
-        let type_info = self.process_type(ts_path, &*type_ann)?;
+        let type_info = self.process_type(ts_path, type_ann)?;
         Ok(Type {
-            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym)),
             is_exported: false,
             info: TypeInfo::Alias(Alias {
                 target: Box::new(type_info),
@@ -1703,7 +1700,7 @@ impl TsTypes {
         ts_path: &Path,
         ClassDecl { ident, class, .. }: &ClassDecl,
     ) -> Result<Type, InternalError> {
-        let name = self.ns_type_name(TypeName::for_name(ts_path, &ident.sym.to_string()));
+        let name = self.ns_type_name(TypeName::for_name(ts_path, &ident.sym));
         Ok(Type {
             name: name.clone(),
             is_exported: false,
@@ -1718,7 +1715,7 @@ impl TsTypes {
     ) -> Result<Type, InternalError> {
         match name {
             Pat::Ident(BindingIdent { id, type_ann }) => Ok(Type {
-                name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym.to_string())),
+                name: self.ns_type_name(TypeName::for_name(ts_path, &id.sym)),
                 is_exported: false,
                 info: TypeInfo::Var {
                     type_info: Box::new(
@@ -1744,7 +1741,7 @@ impl TsTypes {
         }: &FnDecl,
     ) -> Result<Type, InternalError> {
         Ok(Type {
-            name: self.ns_type_name(TypeName::for_name(ts_path, &ident.sym.to_string())),
+            name: self.ns_type_name(TypeName::for_name(ts_path, &ident.sym)),
             is_exported: false,
             info: function.to_type_info(ts_path, self)?,
         })
@@ -1902,10 +1899,7 @@ impl TsTypes {
                         let exported = exported.as_ref().unwrap();
 
                         let typ = Type {
-                            name: self.ns_type_name(TypeName::for_name(
-                                ts_path,
-                                &exported.sym.to_string(),
-                            )),
+                            name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym)),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
                                 target: Box::new(TypeInfo::Ref(self.make_type_ref(
@@ -1970,19 +1964,19 @@ impl TsTypes {
                     Type {
                         name: self.ns_type_name(TypeName::for_name(
                             ts_path,
-                            &exported.as_ref().unwrap_or(orig).sym.to_string(),
+                            &exported.as_ref().unwrap_or(orig).sym,
                         )),
                         is_exported: true,
                         info,
                     }
                 }
                 ExportSpecifier::Default(ExportDefaultSpecifier { exported }) => Type {
-                    name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym.to_string())),
+                    name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym)),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
-                    name: self.ns_type_name(TypeName::for_name(ts_path, &name.sym.to_string())),
+                    name: self.ns_type_name(TypeName::for_name(ts_path, &name.sym)),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::All { src: file.clone() }),
                 },
@@ -2219,7 +2213,7 @@ mod test {
                 assert!(ty.is_exported);
 
                 if let $expected_info = ty.info $assertions else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
 
                 Ok(())
@@ -2604,7 +2598,7 @@ mod test {
                 if let TypeInfo::TypeQuery(TypeQuery::LookupRef(tr)) = c {
                     assert_eq!(tr.referent.name, TypeIdent::Name("MyClass".to_string()));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2639,7 +2633,7 @@ mod test {
                 if let TypeInfo::Mapped { value_type } = environment {
                     assert_eq!(**value_type, TypeInfo::PrimitiveString(PrimitiveString()));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2744,10 +2738,10 @@ mod test {
                     if let TypeInfo::Interface(i) = value_type.as_ref() {
                         assert_eq!(i.fields.len(), 1);
                     } else {
-                        assert!(false);
+                        unreachable!("test failed");
                     }
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2776,7 +2770,7 @@ mod test {
                         .iter()
                         .all(|(_, f)| { matches!(f, TypeInfo::Optional { .. }) }));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2809,7 +2803,7 @@ mod test {
                         .iter()
                         .all(|(_, f)| { matches!(f, TypeInfo::Optional { .. }) }));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2838,7 +2832,7 @@ mod test {
                         .iter()
                         .all(|(_, f)| { !matches!(f, TypeInfo::Optional { .. }) }));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2871,7 +2865,7 @@ mod test {
                         .iter()
                         .all(|(_, f)| { !matches!(f, TypeInfo::Optional { .. }) }));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2897,7 +2891,7 @@ mod test {
                     assert_eq!(iface.fields.len(), 1);
                     assert!(iface.fields.contains_key("b"));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2943,7 +2937,7 @@ mod test {
                 if let TypeInfo::Union(Union { types }) = target.as_ref() {
                     assert_eq!(types.len(), 2);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2968,10 +2962,10 @@ mod test {
                     if let TypeIdent::Name(n) = &tr.referent.name {
                         assert_eq!(n, "Derived");
                     } else {
-                        assert!(false);
+                        unreachable!("test failed");
                     }
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -2999,10 +2993,10 @@ mod test {
                     if let TypeIdent::Name(n) = &tr.referent.name {
                         assert_eq!(n, "Derived");
                     } else {
-                        assert!(false);
+                        unreachable!("test failed");
                     }
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3020,7 +3014,7 @@ mod test {
                 if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
                     assert_eq!(types.len(), 2);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3039,7 +3033,7 @@ mod test {
                 if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
                     assert_eq!(types.len(), 2);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3060,7 +3054,7 @@ mod test {
                 if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
                     assert_eq!(types.len(), 1);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3081,7 +3075,7 @@ mod test {
                 if let TypeInfo::Tuple(Tuple { types }) = target.as_ref() {
                     assert_eq!(types.len(), 1);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3151,7 +3145,7 @@ mod test {
                 if let TypeInfo::Ref(TypeRef { referent, .. }) = target.as_ref() {
                     assert_eq!(&referent.name, &TypeIdent::Name("C".to_string()));
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3171,7 +3165,7 @@ mod test {
                 if let TypeInfo::FuncGroup(fg) = target.as_ref() {
                     assert_eq!(fg.overloads.first().unwrap().params.len(), 1);
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )
@@ -3190,10 +3184,10 @@ mod test {
                     if let TypeInfo::Union(Union { types }) = item_type.as_ref() {
                         assert_eq!(types.len(), 2);
                     } else {
-                        assert!(false);
+                        unreachable!("test failed");
                     }
                 } else {
-                    assert!(false);
+                    unreachable!("test failed");
                 }
             }
         )

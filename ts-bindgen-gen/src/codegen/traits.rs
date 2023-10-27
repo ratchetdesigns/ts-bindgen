@@ -93,7 +93,7 @@ where
     let class_name = || item_name.clone();
     let item_ref = to_type_ref(item_name, type_params, ctx);
     let member_to_trait_member = |type_env: &HashMap<String, TypeRef>, (n, m): (String, Member)| {
-        let name = to_snake_case_ident(&n);
+        let name = to_snake_case_ident(n);
         match m {
             Member::Constructor(_) => Default::default(),
             Member::Method(f) => {

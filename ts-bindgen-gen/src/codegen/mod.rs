@@ -233,7 +233,7 @@ fn path_relative_to_cargo_toml<T: AsRef<Path>>(path: T) -> PathBuf {
 
 fn trim_after_dot(s: &str) -> &str {
     let idx = s.find('.');
-    &s[0..idx.unwrap_or_else(|| s.len())]
+    &s[0..idx.unwrap_or(s.len())]
 }
 
 fn get_field_count<T: FieldCountGetter>(t: &T) -> usize {
@@ -314,16 +314,13 @@ trait MemberContainer {
 
 impl MemberContainer for Union {
     fn undefined_and_standard_members(&self) -> (Vec<&TypeRef>, Vec<&TypeRef>) {
-        self.types
-            .iter()
-            .partition(|t| match t.resolve_target_type() {
+        self.types.iter().partition(|t| {
+            matches!(
+                t.resolve_target_type(),
                 Some(TargetEnrichedTypeInfo::Ref(t))
-                    if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined) =>
-                {
-                    true
-                }
-                _ => false,
-            })
+                    if t.referent == TypeIdent::Builtin(Builtin::PrimitiveUndefined)
+            )
+        })
     }
 }
 
@@ -335,7 +332,7 @@ impl JsModulePath for Context {
     fn js_module_path(&self) -> String {
         let path = &self.path;
         let path = path_relative_to_cargo_toml(path.with_file_name(
-            trim_after_dot(&*path.file_name().unwrap().to_string_lossy()).to_string() + ".js",
+            trim_after_dot(&path.file_name().unwrap().to_string_lossy()).to_string() + ".js",
         ));
         path.to_string_lossy().to_string()
     }
@@ -892,7 +889,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                             in_context: &in_context,
                                         };
                                         let internal_fn_name = internal.to_internal_rust_name();
-                                        let fn_group_name = to_snake_case_ident(&member_js_name);
+                                        let fn_group_name = to_snake_case_ident(member_js_name);
                                         let fn_name = if is_overloaded {
                                             func.overload_name(&fn_group_name)
                                         } else {
@@ -958,7 +955,7 @@ impl<'a, FS: Fs + ?Sized> ToTokens for WithFs<'a, TargetEnrichedType, FS> {
                                 }.setter_fn();
 
                                 let rc: Option<&fn(TokenStream2) -> TokenStream2> = None;
-                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(&member_js_name), Some(&target), &internal_getter_name, true, rc, &type_env, None);
+                                let getter_fn = getter.exposed_to_rust_generic_wrapper_fn(&to_snake_case_ident(member_js_name), Some(&target), &internal_getter_name, true, rc, &type_env, None);
                                 let setter_fn = setter.exposed_to_rust_generic_wrapper_fn(&setter_name, Some(&target), &internal_setter_name, true, rc, &type_env, None);
 
                                 let pub_fn = quote! {
@@ -1673,9 +1670,9 @@ mod test {
         "#,
         )?;
 
-        assert!(rust.replace(" ", "").contains("vec![]"));
-        assert!(rust.replace(" ", "").contains("JsValue::from"));
-        assert!(rust.replace(" ", "").contains("into_boxed_slice"));
+        assert!(rust.replace(' ', "").contains("vec![]"));
+        assert!(rust.replace(' ', "").contains("JsValue::from"));
+        assert!(rust.replace(' ', "").contains("into_boxed_slice"));
         Ok(())
     }
 
@@ -1688,15 +1685,15 @@ mod test {
         )?;
 
         assert!(rust
-            .replace(" ", "")
-            .contains(&"match args".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"match args".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"FooParamsArgsUnion0(args) => {".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"FooParamsArgsUnion0(args) => {".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"FooParamsArgsUnion1(args) => {".replace(" ", "")));
-        assert!(rust.replace(" ", "").contains("into_boxed_slice()"));
+            .replace(' ', "")
+            .contains(&"FooParamsArgsUnion1(args) => {".replace(' ', "")));
+        assert!(rust.replace(' ', "").contains("into_boxed_slice()"));
         Ok(())
     }
 
@@ -1708,9 +1705,9 @@ mod test {
         "#,
         )?;
 
-        assert!(rust.replace(" ", "").contains(
+        assert!(rust.replace(' ', "").contains(
             &"pub type foo = dyn Fn(FooAliasedParamsArgs) -> std::result::Result<(), JsValue>;"
-                .replace(" ", "")
+                .replace(' ', "")
         ));
         Ok(())
     }
@@ -1724,8 +1721,8 @@ mod test {
         )?;
 
         // aiming to ensure that we are creating an array to pass variadic args
-        assert!(rust.replace(" ", "").contains("collect::<Vec<_>>"));
-        assert!(rust.replace(" ", "").contains("into_boxed_slice"));
+        assert!(rust.replace(' ', "").contains("collect::<Vec<_>>"));
+        assert!(rust.replace(' ', "").contains("into_boxed_slice"));
         Ok(())
     }
 
@@ -1737,8 +1734,8 @@ mod test {
         "#,
         )?;
 
-        assert!(rust.replace(" ", "").contains(
-            &"dyn Fn (Vec<String>) -> std::result::Result<(), JsValue>".replace(" ", "")
+        assert!(rust.replace(' ', "").contains(
+            &"dyn Fn (Vec<String>) -> std::result::Result<(), JsValue>".replace(' ', "")
         ));
         Ok(())
     }
@@ -1753,18 +1750,18 @@ mod test {
         "#,
         )?;
 
-        assert!(rust.replace(" ", "").contains(
-            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>, JsValue>".replace(" ", "")
+        assert!(rust.replace(' ', "").contains(
+            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>, JsValue>".replace(' ', "")
         ));
-        assert!(rust.replace(" ", "").contains(
-            &"pub on_something: std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>".replace(" ", "")
+        assert!(rust.replace(' ', "").contains(
+            &"pub on_something: std::rc::Rc<dyn Fn(Vec<JsValue>) -> std::result::Result<JsValue, JsValue>>".replace(' ', "")
         ));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"let _Args = js_sys::Array::new();".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"let _Args = js_sys::Array::new();".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(' ', "")));
         Ok(())
     }
 
@@ -1781,18 +1778,18 @@ mod test {
         "#,
         )?;
 
-        assert!(rust.replace(" ", "").contains(
-            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>, JsValue>".replace(" ", "")
+        assert!(rust.replace(' ', "").contains(
+            &"fn on_something(&self) -> std::result::Result<std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>, JsValue>".replace(' ', "")
         ));
-        assert!(rust.replace(" ", "").contains(
-            &"pub on_something: std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>".replace(" ", "")
+        assert!(rust.replace(' ', "").contains(
+            &"pub on_something: std::rc::Rc<dyn Fn(Vec<f64>) -> std::result::Result<FooRet, JsValue>>".replace(' ', "")
         ));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"let _Args = js_sys::Array::new()".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"let _Args = js_sys::Array::new()".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"f.apply(&JsValue::null(), &_Args)".replace(' ', "")));
         Ok(())
     }
 
@@ -1807,34 +1804,34 @@ mod test {
         )?;
 
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl std::convert::From<Foo> for JsValue".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl std::convert::From<Foo> for JsValue".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl std::convert::AsRef<JsValue> for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl std::convert::AsRef<JsValue> for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl wasm_bindgen::JsCast for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl wasm_bindgen::JsCast for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl wasm_bindgen::describe::WasmDescribe for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl wasm_bindgen::describe::WasmDescribe for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl wasm_bindgen::convert::IntoWasmAbi for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl wasm_bindgen::convert::IntoWasmAbi for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl wasm_bindgen::convert::FromWasmAbi for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl wasm_bindgen::convert::FromWasmAbi for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl<'a> wasm_bindgen::convert::IntoWasmAbi for &'a Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl<'a> wasm_bindgen::convert::IntoWasmAbi for &'a Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl serde::ser::Serialize for Foo".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"impl serde::ser::Serialize for Foo".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"impl<'de> serde::de::Deserialize<'de> for Foo".replace(" ", "")));
-        assert!(rust.replace(" ", "").contains(
-            &"self.0.__TSB_on_something_FnVecOfFooOnSomethingParamsSTo(s.into_iter().map(|s_item| ts_bindgen_rt::to_jsvalue(&s_item).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)).collect::<std::result::Result<Vec<_>, _>>().map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)?.into_boxed_slice())".replace(" ", "")
+            .replace(' ', "")
+            .contains(&"impl<'de> serde::de::Deserialize<'de> for Foo".replace(' ', "")));
+        assert!(rust.replace(' ', "").contains(
+            &"self.0.__TSB_on_something_FnVecOfFooOnSomethingParamsSTo(s.into_iter().map(|s_item| ts_bindgen_rt::to_jsvalue(&s_item).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)).collect::<std::result::Result<Vec<_>, _>>().map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)?.into_boxed_slice())".replace(' ', "")
         ));
         Ok(())
     }
@@ -1850,13 +1847,13 @@ mod test {
         )?;
 
         assert!(rust
-            .replace(" ", "")
-            .contains(&"let arg0 = js_sys::Array::new()".replace(" ", "")));
+            .replace(' ', "")
+            .contains(&"let arg0 = js_sys::Array::new()".replace(' ', "")));
         assert!(rust
-            .replace(" ", "")
-            .contains(&"arg0.push(&_Variadic0_arg0);".replace(" ", "")));
-        assert!(rust.replace(" ", "").contains(
-            &"let result = f({ let mut arg0_vec = vec![]; for arg0_item in arg0.iter() { arg0_vec.push(arg0_item); } arg0_vec })?".replace(" ", "")
+            .replace(' ', "")
+            .contains(&"arg0.push(&_Variadic0_arg0);".replace(' ', "")));
+        assert!(rust.replace(' ', "").contains(
+            &"let result = f({ let mut arg0_vec = vec![]; for arg0_item in arg0.iter() { arg0_vec.push(arg0_item); } arg0_vec })?".replace(' ', "")
         ));
         Ok(())
     }

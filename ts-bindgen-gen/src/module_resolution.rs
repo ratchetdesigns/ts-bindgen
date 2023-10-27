@@ -176,12 +176,12 @@ mod test {
             let path_with_ext = Path::new(&path_with_ext);
             let fs = {
                 let mut fs: MemFs = Default::default();
-                fs.add_file_at(&path_with_ext, "".to_string());
+                fs.add_file_at(path_with_ext, "".to_string());
                 fs
             };
             let path_without_ext = format!("{}/{}", &prefix, &path);
             let path_without_ext = Path::new(&path_without_ext);
-            prop_assert_eq!(get_file_with_any_ext(&fs, &path_without_ext)?, path_with_ext.to_path_buf());
+            prop_assert_eq!(get_file_with_any_ext(&fs, path_without_ext)?, path_with_ext.to_path_buf());
         }
     }
 
@@ -196,10 +196,10 @@ mod test {
             let path_with_ext = Path::new(&path_with_ext);
             let fs = {
                 let mut fs: MemFs = Default::default();
-                fs.add_file_at(&path_with_ext, "".to_string());
+                fs.add_file_at(path_with_ext, "".to_string());
                 fs
             };
-            prop_assert_eq!(get_file_with_any_ext(&fs, &path_with_ext)?, path_with_ext.to_path_buf());
+            prop_assert_eq!(get_file_with_any_ext(&fs, path_with_ext)?, path_with_ext.to_path_buf());
         }
     }
 
@@ -219,12 +219,12 @@ mod test {
                 let path_with_ext = format!("{}/{}.{}", &prefix, &path, &ext);
                 let path_with_ext = Path::new(&path_with_ext);
                 let mut fs: MemFs = Default::default();
-                fs.add_file_at(&path_with_ext, "".to_string());
+                fs.add_file_at(path_with_ext, "".to_string());
                 fs
             };
             let path_without_ext = format!("{}/{}", &prefix, &path);
             let path_without_ext = Path::new(&path_without_ext);
-            prop_assert!(matches!(get_file_with_any_ext(&fs, &path_without_ext), Err(_)));
+            prop_assert!(matches!(get_file_with_any_ext(&fs, path_without_ext), Err(_)));
         }
     }
 
@@ -262,7 +262,7 @@ mod test {
 
             let (import_str, expected_resolved_path) = if use_dir {
                 // we will import a directory and we need an index.<ext> file under it
-                let file_path = cwd.join(path_with_ext_appended(&import_path.join("index"), &ext));
+                let file_path = cwd.join(path_with_ext_appended(&import_path.join("index"), ext));
 
                 fs.add_dir_at(&cwd.join(import_path));
                 fs.add_file_at(&file_path, "".to_string());
@@ -270,7 +270,7 @@ mod test {
                 (import_str.clone(), file_path)
             } else {
                 // we will import the ts file directly
-                let import_path = path_with_ext_appended(&Path::new(&import_str), &ext);
+                let import_path = path_with_ext_appended(Path::new(&import_str), ext);
                 let import_str = import_path.to_string_lossy();
 
                 let file_path = cwd.join(&import_path);
@@ -281,7 +281,7 @@ mod test {
 
             // sanity test since this test is a bit complex
             if use_abs {
-                prop_assert!(import_str.starts_with("/"));
+                prop_assert!(import_str.starts_with('/'));
             } else {
                 prop_assert!(import_str.starts_with("./"));
             };
@@ -347,8 +347,8 @@ mod test {
             let (import_str, expected_resolved_path) = match mode {
                 "full_path" => {
                     // import_str should point to a full path + extension relative to node_modules
-                    let file_path = path_with_ext_appended(&import_path, &ext);
-                    let import_str = path_with_ext_appended(Path::new(&import_str), &ext);
+                    let file_path = path_with_ext_appended(&import_path, ext);
+                    let import_str = path_with_ext_appended(Path::new(&import_str), ext);
                     let import_str = import_str.to_string_lossy().into_owned();
 
                     (import_str, file_path.clone())
@@ -360,13 +360,13 @@ mod test {
 
                     fs.add_file_at(&pkg_json_path, format!("{{\"types\": \"{}.{}\"}}", &typings_file, &ext));
 
-                    let file_path = path_with_ext_appended(&import_path.join(&typings_file), &ext);
+                    let file_path = path_with_ext_appended(&import_path.join(&typings_file), ext);
 
                     (import_str, file_path)
                 },
                 "file_without_ext" => {
                     // import_str should point to a file such that file + valid ext exists
-                    let file_path = path_with_ext_appended(&import_path, &ext);
+                    let file_path = path_with_ext_appended(&import_path, ext);
 
                     // resolution prefers directories if they exist so make sure the directory doesn't
                     // exist so we can test the extension appending

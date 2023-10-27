@@ -305,7 +305,7 @@ impl<'a> Constructor<'a> {
         let class_ref = TypeRef {
             referent: class_name,
             type_params: Default::default(),
-            context: (*ctor).context.clone(),
+            context: ctor.context.clone(),
         };
         Constructor {
             class: Cow::Owned(class_ref),

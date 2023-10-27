@@ -94,8 +94,8 @@ mod test {
                 name: "Hi".to_string(),
             };
 
-            let expected: Vec<_> = ns_rest.split("/")
-                .map(|p| to_ns_name(&p))
+            let expected: Vec<_> = ns_rest.split('/')
+                .map(to_ns_name)
                 .collect();
 
             prop_assert_eq!(
@@ -123,7 +123,7 @@ mod test {
                 name: "Hi".to_string(),
             };
 
-            let expected: Vec<_> = ns_rest.split("/")
+            let expected: Vec<_> = ns_rest.split('/')
                 .map(|_| make_identifier!(super))
                 .collect();
 

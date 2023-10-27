@@ -86,7 +86,7 @@ impl ToModPathIter for Path {
             .iter()
             .rev()
             .take_while(|p| *p != "node_modules")
-            .map(|n| to_ns_name(&n))
+            .map(to_ns_name)
             .collect::<Vec<_>>();
 
         let mut components = {
@@ -112,10 +112,11 @@ impl ToModPathIter for TypeIdent {
         match self {
             TypeIdent::QualifiedName { file, name_parts } => Box::new(
                 file.to_mod_path_iter(fs).chain(
-                    (&name_parts[..name_parts.len() - 1])
+                    #[allow(clippy::unnecessary_to_owned)]
+                    name_parts[..name_parts.len() - 1]
                         .to_vec()
                         .into_iter()
-                        .map(|n| to_snake_case_ident(&n)),
+                        .map(to_snake_case_ident),
                 ),
             ),
             TypeIdent::Name { file, .. } => file.to_mod_path_iter(fs),
@@ -133,7 +134,10 @@ impl ToModPathIter for TypeRef {
 
 impl ToModPathIter for Vec<Identifier> {
     fn to_mod_path_iter<FS: Fs + ?Sized>(&self, _fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
-        Box::new(self.to_vec().into_iter()) as Box<dyn Iterator<Item = Identifier>>
+        Box::new(
+            #[allow(clippy::unnecessary_to_owned)]
+            self.to_vec().into_iter()
+        ) as Box<dyn Iterator<Item = Identifier>>
     }
 }
 
@@ -290,7 +294,7 @@ mod mod_def_tests {
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/test")?;
         let ir = to_final_ir(tbnbf, arc_fs.clone());
-        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
+        let mods = ModDef::new(&*arc_fs, &ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
 
@@ -316,7 +320,7 @@ mod mod_def_tests {
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
         let ir = to_final_ir(tbnbf, arc_fs.clone());
-        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
+        let mods = ModDef::new(&*arc_fs, &ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
 
@@ -345,7 +349,7 @@ mod mod_def_tests {
         let arc_fs = Arc::new(fs) as ArcFs;
         let tbnbf = TsTypes::parse(arc_fs.clone(), "/abc/def/test")?;
         let ir = to_final_ir(tbnbf, arc_fs.clone());
-        let mods = ModDef::new(&*arc_fs, &*ir.borrow());
+        let mods = ModDef::new(&*arc_fs, &ir.borrow());
 
         assert_eq!(mods.children.len(), 1);
 

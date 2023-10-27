@@ -241,12 +241,9 @@ pub fn type_name<T: ToTokens>(typ: &T) -> Identifier {
     let t_str = quote! { #typ }
         .to_string()
         .replace("->", "To")
-        .replace(",", "And")
-        .replace("<", "Of")
-        .replace(">", "")
-        .replace("&", "")
-        .replace("[", "")
-        .replace("]", "");
+        .replace(',', "And")
+        .replace('<', "Of")
+        .replace(['>', '&', '[', ']'], "");
     to_camel_case_ident(t_str)
 }
 
