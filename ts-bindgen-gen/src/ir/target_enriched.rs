@@ -69,7 +69,9 @@ macro_rules! from_field {
 ///
 /// * TODO: this doesn't run because it's an un-exported macro...
 ///
-/// ```rust
+/// ```ignore
+/// use std::collections::HashMap;
+///
 /// struct Src {
 ///     a: u32,
 ///     b: Option<u32>,
@@ -77,6 +79,7 @@ macro_rules! from_field {
 ///     d: HashMap<u32, u32>
 /// }
 ///
+/// #[derive(Debug, PartialEq)]
 /// struct Dest {
 ///     a: u64,
 ///     b: Option<u64>,
@@ -90,7 +93,7 @@ macro_rules! from_field {
 ///     b => Option,
 ///     c => [],
 ///     d => {},
-/// )
+/// );
 ///
 /// assert_eq!(
 ///     Dest::from(

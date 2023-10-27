@@ -25,7 +25,7 @@ jobs:
         with:
           path: |
             ~/.cargo/bin
-          key: ${{ runner.os }}-wasm-pack:0.10.0
+          key: ${{ runner.os }}-wasm-pack:0.12.1
       - name: Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -36,11 +36,11 @@ jobs:
         continue-on-error: true # cargo install fails if binary already exists...
         with:
           command: install
-          args: wasm-pack --version=0.10.0
+          args: wasm-pack --version=0.12.1
       - name: Node setup
         uses: actions/setup-node@v2
         with:
-          node-version: '14'
+          node-version: '16'
       - name: Build
         uses: actions-rs/cargo@v1
         with:
@@ -86,7 +86,7 @@ jobs:
         with:
           path: |
             ~/.cargo/bin
-          key: ${{ runner.os }}-wasm-pack:0.10.0
+          key: ${{ runner.os }}-wasm-pack:0.12.1
       - name: Rust stable toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -103,11 +103,11 @@ jobs:
         continue-on-error: true # cargo install fails if binary already exists...
         with:
           command: install
-          args: wasm-pack --version=0.10.0
+          args: wasm-pack --version=0.12.1
       - name: Node setup
         uses: actions/setup-node@v2
         with:
-          node-version: '14'
+          node-version: '16'
       - name: Wasm web builds
         run: wasm-pack build --dev --target web -- --no-default-features
         working-directory: ${{ matrix.wasm_project }}
