@@ -2,12 +2,6 @@ use crate::jsvalue_serde::error::{Error, ExpectValue, Result};
 use serde::{de, Deserialize};
 use std::borrow::{Borrow, Cow};
 use wasm_bindgen::{convert::IntoWasmAbi, JsCast, JsValue};
-use serde_wasm_bindgen;
-
-/// Deserialize the provided JsValue into the requested T using serde_wasm_bindgen
-pub fn from_jsvalue_raw<T: de::DeserializeOwned>(value: JsValue) -> std::result::Result<T, serde_wasm_bindgen::Error> {
-    serde_wasm_bindgen::from_value(value)
-}
 
 /// Deserialize the provided JsValue into the requested T
 pub fn from_jsvalue<'de, T>(jsv: &'de JsValue) -> Result<T>
