@@ -11,7 +11,7 @@ keywords = ["wasm", "bindings", "typescript", "wasm-bindgen", "javascript"]
 categories = ["compilers", "command-line-utilities", "development-tools::ffi", "wasm", "web-programming"]
 
 [dependencies]
-wasm-bindgen = "0.2.63"
+wasm-bindgen = "0.2.87"
 swc_common = "0.14.3"
 swc_ecma_parser = "0.76.3"
 swc_ecma_ast = "0.56.0"

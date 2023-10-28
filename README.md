@@ -32,9 +32,9 @@ The generated bindings depend on the ts-bindgen runtime: ts-bindgen-rt, wasm-bin
 ```toml
 [dependencies]
 ts-bindgen-rt = "0.5.0"
-wasm-bindgen = "0.2.63"
+wasm-bindgen = "0.2.87"
 serde = { version = "1.0", features = ["derive"] }
-js-sys = "0.3.53" # optional, depending on your input typescript
+js-sys = "0.3.64" # optional, depending on your input typescript
 web-sys = { version = "0.3.53", features = ["Window"] } # optional, update with features for any types your bindings use
 ```
 

@@ -1406,11 +1406,11 @@ fn render_wasm_bindgen_return_to_js(
             // TODO - should be a js_sys::Function that we wrap
             if is_fallible {
                 quote! {
-                    #return_value?.into_serde().map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)
+                    serde_wasm_bindgen::from_value(#return_value?).map_err(ts_bindgen_rt::Error::from).map_err(JsValue::from)
                 }
             } else {
                 quote! {
-                    #return_value.into_serde().unwrap()
+                    serde_wasm_bindgen::from_value(#return_value).unwrap()
                 }
             }
         }
@@ -1421,7 +1421,7 @@ pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream
     let serialization_type = return_type.serialization_type();
     match serialization_type {
         SerializationType::Raw => quote! {
-            #return_value.into_serde().unwrap()
+            serde_wasm_bindgen::from_value(#return_value).unwrap()
         },
         SerializationType::JsValue => return_value.clone(),
         SerializationType::SerdeJson | SerializationType::Array => {
@@ -1431,7 +1431,7 @@ pub fn render_raw_return_to_js(return_type: &TypeRef, return_value: &TokenStream
         }
         SerializationType::Fn => {
             // TODO - should be a js_sys::Function that we wrap
-            quote! { #return_value.into_serde().unwrap() }
+            quote! { serde_wasm_bindgen::from_value(#return_value).unwrap() }
         }
     }
 }
