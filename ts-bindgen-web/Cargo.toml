@@ -39,13 +39,5 @@ package = "rustfmt-nightly"
 git = "https://github.com/ratchetdesigns/rustfmt"
 branch = "nightly-2023-10-29"
 
-# parking_lot is a transitive dependency that handles wasm32-unknown-unknown
-# properly based on cfg(target_family = "wasm") but target_family = "wasm"
-# support landed after the nightly compiler we're using. so we enable the
-# wasm-bindgen feature here
-[dependencies.parking_lot]
-version = "0.11.2"
-features = ["wasm-bindgen"]
-
 [dev-dependencies]
 wasm-bindgen-test = "0.3.37"
