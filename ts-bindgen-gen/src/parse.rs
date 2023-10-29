@@ -13,6 +13,7 @@ use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{io, io::Read};
+use std::borrow::Cow;
 use swc_common::{sync::Lrc, FileLoader, FilePathMapping, SourceMap, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
@@ -99,53 +100,57 @@ where
 }
 
 trait TypeRefExt {
-    fn entity_name(&self) -> &TsEntityName;
-    fn type_args(&self) -> &Option<TsTypeParamInstantiation>;
+    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError>;
+    fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>>;
 }
 
 impl TypeRefExt for TsTypeRef {
-    fn entity_name(&self) -> &TsEntityName {
-        &self.type_name
+    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+        Ok(Cow::Borrowed(&self.type_name))
     }
 
-    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+    fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>> {
         &self.type_params
     }
 }
 
 impl TypeRefExt for TsExprWithTypeArgs {
-    fn entity_name(&self) -> &TsEntityName {
-        &self.expr
+    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+        match self.expr.as_ref() {
+            Expr::Ident(id) => Ok(Cow::Owned(TsEntityName::Ident(id.clone()))),
+            // TODO: handle member expr => TsQualifiedName
+            _ => Err(InternalError::with_msg_and_span("bad entity name", self.span())),
+        }
     }
 
-    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+    fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>> {
         &self.type_args
     }
 }
 
 impl<'a> TypeRefExt for ClassSuperTypeRef<'a> {
-    fn entity_name(&self) -> &TsEntityName {
-        &self.entity_name
+    fn entity_name<'b>(&'b self) -> Result<Cow<'b, TsEntityName>, InternalError> {
+        Ok(Cow::Borrowed(&self.entity_name))
     }
 
-    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+    fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>> {
         self.type_args
     }
 }
 
 impl TypeRefExt for TsEntityName {
-    fn entity_name(&self) -> &TsEntityName {
-        self
+    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+        Ok(Cow::Borrowed(self))
     }
 
-    fn type_args(&self) -> &Option<TsTypeParamInstantiation> {
+    fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>> {
         &None
     }
 }
 
 struct ClassSuperTypeRef<'a> {
     entity_name: TsEntityName,
-    type_args: &'a Option<TsTypeParamInstantiation>,
+    type_args: &'a Option<Box<TsTypeParamInstantiation>>,
 }
 
 impl<'a> ClassSuperTypeRef<'a> {
@@ -193,7 +198,7 @@ impl<'a, T: TypeRefExt> TryFrom<Source<'a, T>> for TypeRef {
             node,
         } = source;
 
-        match node.entity_name() {
+        match node.entity_name()?.as_ref() {
             TsEntityName::Ident(Ident { sym, .. }) => {
                 let type_name = TypeName::for_name(ts_path.to_path_buf(), sym);
                 let type_params = node
@@ -238,13 +243,13 @@ fn make_key<K: KeyedExt + Spanned>(k: &K) -> Result<String, InternalError> {
 }
 
 trait ExprKeyed {
-    fn expr_key(&self) -> &Expr;
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr>;
 }
 
 impl<T: ExprKeyed> KeyedExt for T {
     fn key(&self) -> Option<String> {
         let expr = self.expr_key();
-        match expr {
+        match expr.as_ref() {
             Expr::Lit(lit) => match lit {
                 Lit::Str(s) => Some(s.value.to_string()),
                 _ => {
@@ -265,32 +270,38 @@ impl<T: ExprKeyed> KeyedExt for T {
 }
 
 impl ExprKeyed for TsPropertySignature {
-    fn expr_key(&self) -> &Expr {
-        &self.key
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+        Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsMethodSignature {
-    fn expr_key(&self) -> &Expr {
-        &self.key
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+        Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsGetterSignature {
-    fn expr_key(&self) -> &Expr {
-        &self.key
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+        Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsSetterSignature {
-    fn expr_key(&self) -> &Expr {
-        &self.key
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+        Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for ClassProp {
-    fn expr_key(&self) -> &Expr {
-        &self.key
+    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+        match &self.key {
+            PropName::Ident(id) => Cow::Owned(Expr::Ident(id.clone())),
+            PropName::Str(s) => Cow::Owned(Expr::Lit(Lit::Str(s.clone()))),
+            PropName::Num(n) => Cow::Owned(Expr::Lit(Lit::Num(n.clone()))),
+            PropName::BigInt(n) => Cow::Owned(Expr::Lit(Lit::BigInt(n.clone()))),
+            PropName::Computed(c) => Cow::Borrowed(&c.expr),
+        }
     }
 }
 
@@ -538,7 +549,7 @@ impl CtorExt for Constructor {
 trait FuncExt {
     fn params(&self, ts_path: &Path, ts_types: &mut TsTypes) -> Result<Vec<Param>, InternalError>;
 
-    fn type_params(&self) -> &Option<TsTypeParamDecl>;
+    fn type_params(&self) -> &Option<Box<TsTypeParamDecl>>;
 
     fn return_type(&self) -> Option<&TsType>;
 
@@ -586,7 +597,7 @@ impl FuncExt for TsMethodSignature {
             .collect()
     }
 
-    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+    fn type_params(&self) -> &Option<Box<TsTypeParamDecl>> {
         &self.type_params
     }
 
@@ -604,7 +615,7 @@ impl FuncExt for TsFnType {
             .collect()
     }
 
-    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+    fn type_params(&self) -> &Option<Box<TsTypeParamDecl>> {
         &self.type_params
     }
 
@@ -622,7 +633,7 @@ impl FuncExt for Function {
             .collect()
     }
 
-    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+    fn type_params(&self) -> &Option<Box<TsTypeParamDecl>> {
         &self.type_params
     }
 
@@ -641,7 +652,7 @@ impl FuncExt for ClassMethod {
             .collect()
     }
 
-    fn type_params(&self) -> &Option<TsTypeParamDecl> {
+    fn type_params(&self) -> &Option<Box<TsTypeParamDecl>> {
         &self.function.type_params
     }
 
@@ -681,7 +692,7 @@ trait HasTypeParams {
     fn type_param_config(&self) -> Vec<(String, TypeParamConfig)>;
 }
 
-impl HasTypeParams for Option<TsTypeParamDecl> {
+impl HasTypeParams for Option<Box<TsTypeParamDecl>> {
     fn type_param_config(&self) -> Vec<(String, TypeParamConfig)> {
         self.as_ref()
             .map(|tps| {
@@ -784,10 +795,9 @@ impl TsTypes {
             Syntax::Typescript(TsConfig {
                 tsx: true,
                 decorators: true,
-                dynamic_import: true,
                 dts: true,
                 no_early_errors: true,
-                import_assertions: true,
+                disallow_ambiguous_jsx_like: true,
             }),
             Default::default(),
             StringInput::from(&*fm),
@@ -1001,7 +1011,7 @@ impl TsTypes {
             ImportSpecifier::Named(ImportNamedSpecifier {
                 local, imported, ..
             }) => {
-                let name = imported.as_ref().unwrap_or(local).sym.to_string();
+                let name = imported.as_ref().map(module_export_name_to_str).unwrap_or(&local.sym).to_string();
                 let info = if name == "default" {
                     // import { default as X } from '...'
                     TypeInfo::NamespaceImport(NamespaceImport::Default {
@@ -1302,7 +1312,7 @@ impl TsTypes {
     fn process_fn_type_params(
         &mut self,
         _ts_path: &Path,
-        type_params: &Option<TsTypeParamDecl>,
+        type_params: &Option<Box<TsTypeParamDecl>>,
     ) -> Vec<(String, TypeParamConfig)> {
         type_params.type_param_config()
     }
@@ -1617,6 +1627,7 @@ impl TsTypes {
             .filter_map_reporting_result(|member| {
                 Ok(match member {
                     ClassMember::StaticBlock(_) => None,
+                    ClassMember::AutoAccessor(_) => None,
                     ClassMember::Constructor(ctor) => Some((
                         make_key(ctor)?,
                         Member::Constructor(CtorGroup {
@@ -1833,18 +1844,17 @@ impl TsTypes {
 
     fn process_decl(&mut self, ts_path: &Path, decl: &Decl) -> Vec<Result<Type, InternalError>> {
         match decl {
+            Decl::Using(_) => Default::default(),
             Decl::TsInterface(iface) => vec![self.process_ts_interface(ts_path, iface)],
             Decl::TsEnum(enm) => vec![self.process_ts_enum(ts_path, enm)],
             Decl::TsTypeAlias(alias) => vec![self.process_ts_alias(ts_path, alias)],
             Decl::Class(class) => vec![self.process_class_type(ts_path, class)],
-            Decl::Var(VarDecl { decls, .. }) => decls
+            Decl::Var(var_decl) => var_decl.decls
                 .iter()
                 .map(|var| self.process_var(ts_path, var))
                 .collect(),
-            Decl::TsModule(TsModuleDecl {
-                id, declare, body, ..
-            }) => {
-                self.process_namespace_body(ts_path, *declare, id, body.as_ref());
+            Decl::TsModule(module) => {
+                self.process_namespace_body(ts_path, module.declare, &module.id, module.body.as_ref());
 
                 Default::default()
             }
@@ -1879,7 +1889,7 @@ impl TsTypes {
             // we need to create an alias for the name
             specifiers.iter().for_each(|spec| match spec {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
-                    let orig = orig.sym.to_string();
+                    let orig = module_export_name_to_str(orig).to_string();
                     let orig = self.get_possibly_ns_qualified_name(TypeIdent::Name(orig));
 
                     if exported.is_none() {
@@ -1899,7 +1909,7 @@ impl TsTypes {
                         let exported = exported.as_ref().unwrap();
 
                         let typ = Type {
-                            name: self.ns_type_name(TypeName::for_name(ts_path, &exported.sym)),
+                            name: self.ns_type_name(TypeName::for_name(ts_path, module_export_name_to_str(exported))),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
                                 target: Box::new(TypeInfo::Ref(self.make_type_ref(
@@ -1950,7 +1960,7 @@ impl TsTypes {
             .iter()
             .map(|spec| match spec {
                 ExportSpecifier::Named(ExportNamedSpecifier { orig, exported, .. }) => {
-                    let imported_name = orig.sym.to_string();
+                    let imported_name = module_export_name_to_str(orig).to_string();
                     let info = if imported_name == "default" {
                         // export { default as X } from '...'
                         TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() })
@@ -1964,7 +1974,7 @@ impl TsTypes {
                     Type {
                         name: self.ns_type_name(TypeName::for_name(
                             ts_path,
-                            &exported.as_ref().unwrap_or(orig).sym,
+                            module_export_name_to_str(exported.as_ref().unwrap_or(orig)),
                         )),
                         is_exported: true,
                         info,
@@ -1976,7 +1986,7 @@ impl TsTypes {
                     info: TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
-                    name: self.ns_type_name(TypeName::for_name(ts_path, &name.sym)),
+                    name: self.ns_type_name(TypeName::for_name(ts_path, module_export_name_to_str(name))),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::All { src: file.clone() }),
                 },
@@ -2102,6 +2112,13 @@ impl TsTypes {
 
     fn currently_in_namespace(&self) -> bool {
         !self.namespace_stack.is_empty()
+    }
+}
+
+fn module_export_name_to_str<'a>(mod_export_name: &'a ModuleExportName) -> &'a str {
+    match mod_export_name {
+        ModuleExportName::Ident(ident) => &ident.sym,
+        ModuleExportName::Str(s) => &s.value,
     }
 }
 

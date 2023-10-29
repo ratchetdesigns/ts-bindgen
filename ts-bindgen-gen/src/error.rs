@@ -2,6 +2,7 @@ use std::fmt;
 use swc_common::{
     source_map::{SourceMap, Span},
     Spanned,
+    SourceMapper,
 };
 
 /// Public Error type for ts-bindgen-gen.

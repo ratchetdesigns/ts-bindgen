@@ -185,7 +185,8 @@ pub fn map_to_ident<T: AsRef<str>, F: Fn(&str) -> String>(s: T, map: F) -> Ident
         .collect();
 
     // now, make sure we have a valid rust identifier (no keyword collissions)
-    let reconstructed = first + &rest;
+    let mut reconstructed = first.to_string();
+    reconstructed.push_str(&rest);
     let mut full_ident = map(&reconstructed);
     if parse_syn_str::<syn::Ident>(&full_ident).is_err() {
         // first append _s to try to make it an ident
