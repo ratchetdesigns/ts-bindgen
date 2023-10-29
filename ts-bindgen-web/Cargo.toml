@@ -37,7 +37,7 @@ rev = "cb20108c317976ba8c3d05b581a84efd394c3dbe"
 [dependencies.rustfmt]
 package = "rustfmt-nightly"
 git = "https://github.com/ratchetdesigns/rustfmt"
-branch = "nightly-2021-12-20"
+branch = "nightly-2023-10-29"
 
 # parking_lot is a transitive dependency that handles wasm32-unknown-unknown
 # properly based on cfg(target_family = "wasm") but target_family = "wasm"
@@ -48,4 +48,4 @@ version = "0.11.2"
 features = ["wasm-bindgen"]
 
 [dev-dependencies]
-wasm-bindgen-test = "0.2"
+wasm-bindgen-test = "0.3.37"
