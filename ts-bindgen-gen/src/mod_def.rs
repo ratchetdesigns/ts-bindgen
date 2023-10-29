@@ -136,7 +136,7 @@ impl ToModPathIter for Vec<Identifier> {
     fn to_mod_path_iter<FS: Fs + ?Sized>(&self, _fs: &FS) -> Box<dyn Iterator<Item = Identifier>> {
         Box::new(
             #[allow(clippy::unnecessary_to_owned)]
-            self.to_vec().into_iter()
+            self.to_vec().into_iter(),
         ) as Box<dyn Iterator<Item = Identifier>>
     }
 }

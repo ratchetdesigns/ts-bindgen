@@ -8,12 +8,12 @@ use crate::ir::base::{
     Type, TypeIdent, TypeInfo, TypeName, TypeParamConfig, TypeQuery, TypeRef, Union,
 };
 use crate::module_resolution::{get_ts_path, typings_module_resolver};
+use std::borrow::Cow;
 use std::collections::{hash_map::Entry, HashMap};
 use std::convert::{TryFrom, TryInto};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{io, io::Read};
-use std::borrow::Cow;
 use swc_common::{sync::Lrc, FileLoader, FilePathMapping, SourceMap, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
@@ -119,7 +119,10 @@ impl TypeRefExt for TsExprWithTypeArgs {
         match self.expr.as_ref() {
             Expr::Ident(id) => Ok(Cow::Owned(TsEntityName::Ident(id.clone()))),
             // TODO: handle member expr => TsQualifiedName
-            _ => Err(InternalError::with_msg_and_span("bad entity name", self.span())),
+            _ => Err(InternalError::with_msg_and_span(
+                "bad entity name",
+                self.span(),
+            )),
         }
     }
 
@@ -1011,7 +1014,11 @@ impl TsTypes {
             ImportSpecifier::Named(ImportNamedSpecifier {
                 local, imported, ..
             }) => {
-                let name = imported.as_ref().map(module_export_name_to_str).unwrap_or(&local.sym).to_string();
+                let name = imported
+                    .as_ref()
+                    .map(module_export_name_to_str)
+                    .unwrap_or(&local.sym)
+                    .to_string();
                 let info = if name == "default" {
                     // import { default as X } from '...'
                     TypeInfo::NamespaceImport(NamespaceImport::Default {
@@ -1849,12 +1856,18 @@ impl TsTypes {
             Decl::TsEnum(enm) => vec![self.process_ts_enum(ts_path, enm)],
             Decl::TsTypeAlias(alias) => vec![self.process_ts_alias(ts_path, alias)],
             Decl::Class(class) => vec![self.process_class_type(ts_path, class)],
-            Decl::Var(var_decl) => var_decl.decls
+            Decl::Var(var_decl) => var_decl
+                .decls
                 .iter()
                 .map(|var| self.process_var(ts_path, var))
                 .collect(),
             Decl::TsModule(module) => {
-                self.process_namespace_body(ts_path, module.declare, &module.id, module.body.as_ref());
+                self.process_namespace_body(
+                    ts_path,
+                    module.declare,
+                    &module.id,
+                    module.body.as_ref(),
+                );
 
                 Default::default()
             }
@@ -1909,7 +1922,10 @@ impl TsTypes {
                         let exported = exported.as_ref().unwrap();
 
                         let typ = Type {
-                            name: self.ns_type_name(TypeName::for_name(ts_path, module_export_name_to_str(exported))),
+                            name: self.ns_type_name(TypeName::for_name(
+                                ts_path,
+                                module_export_name_to_str(exported),
+                            )),
                             is_exported: true,
                             info: TypeInfo::Alias(Alias {
                                 target: Box::new(TypeInfo::Ref(self.make_type_ref(
@@ -1986,7 +2002,8 @@ impl TsTypes {
                     info: TypeInfo::NamespaceImport(NamespaceImport::Default { src: file.clone() }),
                 },
                 ExportSpecifier::Namespace(ExportNamespaceSpecifier { name, .. }) => Type {
-                    name: self.ns_type_name(TypeName::for_name(ts_path, module_export_name_to_str(name))),
+                    name: self
+                        .ns_type_name(TypeName::for_name(ts_path, module_export_name_to_str(name))),
                     is_exported: true,
                     info: TypeInfo::NamespaceImport(NamespaceImport::All { src: file.clone() }),
                 },
