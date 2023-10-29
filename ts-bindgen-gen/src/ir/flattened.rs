@@ -1854,7 +1854,7 @@ mod test {
                 TypeIdent::Builtin(Builtin::PrimitiveVoid)
             );
         } else {
-            assert!(false);
+            unreachable!("expected a func group");
         }
     }
 }

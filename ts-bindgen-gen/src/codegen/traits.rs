@@ -529,7 +529,7 @@ mod test {
                 }
             }));
         } else {
-            assert!(false);
+            unreachable!("expected class");
         }
     }
 
@@ -596,7 +596,7 @@ mod test {
                 }
             }));
         } else {
-            assert!(false);
+            unreachable!("expected class");
         }
     }
 }

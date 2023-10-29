@@ -100,12 +100,12 @@ where
 }
 
 trait TypeRefExt {
-    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError>;
+    fn entity_name(&self) -> Result<Cow<'_, TsEntityName>, InternalError>;
     fn type_args(&self) -> &Option<Box<TsTypeParamInstantiation>>;
 }
 
 impl TypeRefExt for TsTypeRef {
-    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+    fn entity_name(&self) -> Result<Cow<'_, TsEntityName>, InternalError> {
         Ok(Cow::Borrowed(&self.type_name))
     }
 
@@ -115,7 +115,7 @@ impl TypeRefExt for TsTypeRef {
 }
 
 impl TypeRefExt for TsExprWithTypeArgs {
-    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+    fn entity_name(&self) -> Result<Cow<'_, TsEntityName>, InternalError> {
         match self.expr.as_ref() {
             Expr::Ident(id) => Ok(Cow::Owned(TsEntityName::Ident(id.clone()))),
             // TODO: handle member expr => TsQualifiedName
@@ -132,7 +132,7 @@ impl TypeRefExt for TsExprWithTypeArgs {
 }
 
 impl<'a> TypeRefExt for ClassSuperTypeRef<'a> {
-    fn entity_name<'b>(&'b self) -> Result<Cow<'b, TsEntityName>, InternalError> {
+    fn entity_name(&self) -> Result<Cow<'_, TsEntityName>, InternalError> {
         Ok(Cow::Borrowed(&self.entity_name))
     }
 
@@ -142,7 +142,7 @@ impl<'a> TypeRefExt for ClassSuperTypeRef<'a> {
 }
 
 impl TypeRefExt for TsEntityName {
-    fn entity_name<'a>(&'a self) -> Result<Cow<'a, TsEntityName>, InternalError> {
+    fn entity_name(&self) -> Result<Cow<'_, TsEntityName>, InternalError> {
         Ok(Cow::Borrowed(self))
     }
 
@@ -246,7 +246,7 @@ fn make_key<K: KeyedExt + Spanned>(k: &K) -> Result<String, InternalError> {
 }
 
 trait ExprKeyed {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr>;
+    fn expr_key(&self) -> Cow<'_, Expr>;
 }
 
 impl<T: ExprKeyed> KeyedExt for T {
@@ -273,31 +273,31 @@ impl<T: ExprKeyed> KeyedExt for T {
 }
 
 impl ExprKeyed for TsPropertySignature {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+    fn expr_key(&self) -> Cow<'_, Expr> {
         Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsMethodSignature {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+    fn expr_key(&self) -> Cow<'_, Expr> {
         Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsGetterSignature {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+    fn expr_key(&self) -> Cow<'_, Expr> {
         Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for TsSetterSignature {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+    fn expr_key(&self) -> Cow<'_, Expr> {
         Cow::Borrowed(&self.key)
     }
 }
 
 impl ExprKeyed for ClassProp {
-    fn expr_key<'a>(&'a self) -> Cow<'a, Expr> {
+    fn expr_key(&self) -> Cow<'_, Expr> {
         match &self.key {
             PropName::Ident(id) => Cow::Owned(Expr::Ident(id.clone())),
             PropName::Str(s) => Cow::Owned(Expr::Lit(Lit::Str(s.clone()))),
@@ -2132,7 +2132,7 @@ impl TsTypes {
     }
 }
 
-fn module_export_name_to_str<'a>(mod_export_name: &'a ModuleExportName) -> &'a str {
+fn module_export_name_to_str(mod_export_name: &ModuleExportName) -> &str {
     match mod_export_name {
         ModuleExportName::Ident(ident) => &ident.sym,
         ModuleExportName::Str(s) => &s.value,
